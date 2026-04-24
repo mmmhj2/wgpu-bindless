@@ -1,12 +1,17 @@
+mod device_interface;
+
 use std::sync::Arc;
 
 use winit::{
     application::ApplicationHandler, event::*, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window
 };
 
+use crate::window::device_interface::DeviceInterface;
+
 // This will store the state of our game
 pub struct State {
     window: Arc<Window>,
+    device: device_interface::DeviceInterface
 }
 
 impl State {
@@ -14,18 +19,82 @@ impl State {
     // but we will in the next tutorial
     pub async fn new(window: Arc<Window>) -> Result<Self, ()> {
         Ok(Self {
-            window,
+            window: window.clone(),
+            device: DeviceInterface::new(window.clone()).await.unwrap()
         })
     }
 
-    pub fn resize(&mut self, _width: u32, _height: u32) {
-        // We'll do stuff here in the next tutorial
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.device.create_surface(width, height);
     }
     
-    pub fn render(&mut self) {
+    pub fn render(&mut self) -> Result<(), ()>{
         self.window.request_redraw();
 
-        // We'll do more stuff here in the next tutorial
+        // We can't render unless the surface is configured
+        if !self.device.presentation_ready {
+            return Ok(());
+        }
+            
+        let output = match self.device.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(surface_texture) => surface_texture,
+            wgpu::CurrentSurfaceTexture::Suboptimal(surface_texture) => {
+                self.device.surface.configure(&self.device.device, &self.device.config);
+                surface_texture
+            }
+            wgpu::CurrentSurfaceTexture::Timeout
+            | wgpu::CurrentSurfaceTexture::Occluded
+            | wgpu::CurrentSurfaceTexture::Validation => {
+                // Skip this frame
+                return Ok(());
+            }
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                self.device.surface.configure(&self.device.device, &self.device.config);
+                return Ok(());
+            }
+            wgpu::CurrentSurfaceTexture::Lost => {
+                // You could recreate the devices and all resources
+                // created with it here, but we'll just bail
+                panic!("Lost device");
+            }
+        };
+
+        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self.device.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Encoder"),
+        });
+
+        // Do some draw call here
+        {
+            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.2,
+                            b: 0.3,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+                multiview_mask: None,
+            });
+
+        }
+
+        // submit will accept anything that implements IntoIter
+        self.device.graphics_queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok(())
     }
 }
 
@@ -72,7 +141,13 @@ impl ApplicationHandler<State> for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
-                state.render();
+                // state.update();
+                match state.render() {
+                    Ok(_) => {}
+                    Err(e) => {
+                        event_loop.exit();
+                    }
+                }
             }
             WindowEvent::KeyboardInput {
                 event:
