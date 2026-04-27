@@ -3,11 +3,11 @@ use winit::window::Window;
 
 /// Interface to WGPU hardware device
 pub struct DeviceInterface {
-    pub device              : wgpu::Device,
-    pub surface             : wgpu::Surface<'static>,
-    pub graphics_queue      : wgpu::Queue,
-    pub config              : wgpu::SurfaceConfiguration,
-    pub presentation_ready  : bool
+    device              : wgpu::Device,
+    surface             : wgpu::Surface<'static>,
+    graphics_queue      : wgpu::Queue,
+    config              : wgpu::SurfaceConfiguration,
+    presentation_ready  : bool
 }
 
 impl DeviceInterface {
@@ -78,13 +78,31 @@ impl DeviceInterface {
         })
     }
 
+    pub fn configure_surface(&mut self) {
+        self.surface.configure(&self.device, &self.config);
+        self.presentation_ready = true;
+    }
+
     /// Set up the surface with specified configuration.
-    pub fn create_surface(&mut self, width : u32, height : u32) -> () {
+    pub fn create_surface(&mut self, width : u32, height : u32) {
         if width > 0 && height > 0 {
             self.config.width = width;
             self.config.height = height;
-            self.surface.configure(&self.device, &self.config);
-            self.presentation_ready = true;
+            self.configure_surface();
         }
     }
+
+    pub fn get_current_surface_texture(&self) -> wgpu::CurrentSurfaceTexture {
+        self.surface.get_current_texture()
+    }
+
+    pub fn is_presentation_ready(&self) -> bool { self.presentation_ready }
+
+    /// Acquire the graphics queue used to submit command encoders
+    pub fn get_queue(&self) -> &wgpu::Queue { &self.graphics_queue }
+    pub fn get_queue_mut(&mut self) -> &mut wgpu::Queue { &mut self.graphics_queue }
+
+    /// Acquire the logical device
+    pub fn get_device(&self) -> &wgpu::Device { &self.device }
+    pub fn get_device_mut(&mut self) -> &mut wgpu::Device { &mut self.device }
 }

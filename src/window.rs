@@ -8,15 +8,12 @@ use winit::{
 
 use crate::window::device_interface::DeviceInterface;
 
-// This will store the state of our game
 pub struct State {
     window: Arc<Window>,
     device: device_interface::DeviceInterface
 }
 
 impl State {
-    // We don't need this to be async right now,
-    // but we will in the next tutorial
     pub async fn new(window: Arc<Window>) -> Result<Self, ()> {
         Ok(Self {
             window: window.clone(),
@@ -32,14 +29,14 @@ impl State {
         self.window.request_redraw();
 
         // We can't render unless the surface is configured
-        if !self.device.presentation_ready {
+        if !self.device.is_presentation_ready() {
             return Ok(());
         }
             
-        let output = match self.device.surface.get_current_texture() {
+        let output = match self.device.get_current_surface_texture() {
             wgpu::CurrentSurfaceTexture::Success(surface_texture) => surface_texture,
             wgpu::CurrentSurfaceTexture::Suboptimal(surface_texture) => {
-                self.device.surface.configure(&self.device.device, &self.device.config);
+                self.device.configure_surface();
                 surface_texture
             }
             wgpu::CurrentSurfaceTexture::Timeout
@@ -49,7 +46,7 @@ impl State {
                 return Ok(());
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
-                self.device.surface.configure(&self.device.device, &self.device.config);
+                self.device.configure_surface();
                 return Ok(());
             }
             wgpu::CurrentSurfaceTexture::Lost => {
@@ -60,13 +57,13 @@ impl State {
         };
 
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self.device.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = self.device.get_device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
 
         // Do some draw call here
         {
-            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
@@ -88,10 +85,11 @@ impl State {
                 multiview_mask: None,
             });
 
+            render_pass.set_pipeline(pipeline);
         }
 
         // submit will accept anything that implements IntoIter
-        self.device.graphics_queue.submit(std::iter::once(encoder.finish()));
+        self.device.get_queue().submit(std::iter::once(encoder.finish()));
         output.present();
 
         Ok(())
@@ -113,15 +111,11 @@ impl App {
 impl ApplicationHandler<State> for App {
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        #[allow(unused_mut)]
         let mut window_attributes = Window::default_attributes();
-
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
-
         self.state = Some(pollster::block_on(State::new(window)).unwrap());
     }
 
-    #[allow(unused_mut)]
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, mut event: State) {
         self.state = Some(event);
     }
@@ -144,7 +138,7 @@ impl ApplicationHandler<State> for App {
                 // state.update();
                 match state.render() {
                     Ok(_) => {}
-                    Err(e) => {
+                    Err(_) => {
                         event_loop.exit();
                     }
                 }
