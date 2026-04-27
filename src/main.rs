@@ -1,5 +1,6 @@
+mod app;
 mod renderer;
 
 fn main() {
-    renderer::run();
+    app::run().unwrap();
 }
