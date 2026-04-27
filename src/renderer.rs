@@ -1,4 +1,5 @@
 mod device_interface;
+mod pipeline;
 
 use std::sync::Arc;
 
@@ -6,7 +7,7 @@ use winit::{
     application::ApplicationHandler, event::*, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window
 };
 
-use crate::window::device_interface::DeviceInterface;
+use crate::renderer::device_interface::DeviceInterface;
 
 pub struct State {
     window: Arc<Window>,

@@ -1,5 +1,5 @@
-mod window;
+mod renderer;
 
 fn main() {
-    window::run();
+    renderer::run();
 }
