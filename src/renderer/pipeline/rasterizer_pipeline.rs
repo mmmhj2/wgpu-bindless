@@ -21,9 +21,34 @@ const DEFAULT_MULTISAMPLE_STATE : wgpu::MultisampleState = wgpu::MultisampleStat
 /// Simplified version of RenderPipelineDescriptor
 pub struct RasterizerPipelineDescriptor<'a> {
     pub cull_mode       : Option<wgpu::Face>,
+    pub front_face      : wgpu::FrontFace,
     pub vertex          : wgpu::VertexState<'a>,
-    pub fragment        : wgpu::FragmentState<'a>,
+    pub fragment        : Option<wgpu::FragmentState<'a>>,
     pub depthstencil    : Option<wgpu::DepthStencilState>
+}
+
+impl<'a> From<wgpu::VertexState<'a>> for RasterizerPipelineDescriptor<'a> {
+    fn from(value: wgpu::VertexState<'a>) -> Self {
+        RasterizerPipelineDescriptor {
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+            vertex: value,
+            fragment: None,
+            depthstencil: None
+        }
+    }
+}
+
+impl<'a> From<(wgpu::VertexState<'a>, wgpu::FragmentState<'a>)> for RasterizerPipelineDescriptor<'a> {
+    fn from(value: (wgpu::VertexState<'a>, wgpu::FragmentState<'a>)) -> Self {
+        RasterizerPipelineDescriptor {
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+            vertex: value.0,
+            fragment: Some(value.1),
+            depthstencil: None
+        }
+    }
 }
 
 pub struct RasterizerPipeline {
@@ -36,7 +61,7 @@ impl RasterizerPipeline {
             label: None,
             layout: layout,
             vertex: rpd.vertex,
-            fragment: Some(rpd.fragment),
+            fragment: rpd.fragment,
             primitive: wgpu::PrimitiveState{
                 cull_mode: rpd.cull_mode,
                 ..DEFAULT_PRIMITIVE_STATE
