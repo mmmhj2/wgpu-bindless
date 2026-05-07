@@ -1,5 +1,5 @@
 
-use crate::renderer::device_interface::DeviceInterface;
+use crate::renderer::{device_interface::DeviceInterface, pipeline::{pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline}};
 
 use std::sync::Arc;
 
@@ -9,14 +9,17 @@ use winit::{
 
 pub struct State {
     window: Arc<Window>,
-    device: DeviceInterface
+    device: DeviceInterface,
+    pipelines: PipelineStates
 }
 
 impl State {
     pub async fn new(window: Arc<Window>) -> Result<Self, ()> {
+        let device = DeviceInterface::new(window.clone()).await.unwrap();
+        let pipelines = PipelineStates::prepare_default_pipelines(&device);
         Ok(Self {
             window: window.clone(),
-            device: DeviceInterface::new(window.clone()).await.unwrap()
+            device, pipelines
         })
     }
 
@@ -83,6 +86,9 @@ impl State {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
+
+            render_pass.set_rasterizer_pipeline(self.pipelines.get_default_pipeline());
+            render_pass.draw(0..3, 0..1);
         }
 
         // submit will accept anything that implements IntoIter
