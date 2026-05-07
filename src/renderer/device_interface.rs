@@ -1,12 +1,16 @@
 use std::{error, sync::Arc};
 use winit::window::Window;
 
+struct SurfaceDetailInfo {
+    surface     : wgpu::Surface<'static>,
+    config      : wgpu::SurfaceConfiguration
+}
+
 /// Interface to WGPU hardware device
 pub struct DeviceInterface {
     device              : wgpu::Device,
-    surface             : wgpu::Surface<'static>,
+    surface             : SurfaceDetailInfo,
     graphics_queue      : wgpu::Queue,
-    config              : wgpu::SurfaceConfiguration,
     presentation_ready  : bool
 }
 
@@ -71,32 +75,39 @@ impl DeviceInterface {
 
         Ok(DeviceInterface {
             device,
-            surface,
-            config,
+            surface: SurfaceDetailInfo {
+                surface, config
+            },
             graphics_queue: queue,
             presentation_ready: false
         })
     }
 
     pub fn configure_surface(&mut self) {
-        self.surface.configure(&self.device, &self.config);
+        self.surface.surface.configure(&self.device, &self.surface.config);
         self.presentation_ready = true;
     }
 
     /// Set up the surface with specified configuration.
     pub fn create_surface(&mut self, width : u32, height : u32) {
         if width > 0 && height > 0 {
-            self.config.width = width;
-            self.config.height = height;
+            self.surface.config.width = width;
+            self.surface.config.height = height;
             self.configure_surface();
         }
     }
 
     pub fn get_current_surface_texture(&self) -> wgpu::CurrentSurfaceTexture {
-        self.surface.get_current_texture()
+        self.surface.surface.get_current_texture()
     }
 
     pub fn is_presentation_ready(&self) -> bool { self.presentation_ready }
+
+    /// Request the default color texture format for this device.
+    /// This format is selected by the surface creation routine.
+    pub fn get_default_texture_format(&self) -> wgpu::TextureFormat {
+        self.surface.config.format
+    }
 
     /// Acquire the graphics queue used to submit command encoders
     pub fn get_queue(&self) -> &wgpu::Queue { &self.graphics_queue }
