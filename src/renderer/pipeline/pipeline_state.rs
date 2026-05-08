@@ -61,7 +61,7 @@ impl PipelineStates {
     /// It is guaranteed to be valid. If it cannot be found, the program is considered to be in
     /// invalid state and will terminate.
     pub fn get_default_pipeline(&self) -> &RasterizerPipeline {
-        self.rasterizer_pipelines.get(&String::from("default")).unwrap()
+        self.rasterizer_pipelines.get(&String::from("default")).expect("Default pipeline not found for some reason.")
     }
 
     pub fn query_pipeline(&self, name: &String) -> Option<&RasterizerPipeline> {

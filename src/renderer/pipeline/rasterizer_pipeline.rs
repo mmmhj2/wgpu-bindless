@@ -64,6 +64,7 @@ impl RasterizerPipeline {
             fragment: rpd.fragment,
             primitive: wgpu::PrimitiveState{
                 cull_mode: rpd.cull_mode,
+                front_face: rpd.front_face,
                 ..DEFAULT_PRIMITIVE_STATE
             },
             depth_stencil: rpd.depthstencil,
