@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use wgpu::{ColorTargetState, ColorWrites, PipelineLayoutDescriptor};
 
-use crate::renderer::{device_interface::DeviceInterface, pipeline::rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::vertex_types::VertexType, pipeline::rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor}};
 
 pub struct PipelineStates {
     rasterizer_pipeline_layouts: HashMap<String, wgpu::PipelineLayout>,
@@ -38,7 +38,7 @@ impl PipelineStates {
                 module: &default_shader_module,
                 entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[]
+                buffers: VertexType::get_vertex_buffer_layout(VertexType::Basic)
             },
             wgpu::FragmentState{
                 module: &default_shader_module,

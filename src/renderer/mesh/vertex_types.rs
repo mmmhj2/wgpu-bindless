@@ -25,6 +25,7 @@ pub struct VertexBufferOthers {
 }
 
 impl VertexBufferOthers {
+    /// TODO: try `wgpu::vertex_attr_array!()` macro
     const BINDINGS : [wgpu::VertexAttribute; 3] = [
         wgpu::VertexAttribute{
             format: wgpu::VertexFormat::Float32x4,
