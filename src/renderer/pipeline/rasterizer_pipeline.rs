@@ -1,6 +1,6 @@
 use wgpu::{RenderPipelineDescriptor};
 
-use crate::renderer::{device_interface::DeviceInterface, pipeline::rasterizer_pipeline};
+use crate::renderer::device_interface::DeviceInterface;
 
 const DEFAULT_PRIMITIVE_STATE : wgpu::PrimitiveState = wgpu::PrimitiveState{
     topology: wgpu::PrimitiveTopology::TriangleList,

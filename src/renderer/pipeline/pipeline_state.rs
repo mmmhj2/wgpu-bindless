@@ -58,13 +58,32 @@ impl PipelineStates {
     }
 
     /// Query the default pipeline.
-    /// It is guaranteed to be valid. If it cannot be found, the program is considered to be in
-    /// invalid state and will terminate.
+    /// It is guaranteed to be valid. 
+    /// 
+    /// Panic
+    /// ---
+    /// If the default pipeline cannot be found, the program is considered to be in
+    /// invalid state and will panic and terminate.
     pub fn get_default_pipeline(&self) -> &RasterizerPipeline {
-        self.rasterizer_pipelines.get(&String::from("default")).expect("Default pipeline not found for some reason.")
+        self.query_pipeline(&String::from("default")).expect("Default pipeline not found for some reason.")
     }
 
     pub fn query_pipeline(&self, name: &String) -> Option<&RasterizerPipeline> {
         self.rasterizer_pipelines.get(name)
+    }
+
+    /// Query the default pipeline layout.
+    /// It is guaranteed to be valid. 
+    /// 
+    /// Panic
+    /// ---
+    /// If the default pipeline layout cannot be found, the program is considered to be in
+    /// invalid state and will panic and terminate.
+    pub fn get_default_pipeline_layout(&self) -> &wgpu::PipelineLayout {
+        self.query_pipeline_layout(&String::from("default")).expect("Default pipeline layout not found for some reason.")
+    }
+
+    pub fn query_pipeline_layout(&self, name: &String) -> Option<&wgpu::PipelineLayout> {
+        self.rasterizer_pipeline_layouts.get(name)
     }
 }
