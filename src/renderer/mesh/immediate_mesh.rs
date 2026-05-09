@@ -10,12 +10,13 @@ pub struct ImmediateMeshBuilder {
 }
 
 pub struct ImmediateMesh {
+    vertex_count        : u32,
     vertex_buffer_arr   : [wgpu::Buffer; 2]
 }
 
 impl ImmediateMesh {
-    fn new(pb: wgpu::Buffer, ab: wgpu::Buffer ) -> Self {
-        Self { vertex_buffer_arr: [pb, ab] }
+    fn new(cnt: u32, pb: wgpu::Buffer, ab: wgpu::Buffer) -> Self {
+        Self { vertex_count: cnt, vertex_buffer_arr: [pb, ab] }
     }
 }
 
@@ -61,7 +62,7 @@ impl ImmediateMeshBuilder {
 
         di.get_queue().write_buffer(&pb, 0, bytemuck::cast_slice(self.position.as_slice()));
         di.get_queue().write_buffer(&ab, 0, bytemuck::cast_slice(self.attributes.as_slice()));
-        ImmediateMesh::new(pb, ab)
+        ImmediateMesh::new(self.position.len() as u32, pb, ab)
     }
 }
 
@@ -76,5 +77,9 @@ impl super::Mesh for ImmediateMesh {
     
     fn get_vertex_type(&self) -> super::vertex_types::VertexType {
         super::vertex_types::VertexType::Basic
+    }
+    
+    fn get_vertex_draw_count(&self) -> u32 {
+        self.vertex_count
     }
 }
