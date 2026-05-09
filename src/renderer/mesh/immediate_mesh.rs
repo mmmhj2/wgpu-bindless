@@ -83,3 +83,5 @@ impl super::Mesh for ImmediateMesh {
         self.vertex_count
     }
 }
+
+impl super::DrawableMesh for ImmediateMesh {}

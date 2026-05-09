@@ -1,5 +1,5 @@
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::{Mesh, immediate_mesh::ImmediateMeshBuilder}, pipeline::{pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, Mesh, immediate_mesh::ImmediateMeshBuilder}, pipeline::{pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline}};
 
 use std::sync::Arc;
 
@@ -97,9 +97,7 @@ impl State {
             let mesh = mesh_builder.commit(&self.device);
 
             render_pass.set_rasterizer_pipeline(self.pipelines.get_default_pipeline());
-            render_pass.set_vertex_buffer(0, mesh.get_vertex_buffer()[0].slice(..));
-            render_pass.set_vertex_buffer(1, mesh.get_vertex_buffer()[1].slice(..));
-            render_pass.draw(0..mesh.get_vertex_draw_count(), 0..1);
+            mesh.draw(&mut render_pass);
         }
 
         // submit will accept anything that implements IntoIter
