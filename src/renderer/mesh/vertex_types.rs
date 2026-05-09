@@ -45,6 +45,7 @@ impl VertexBufferOthers {
     ];
 }
 
+#[derive(Clone, Copy, Debug)]
 pub enum VertexType {
     PositionOnly,
     Basic
