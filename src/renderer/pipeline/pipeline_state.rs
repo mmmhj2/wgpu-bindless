@@ -1,16 +1,18 @@
 use std::collections::HashMap;
 use wgpu::{ColorTargetState, ColorWrites, PipelineLayoutDescriptor};
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::vertex_types::VertexType, pipeline::rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::vertex_types::VertexType, pipeline::{bindless_resource_manager::BindlessResourceManager, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor}}};
 
 pub struct PipelineStates {
+    bindless_resources: BindlessResourceManager,
     rasterizer_pipeline_layouts: HashMap<String, wgpu::PipelineLayout>,
     rasterizer_pipelines: HashMap<String, RasterizerPipeline>
 }
 
 impl PipelineStates {
-    pub fn prepare_default_pipelines (device: &DeviceInterface) -> Self {
+    pub fn prepare_default_pipelines (device: & DeviceInterface) -> Self {
 
+        let bindless_resources = BindlessResourceManager::new(device.get_device());
         let mut rasterizer_pipeline_layouts: HashMap<String, wgpu::PipelineLayout> = HashMap::new();
         let mut rasterizer_pipelines: HashMap<String, RasterizerPipeline> = HashMap::new();
 
@@ -20,7 +22,7 @@ impl PipelineStates {
         let default_rasterizer_pipeline_layout = device.get_device().create_pipeline_layout(
             &PipelineLayoutDescriptor{
                 label: None,
-                bind_group_layouts: &[],
+                bind_group_layouts: &[Some(bindless_resources.get_bind_group_layout())],
                 immediate_size: 0
             }
         );
@@ -52,9 +54,16 @@ impl PipelineStates {
         rasterizer_pipeline_layouts.insert(String::from("default"), default_rasterizer_pipeline_layout);
 
         return Self{
+            bindless_resources,
             rasterizer_pipeline_layouts,
             rasterizer_pipelines
         }
+    }
+
+    /// Prepare to use stored render pipelines by setting bind groups to the render pass.
+    pub fn prepare_render_pass(&self, d: &wgpu::Device, rp: &mut wgpu::RenderPass) -> () {
+        let bind_groups = self.bindless_resources.get_bind_group(d);
+        rp.set_bind_group(0, &bind_groups, &[]);
     }
 
     /// Query the default pipeline.
