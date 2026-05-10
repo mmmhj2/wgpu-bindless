@@ -88,12 +88,12 @@ impl State {
             });
 
             let mut mesh_builder = ImmediateMeshBuilder::new();
-            mesh_builder.color4f([1.0, 0.0, 0.0, 1.0]);
-            mesh_builder.vertex3f([0.0, 0.5, 0.0]);
-            mesh_builder.color4f([0.0, 1.0, 0.0, 1.0]);
-            mesh_builder.vertex3f([-0.5, -0.5, 0.0]);
-            mesh_builder.color4f([0.0, 0.0, 1.0, 1.0]);
-            mesh_builder.vertex3f([0.5, -0.5, 0.0]);
+            mesh_builder.color3f([1.0, 0.0, 0.0]);
+            mesh_builder.vertex2f([ 0.0, 0.5]);
+            mesh_builder.color3f([0.0, 1.0, 0.0]);
+            mesh_builder.vertex2f([-0.5, -0.5]);
+            mesh_builder.color3f([0.0, 0.0, 1.0]);
+            mesh_builder.vertex2f([ 0.5, -0.5]);
             let mesh = mesh_builder.commit(&self.device);
 
             render_pass.set_rasterizer_pipeline(self.pipelines.get_default_pipeline());

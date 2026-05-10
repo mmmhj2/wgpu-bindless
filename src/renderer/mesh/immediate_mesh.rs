@@ -25,6 +25,10 @@ impl ImmediateMeshBuilder {
         Self { state: VertexBufferOthers::zeroed(), position: Vec::new(), attributes: Vec::new() }
     }
 
+    pub fn color3f(&mut self, c: [f32; 3]) -> () {
+        self.color4f([c[0], c[1], c[2], 1.0]);
+    }
+
     pub fn color4f(&mut self, c: [f32; 4]) -> () {
         self.state.color = c;
     }
@@ -35,6 +39,10 @@ impl ImmediateMeshBuilder {
 
     pub fn texcoord2f(&mut self, t: [f32; 2]) -> () {
         self.state.uv0 = t;
+    }
+
+    pub fn vertex2f(&mut self, v: [f32; 2]) -> () {
+        self.vertex3f([v[0], v[1], 0.0])
     }
 
     pub fn vertex3f(&mut self, v: [f32; 3]) -> () {
