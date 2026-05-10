@@ -19,7 +19,8 @@ impl State {
         let pipelines = PipelineStates::prepare_default_pipelines(&device);
         Ok(Self {
             window: window.clone(),
-            device, pipelines
+            device,
+            pipelines
         })
     }
 
@@ -96,6 +97,7 @@ impl State {
             mesh_builder.vertex2f([ 0.5, -0.5]);
             let mesh = mesh_builder.commit(&self.device);
 
+            self.pipelines.prepare_render_pass(self.device.get_device(), &mut render_pass);
             render_pass.set_rasterizer_pipeline(self.pipelines.get_default_pipeline());
             mesh.draw(&mut render_pass);
         }

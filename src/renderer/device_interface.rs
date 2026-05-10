@@ -59,7 +59,7 @@ impl DeviceInterface {
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 required_limits: wgpu::Limits{
                     max_binding_array_sampler_elements_per_shader_stage: MAX_SAMPLER_SLOTS as u32,
-                    max_binding_array_elements_per_shader_stage: MAX_TEXTURE_SLOTS as u32,
+                    max_binding_array_elements_per_shader_stage: (MAX_TEXTURE_SLOTS + MAX_SAMPLER_SLOTS) as u32,
                     max_immediate_size: 64,
                     ..wgpu::Limits::default()
                 },
