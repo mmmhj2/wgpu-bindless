@@ -1,6 +1,8 @@
 use std::{error, sync::Arc};
 use winit::window::Window;
 
+use crate::renderer::pipeline::bindless_resource_manager::{MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS};
+
 struct SurfaceDetailInfo {
     surface     : wgpu::Surface<'static>,
     config      : wgpu::SurfaceConfiguration
@@ -47,9 +49,20 @@ impl DeviceInterface {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
-                required_features: wgpu::Features::empty(),
+                required_features:
+                    // For material data in push constants (i.e. immediates)
+                    wgpu::Features::IMMEDIATES |
+                    // For bindless rendering
+                    wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY |
+                    wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING |
+                    wgpu::Features::TEXTURE_BINDING_ARRAY,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                required_limits: wgpu::Limits::default(),
+                required_limits: wgpu::Limits{
+                    max_binding_array_sampler_elements_per_shader_stage: MAX_SAMPLER_SLOTS as u32,
+                    max_binding_array_elements_per_shader_stage: MAX_TEXTURE_SLOTS as u32,
+                    max_immediate_size: 64,
+                    ..wgpu::Limits::default()
+                },
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
             })
