@@ -23,7 +23,7 @@ impl PipelineStates {
             &PipelineLayoutDescriptor{
                 label: None,
                 bind_group_layouts: &[Some(bindless_resources.get_bind_group_layout())],
-                immediate_size: 0
+                immediate_size: std::mem::size_of::<[[f32; 3]; 4]>() as u32
             }
         );
 

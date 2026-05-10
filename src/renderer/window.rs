@@ -11,6 +11,7 @@ pub struct State {
     window: Arc<Window>,
     device: DeviceInterface,
     pipelines: PipelineStates
+    
 }
 
 impl State {
