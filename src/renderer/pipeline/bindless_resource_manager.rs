@@ -127,7 +127,7 @@ impl BindlessResourceManager {
     pub fn new (d: &wgpu::Device) -> Self {
 
         let dummy_texture_view = d.create_texture(&wgpu::TextureDescriptor {
-                label: None,
+                label: Some("Dummy texture for bindless"),
                 size: wgpu::Extent3d {
                     width: 1,
                     height: 1,
@@ -139,8 +139,12 @@ impl BindlessResourceManager {
                 format: wgpu::TextureFormat::Rgba8UnormSrgb,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
-            }).create_view(&Default::default());
-        let dummy_sampler  =d.create_sampler(&Default::default());
+            }).create_view(&wgpu::TextureViewDescriptor{
+                label: Some("Dummy texture view for bindless"), ..Default::default()
+            });
+        let dummy_sampler  =d.create_sampler(
+            &wgpu::SamplerDescriptor{ label: Some("Dummy sampler for bindless"), ..Default::default() }
+        );
 
         Self {
             bind_group_layout: d.create_bind_group_layout(&Self::BGLD_BINDLESS),
