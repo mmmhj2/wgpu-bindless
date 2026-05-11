@@ -5,6 +5,13 @@ var bindless_textures : binding_array<texture_2d<f32>, 512>;
 @group(0) @binding(1)
 var bindless_samplers : binding_array<sampler, 128>;
 
+struct Camera {
+    vp_matrix: mat4x4<f32>
+};
+
+@group(1) @binding(0)
+var<uniform> camera: Camera;
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) color: vec4<f32>,
@@ -26,11 +33,11 @@ struct Immediates {
 };
 var<immediate> immediates: Immediates;
 
-/// Unpack a combined index into sampler index and texture index.
+/// Unpack a combined index into texture index and sampler index, respectively.
 fn unpack_tx(idx: u32) -> vec2<u32> {
     return vec2<u32>(
-        (idx & 0xFFFF0000) >> 16,
-        (idx & 0x0000FFFF)
+        (idx & 0x0000FFFF),
+        (idx & 0xFFFF0000) >> 16
     );
 }
 
@@ -39,12 +46,15 @@ fn vs_main(
     model: VertexInput
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = mat4x4<f32>(
+
+    var model_matrix = mat4x4<f32>(
         vec4f(immediates.model_matrix[0], 0.0f),
         vec4f(immediates.model_matrix[1], 0.0f),
         vec4f(immediates.model_matrix[2], 0.0f),
         vec4f(immediates.model_matrix[3], 1.0f)
-    ) * vec4<f32>(model.position.xyz, 1.0);
+    );
+
+    out.clip_position = camera.vp_matrix * model_matrix * vec4<f32>(model.position.xyz, 1.0);
 
     out.color = model.color;
     out.uv0 = model.uv0;
@@ -54,10 +64,10 @@ fn vs_main(
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
-    var diffuse_texture_indices = unpack_tx(immediates.diffuse_tx_sp);
+    var diffuse_indices = unpack_tx(immediates.diffuse_tx_sp);
     var sampled_diffuse_color = textureSample(
-        bindless_textures[diffuse_texture_indices[1]],
-        bindless_samplers[diffuse_texture_indices[0]],
+        bindless_textures[diffuse_indices[0]],
+        bindless_samplers[diffuse_indices[1]],
         in.uv0
     );
 
