@@ -89,7 +89,7 @@ impl State {
                 multiview_mask: None,
             });
 
-            let mut mesh_builder = ImmediateMeshBuilder::new();
+            let mut mesh_builder = ImmediateMeshBuilder::new(&self.device, self.pipelines.get_bindless_resource_manager_mut());
             mesh_builder.color3f([1.0, 0.0, 0.0]);
             mesh_builder.vertex2f([ 0.0, 0.5]);
             mesh_builder.color3f([0.0, 1.0, 0.0]);

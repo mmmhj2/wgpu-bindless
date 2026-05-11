@@ -1,28 +1,43 @@
 use bytemuck::Zeroable;
 use wgpu::{BufferDescriptor, BufferUsages};
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::vertex_types::{VertexBufferOthers, VertexBufferPosition}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::vertex_types::{VertexBufferOthers, VertexBufferPosition}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial}};
 
 pub struct ImmediateMeshBuilder {
     state       : VertexBufferOthers,
     position    : Vec<VertexBufferPosition>,
-    attributes  : Vec<VertexBufferOthers>
+    attributes  : Vec<VertexBufferOthers>,
+    material    : PBRMaterial
 }
 
 pub struct ImmediateMesh {
     vertex_count        : u32,
-    vertex_buffer_arr   : [wgpu::Buffer; 2]
+    vertex_buffer_arr   : [wgpu::Buffer; 2],
+    material            : PBRMaterial
 }
 
 impl ImmediateMesh {
-    fn new(cnt: u32, pb: wgpu::Buffer, ab: wgpu::Buffer) -> Self {
-        Self { vertex_count: cnt, vertex_buffer_arr: [pb, ab] }
+    fn new(cnt: u32, pb: wgpu::Buffer, ab: wgpu::Buffer, material: PBRMaterial) -> Self {
+        Self { vertex_count: cnt, vertex_buffer_arr: [pb, ab], material}
     }
 }
 
 impl ImmediateMeshBuilder {
-    pub fn new() -> Self {
-        Self { state: VertexBufferOthers::zeroed(), position: Vec::new(), attributes: Vec::new() }
+    pub fn new(di: &DeviceInterface, mgr: &mut BindlessResourceManager) -> Self {
+        let material = PBRMaterial::new(
+            di.get_device(),
+            mgr,
+            None,
+            None,
+            None
+        ).expect("Failed to create material for immediate mesh");
+
+        Self {
+            state: VertexBufferOthers::zeroed(),
+            position: Vec::new(),
+            attributes: Vec::new(),
+            material
+        }
     }
 
     pub fn color3f(&mut self, c: [f32; 3]) -> () {
@@ -70,7 +85,7 @@ impl ImmediateMeshBuilder {
 
         di.get_queue().write_buffer(&pb, 0, bytemuck::cast_slice(self.position.as_slice()));
         di.get_queue().write_buffer(&ab, 0, bytemuck::cast_slice(self.attributes.as_slice()));
-        ImmediateMesh::new(self.position.len() as u32, pb, ab)
+        ImmediateMesh::new(self.position.len() as u32, pb, ab, self.material)
     }
 }
 
@@ -95,7 +110,9 @@ impl super::Mesh for ImmediateMesh {
         &[ [1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
     }
 
-    
+    fn get_material(&self) -> &PBRMaterial {
+        &self.material
+    }
 }
 
 impl super::DrawableMesh for ImmediateMesh {}

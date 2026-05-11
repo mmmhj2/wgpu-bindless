@@ -1,4 +1,4 @@
-use crate::renderer::mesh::vertex_types::VertexType;
+use crate::renderer::{mesh::vertex_types::VertexType, pipeline::pbr_material::{PBRMaterial, PBRMaterialBuffer}};
 
 pub mod vertex_types;
 pub mod immediate_mesh;
@@ -33,11 +33,16 @@ pub trait Mesh {
     /// To save bandwidth the model matrix should have 3 rows and 4 columns.
     /// Note that both cgmath and WGSL uses *column-major* matrices.
     fn get_model_matrix(&self) -> &[[f32; 4]; 3];
+
+    /// Get the material description of the mesh.
+    fn get_material(&self) -> &PBRMaterial;
 }
 
 pub trait DrawableMesh : Mesh{
     fn draw(&self, rp: &mut wgpu::RenderPass) -> () {
+
         rp.set_immediates(0, bytemuck::cast_slice(self.get_model_matrix()));
+        rp.set_immediates(48, bytemuck::cast_slice(PBRMaterialBuffer::from(self.get_material()).get_slice()));
 
         let vbs = self.get_vertex_buffer();
         for (i, b) in vbs.iter().enumerate() {

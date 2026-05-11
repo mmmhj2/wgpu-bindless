@@ -23,7 +23,7 @@ impl PipelineStates {
             &PipelineLayoutDescriptor{
                 label: None,
                 bind_group_layouts: &[Some(bindless_resources.get_bind_group_layout())],
-                immediate_size: std::mem::size_of::<[[f32; 3]; 4]>() as u32
+                immediate_size: 64
             }
         );
 
@@ -95,4 +95,7 @@ impl PipelineStates {
     pub fn query_pipeline_layout(&self, name: &String) -> Option<&wgpu::PipelineLayout> {
         self.rasterizer_pipeline_layouts.get(name)
     }
+
+    pub fn get_bindless_resource_manager(&self) -> &BindlessResourceManager { &self.bindless_resources }
+    pub fn get_bindless_resource_manager_mut(&mut self) -> &mut BindlessResourceManager { &mut self.bindless_resources }
 }
