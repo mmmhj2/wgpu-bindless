@@ -1,3 +1,10 @@
+
+// Note: Use `binding_array` instead of `array``.
+@group(0) @binding(0)
+var bindless_textures : binding_array<texture_2d<f32>, 512>;
+@group(0) @binding(1)
+var bindless_samplers : binding_array<sampler, 128>;
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) color: vec4<f32>,
@@ -7,14 +14,25 @@ struct VertexInput {
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) color: vec4<f32>
+    @location(0) color: vec4<f32>,
+    @location(1) uv0: vec2<f32>
 };
 
 struct Immediates {
-    model_matrix: mat4x3<f32>
+    model_matrix: mat4x3<f32>,
+    diffuse_tx_sp   : u32,
+    normal_tx_sp    : u32,
+    mrao_tx_sp      : u32
 };
-
 var<immediate> immediates: Immediates;
+
+/// Unpack a combined index into sampler index and texture index.
+fn unpack_tx(idx: u32) -> vec2<u32> {
+    return vec2<u32>(
+        (idx & 0xFFFF0000) >> 16,
+        (idx & 0x0000FFFF)
+    );
+}
 
 @vertex
 fn vs_main(
@@ -27,11 +45,21 @@ fn vs_main(
         vec4f(immediates.model_matrix[2], 0.0f),
         vec4f(immediates.model_matrix[3], 1.0f)
     ) * vec4<f32>(model.position.xyz, 1.0);
+
     out.color = model.color;
+    out.uv0 = model.uv0;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return in.color;
+
+    var diffuse_texture_indices = unpack_tx(immediates.diffuse_tx_sp);
+    var sampled_diffuse_color = textureSample(
+        bindless_textures[diffuse_texture_indices[1]],
+        bindless_samplers[diffuse_texture_indices[0]],
+        in.uv0
+    );
+
+    return in.color * sampled_diffuse_color;
 }
