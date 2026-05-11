@@ -12,7 +12,7 @@ pub struct PipelineStates {
 impl PipelineStates {
     pub fn prepare_default_pipelines (device: & DeviceInterface) -> Self {
 
-        let bindless_resources = BindlessResourceManager::new(device.get_device());
+        let bindless_resources = BindlessResourceManager::new(device);
         let mut rasterizer_pipeline_layouts: HashMap<String, wgpu::PipelineLayout> = HashMap::new();
         let mut rasterizer_pipelines: HashMap<String, RasterizerPipeline> = HashMap::new();
 

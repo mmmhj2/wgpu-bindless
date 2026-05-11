@@ -14,6 +14,20 @@ pub struct SamplerDescription {
     pub border_color    : Option<wgpu::SamplerBorderColor>  
 }
 
+impl Default for SamplerDescription {
+    fn default() -> Self {
+        Self {
+            address_mode: Default::default(),
+            mag_filter: Default::default(),
+            min_filter: Default::default(),
+            mipmap_filter: Default::default(),
+            compare: None,
+            anisotropy_clamp: 1,
+            border_color: None
+        }
+    }
+}
+
 impl From<&SamplerDescription> for wgpu::SamplerDescriptor<'_> {
     fn from(value: &SamplerDescription) -> Self {
         Self { 

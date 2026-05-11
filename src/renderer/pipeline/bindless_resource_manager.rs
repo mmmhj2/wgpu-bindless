@@ -1,20 +1,22 @@
 use std::{collections::{HashMap, hash_map::Entry}, num::NonZeroU32};
-use crate::renderer::pipeline::{resource_allocator::LinearResourceAllocator, sampler::SamplerDescription};
+use wgpu::TexelCopyBufferInfo;
+
+use crate::renderer::{device_interface::DeviceInterface, pipeline::{resource_allocator::LinearResourceAllocator, sampler::SamplerDescription}};
+
+use super::resource_allocator::LinearResourceAllocatorError;
 
 pub const MAX_TEXTURE_SLOTS : usize = 512;
 pub const MAX_SAMPLER_SLOTS : usize = 128;
 
 pub struct BindlessResourceManager {
-    bind_group_layout   : wgpu::BindGroupLayout,
+    bind_group_layout       : wgpu::BindGroupLayout,
+    texture_view_allocator  : LinearResourceAllocator<wgpu::TextureView, MAX_TEXTURE_SLOTS>,
+    sampler_allocator       : LinearResourceAllocator<wgpu::Sampler, MAX_SAMPLER_SLOTS>,
+    hashed_samplers         : HashMap<SamplerDescription, usize>,
 
-    textures            : [(); MAX_TEXTURE_SLOTS],
-
-    sampler_allocator   : LinearResourceAllocator<wgpu::Sampler, MAX_SAMPLER_SLOTS>,
-    hashed_samplers     : HashMap<SamplerDescription, usize>,
-
-    /// WGPU disallows zero sized bind groups, so we need a dummy texture and dummy sampler.
-    dummy_texture_view  : wgpu::TextureView,
-    dummy_sampler       : wgpu::Sampler
+    default_sampler_idx     : usize,
+    white_txv_idx           : usize,
+    default_bump_txv_idx    : usize
 }
 
 impl BindlessResourceManager {
@@ -43,57 +45,113 @@ impl BindlessResourceManager {
         entries: &Self::BGL_BINDLESS
     };
 
-    pub fn new (d: &wgpu::Device) -> Self {
-
-        let dummy_texture_view = d.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Dummy texture for bindless"),
-                size: wgpu::Extent3d {
-                    width: 1,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            }).create_view(&wgpu::TextureViewDescriptor{
-                label: Some("Dummy texture view for bindless"), ..Default::default()
-            });
-        let dummy_sampler  =d.create_sampler(
-            &wgpu::SamplerDescriptor{ label: Some("Dummy sampler for bindless"), ..Default::default() }
-        );
-
-        Self {
-            bind_group_layout: d.create_bind_group_layout(&Self::BGLD_BINDLESS),
-            textures: [(); MAX_TEXTURE_SLOTS],
+    pub fn new (d: &DeviceInterface) -> Self {
+        let mut ret = Self {
+            bind_group_layout: d.get_device().create_bind_group_layout(&Self::BGLD_BINDLESS),
+            texture_view_allocator: LinearResourceAllocator::new(),
             sampler_allocator: LinearResourceAllocator::new(),
             hashed_samplers: HashMap::new(),
-            dummy_texture_view,
-            dummy_sampler
-        }
+            default_sampler_idx: 0,
+            white_txv_idx: 0,
+            default_bump_txv_idx: 0
+        };
+
+        ret.default_sampler_idx = ret.push_sampler(d.get_device(), Default::default()).expect("Failed to create default sampler.");
+
+        let packed_layout = wgpu::TexelCopyBufferLayout{
+            offset: 0,
+            bytes_per_row: None,
+            rows_per_image: None
+        };
+        let one_extent = wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1
+        };
+
+        let white_texture = d.get_device().create_texture(&wgpu::TextureDescriptor {
+            label: Some("White texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        d.get_queue().write_texture(
+            wgpu::TexelCopyTextureInfo{
+                aspect: wgpu::TextureAspect::All,
+                mip_level: 0,
+                texture: &white_texture,
+                origin: wgpu::Origin3d{x: 0, y: 0, z: 0}
+            },
+            &[255, 255, 255, 255],
+            packed_layout.clone(),
+            one_extent.clone()
+        );
+        ret.white_txv_idx = ret.push_texture(white_texture.create_view(&Default::default())).expect("Failed to create white texture");
+
+        let default_normal_texture = d.get_device().create_texture(&wgpu::TextureDescriptor {
+            label: Some("Default normal texture"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        d.get_queue().write_texture(
+            wgpu::TexelCopyTextureInfo{
+                aspect: wgpu::TextureAspect::All,
+                mip_level: 0,
+                texture: &default_normal_texture,
+                origin: wgpu::Origin3d{x: 0, y: 0, z: 0}
+            },
+            &[127, 127, 127, 0],
+            packed_layout.clone(),
+            one_extent.clone()
+        );
+        ret.default_bump_txv_idx = ret.push_texture(default_normal_texture.create_view(&Default::default())).expect("Failed to create default normal texture");
+
+        return ret;
     }
 
-    /// Query the index of a sampler in the bindless resource manager.
-    pub fn query_sampler (&self, desc: &SamplerDescription) -> Option<usize> {
-        self.hashed_samplers.get(desc).copied()
-    }
+    pub fn get_default_sampler(&self) -> usize { self.default_sampler_idx }
+    pub fn get_white_texture(&self) -> usize { self.white_txv_idx }
+    pub fn get_default_bump_texture(&self) -> usize { self.default_bump_txv_idx }
 
-    /// Obtain the index of a given sampler in the manager.
-    /// If the sampler does not exist, a new one will be created.
-    pub fn get_sampler (&mut self, d: &wgpu::Device, desc: SamplerDescription) -> usize {
+    /// Push a sampler into the manager, returning its index.
+    ///
+    /// Descriptions are hashed and stored into a Hash Map.
+    /// Samplers with the same description will therefore be reused and shares
+    /// the same index.
+    pub fn push_sampler(&mut self, d: &wgpu::Device, desc: SamplerDescription) -> Result<usize, LinearResourceAllocatorError> {
         match self.hashed_samplers.entry(desc) {
             Entry::Occupied(s) => {
-                *s.get()
+                Ok(*s.get())
             },
             Entry::Vacant(s) => {
                 let sampler = d.create_sampler(&wgpu::SamplerDescriptor::from(&desc));
-                let idx = self.sampler_allocator.push_back(sampler).expect("Failed to allocate new sampler");
+                let idx = self.sampler_allocator.push_back(sampler)?;
                 s.insert(idx);
-                idx
+                Ok(idx)
             }
         }
+    }
+
+    /// Push a texture into the manager, returning its index.
+    pub fn push_texture(&mut self, t: wgpu::TextureView) -> Result<usize, LinearResourceAllocatorError> {
+        self.texture_view_allocator.push_back(t)
     }
 
     /// Get the bind group layout associated with the current bindless resource manager.
@@ -105,20 +163,25 @@ impl BindlessResourceManager {
     /// 
     /// A new bind group will be created on the device specified when creating the manager.
     pub fn get_bind_group(&self, d: &wgpu::Device) -> wgpu::BindGroup {
-        let sampler_array = if self.sampler_allocator.count() > 0 { 
-            Vec::from_iter(
+
+        assert!(self.sampler_allocator.count() > 0);
+        assert!(self.texture_view_allocator.count() > 0);
+
+        let sampler_array = Vec::from_iter(
                 self.sampler_allocator.get_allocated_slice().iter().map(
                     |x| x.as_ref().expect("Allocated sampler disappeared.")
                 )
-            )
-        } else {
-            vec![&self.dummy_sampler]
-        };
+            );
+        let texture_view_array = Vec::from_iter(
+                self.texture_view_allocator.get_allocated_slice().iter().map(
+                    |x| x.as_ref().expect("Allocated texture view disappeared.")
+                )
+            );
 
         let entries= &[
             wgpu::BindGroupEntry{
                 binding: 0,
-                resource: wgpu::BindingResource::TextureViewArray(&[&self.dummy_texture_view])
+                resource: wgpu::BindingResource::TextureViewArray(&texture_view_array)
             },
             wgpu::BindGroupEntry{
                 binding: 1,
