@@ -1,4 +1,4 @@
-use crate::renderer::{mesh::vertex_types::VertexType, pipeline::pbr_material::{PBRMaterial, PBRMaterialBuffer}};
+use crate::renderer::{mesh::vertex_types::VertexType, pipeline::pbr_material::{PBRMaterial}};
 
 pub mod vertex_types;
 pub mod immediate_mesh;
@@ -42,7 +42,7 @@ pub trait DrawableMesh : Mesh{
     fn draw(&self, rp: &mut wgpu::RenderPass) -> () {
 
         rp.set_immediates(0, bytemuck::cast_slice(self.get_model_matrix()));
-        rp.set_immediates(48, bytemuck::cast_slice(PBRMaterialBuffer::from(self.get_material()).get_slice()));
+        rp.set_immediates(48, &self.get_material().as_u8_arr());
 
         let vbs = self.get_vertex_buffer();
         for (i, b) in vbs.iter().enumerate() {

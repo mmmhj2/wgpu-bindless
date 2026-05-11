@@ -1,29 +1,5 @@
 use crate::renderer::pipeline::{bindless_resource_manager::BindlessResourceManager, resource_allocator::LinearResourceAllocatorError, sampler::SamplerDescription};
 
-/// Buffer entry for a PBR material.
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
-pub struct PBRMaterialBuffer {
-    data : [u16; 6]
-}
-
-impl From<&PBRMaterial> for PBRMaterialBuffer {
-    fn from(value: &PBRMaterial) -> Self {
-        Self {
-            data: [value.diffuse_tx as u16,
-            value.diffuse_sp as u16,
-            value.normal_tx as u16,
-            value.normal_sp as u16,
-            value.mrao_tx as u16,
-            value.mrao_sp as u16]
-        }
-    }
-}
-
-impl PBRMaterialBuffer {
-    pub fn get_slice(&self) -> &[u16] { &self.data }
-}
-
 pub struct PBRMaterial {
     diffuse_tx  : usize,
     normal_tx   : usize,
@@ -65,5 +41,27 @@ impl PBRMaterial {
         }
 
         Ok(ret)
+    }
+
+    /// Convert this material into a u8 slice for uploading to GPU.
+    /// 
+    /// The buffer is composed of 6 16-bit integers:
+    /// 1. Texture ID of Diffuse Map
+    /// 1. Sampler ID of Diffuse Map
+    /// 1. Texture ID of Normal Map
+    /// 1. Sampler ID of Normal Map
+    /// 1. Texture ID of MRAO Map
+    /// 1. Sampler ID of MRAO Map
+    /// 
+    /// WGSL does not support 16-bit integers, so they are packed into 3 32-bit integers on the shader side.
+    /// As WGSL enforces little-endianness, lower 16 bits of each integers are therefore the index of texture.
+    pub fn as_u8_arr(&self) -> [u8; 12] {
+        let bytes = [self.diffuse_tx as u16,
+            self.diffuse_sp as u16,
+            self.normal_tx as u16,
+            self.normal_sp as u16,
+            self.mrao_tx as u16,
+            self.mrao_sp as u16];
+        bytemuck::cast(bytes)
     }
 }

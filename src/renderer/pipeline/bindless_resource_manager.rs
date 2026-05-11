@@ -117,7 +117,7 @@ impl BindlessResourceManager {
                 texture: &default_normal_texture,
                 origin: wgpu::Origin3d{x: 0, y: 0, z: 0}
             },
-            &[127, 127, 127, 0],
+            &[128, 128, 255, 0],
             packed_layout.clone(),
             one_extent.clone()
         );
