@@ -124,9 +124,7 @@ impl DeviceInterface {
 
     /// Acquire the graphics queue used to submit command encoders
     pub fn get_queue(&self) -> &wgpu::Queue { &self.graphics_queue }
-    pub fn get_queue_mut(&mut self) -> &mut wgpu::Queue { &mut self.graphics_queue }
 
     /// Acquire the logical device
     pub fn get_device(&self) -> &wgpu::Device { &self.device }
-    pub fn get_device_mut(&mut self) -> &mut wgpu::Device { &mut self.device }
 }
