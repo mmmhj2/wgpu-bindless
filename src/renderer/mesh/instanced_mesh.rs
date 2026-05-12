@@ -16,7 +16,12 @@ impl InstancedMesh {
 }
 
 impl InstancedMesh {
-    pub fn create_from_gltf(di: &DeviceInterface, p: gltf::Primitive) -> Arc<Self> {
+    pub fn create_from_gltf(
+        di: &DeviceInterface,
+        primitive: gltf::Primitive,
+        buffers: &Vec<gltf::buffer::Data>,
+        images: &Vec<gltf::image::Data>
+    ) -> Arc<Self> {
         todo!()
     }
 }
@@ -31,7 +36,7 @@ impl Mesh for InstancedMesh {
     }
 
     fn get_index_buffer(&self) -> Option<&wgpu::Buffer> {
-        todo!()
+        None
     }
 
     fn get_vertex_type(&self) -> super::vertex_types::VertexType {
@@ -51,13 +56,18 @@ impl InstancedMeshInstance {
         Self { mesh, model_matrix }
     }
 
-    pub fn create_from_gltf(di: &DeviceInterface, m: gltf::Mesh) -> Vec<Self> {
+    pub fn create_from_gltf(
+        di: &DeviceInterface,
+        mesh: &gltf::Mesh,
+        buffers: &Vec<gltf::buffer::Data>,
+        images: &Vec<gltf::image::Data>
+    ) -> Vec<Self> {
         let mut ret = Vec::new();
 
-        for primitive in m.primitives() {
+        for primitive in mesh.primitives() {
             ret.push(
                 Self::new(
-                    InstancedMesh::create_from_gltf(di, primitive),
+                    InstancedMesh::create_from_gltf(di, primitive, buffers, images),
                     cgmath::Matrix4::identity().into()
                 )
             )
