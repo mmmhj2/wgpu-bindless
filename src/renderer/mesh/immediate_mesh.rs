@@ -105,7 +105,9 @@ impl super::Mesh for ImmediateMesh {
     fn get_vertex_draw_count(&self) -> u32 {
         self.vertex_count
     }
-    
+}
+
+impl super::DrawableMesh for ImmediateMesh {
     fn get_model_matrix(&self) -> &[[f32; 4]; 3] {
         &[ [1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
     }
@@ -114,5 +116,3 @@ impl super::Mesh for ImmediateMesh {
         &self.material
     }
 }
-
-impl super::DrawableMesh for ImmediateMesh {}

@@ -2,6 +2,7 @@ use crate::renderer::{mesh::vertex_types::VertexType, pipeline::pbr_material::{P
 
 pub mod vertex_types;
 pub mod immediate_mesh;
+pub mod instanced_mesh;
 
 pub trait Mesh {
     /// Get a slice of references to all vertex attribute buffers.
@@ -26,8 +27,9 @@ pub trait Mesh {
     /// Currently unused.
     #[allow(unused)]
     fn get_vertex_type(&self) -> VertexType;
+}
 
-
+pub trait DrawableMesh : Mesh{
     /// Get the model matrix of the mesh.
     /// 
     /// To save bandwidth the model matrix should have 3 rows and 4 columns.
@@ -36,9 +38,7 @@ pub trait Mesh {
 
     /// Get the material description of the mesh.
     fn get_material(&self) -> &PBRMaterial;
-}
 
-pub trait DrawableMesh : Mesh{
     fn draw(&self, rp: &mut wgpu::RenderPass) -> () {
 
         rp.set_immediates(0, bytemuck::cast_slice(self.get_model_matrix()));
