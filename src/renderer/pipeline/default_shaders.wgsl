@@ -26,7 +26,7 @@ struct VertexOutput {
 };
 
 struct Immediates {
-    model_matrix: mat4x3<f32>,
+    model_matrix    : mat4x4<f32>,
     diffuse_tx_sp   : u32,
     normal_tx_sp    : u32,
     mrao_tx_sp      : u32
@@ -47,14 +47,7 @@ fn vs_main(
 ) -> VertexOutput {
     var out: VertexOutput;
 
-    var model_matrix = mat4x4<f32>(
-        vec4f(immediates.model_matrix[0], 0.0f),
-        vec4f(immediates.model_matrix[1], 0.0f),
-        vec4f(immediates.model_matrix[2], 0.0f),
-        vec4f(immediates.model_matrix[3], 1.0f)
-    );
-
-    out.clip_position = camera.vp_matrix * model_matrix * vec4<f32>(model.position.xyz, 1.0);
+    out.clip_position = camera.vp_matrix * immediates.model_matrix * vec4<f32>(model.position.xyz, 1.0);
 
     out.color = model.color;
     out.uv0 = model.uv0;

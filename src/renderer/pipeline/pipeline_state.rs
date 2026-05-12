@@ -25,7 +25,7 @@ impl PipelineStates {
             &PipelineLayoutDescriptor{
                 label: None,
                 bind_group_layouts: &[Some(bindless_resources.get_bind_group_layout()), Some(cameras.get_bind_group_layout())],
-                immediate_size: 64
+                immediate_size: 80
             }
         );
 

@@ -32,9 +32,11 @@ pub trait Mesh {
 pub trait DrawableMesh : Mesh{
     /// Get the model matrix of the mesh.
     /// 
-    /// To save bandwidth the model matrix should have 3 rows and 4 columns.
+    /// To save bandwidth the model matrix should have 4 rows and 4 columns.
     /// Note that both cgmath and WGSL uses *column-major* matrices.
-    fn get_model_matrix(&self) -> &[[f32; 4]; 3];
+    /// While Rust has enforces row-major order, so long as you don't manipulate
+    /// the matrix directly with Rust array, it will be fine.
+    fn get_model_matrix(&self) -> &[[f32; 4]; 4];
 
     /// Get the material description of the mesh.
     fn get_material(&self) -> &PBRMaterial;
@@ -42,7 +44,7 @@ pub trait DrawableMesh : Mesh{
     fn draw(&self, rp: &mut wgpu::RenderPass) -> () {
 
         rp.set_immediates(0, bytemuck::cast_slice(self.get_model_matrix()));
-        rp.set_immediates(48, &self.get_material().as_u8_arr());
+        rp.set_immediates(64, &self.get_material().as_u8_arr());
 
         let vbs = self.get_vertex_buffer();
         for (i, b) in vbs.iter().enumerate() {

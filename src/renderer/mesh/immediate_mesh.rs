@@ -108,8 +108,10 @@ impl super::Mesh for ImmediateMesh {
 }
 
 impl super::DrawableMesh for ImmediateMesh {
-    fn get_model_matrix(&self) -> &[[f32; 4]; 3] {
-        &[ [1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
+
+    fn get_model_matrix(&self) -> &[[f32; 4]; 4] {
+        // Wanted to use cgmath::Matrix4::identity() but failed.
+        &[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
     }
 
     fn get_material(&self) -> &PBRMaterial {
