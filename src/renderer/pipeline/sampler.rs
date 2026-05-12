@@ -46,3 +46,55 @@ impl From<&SamplerDescription> for wgpu::SamplerDescriptor<'_> {
         }
     }
 }
+
+impl From<&gltf::texture::Sampler<'_>> for SamplerDescription {
+
+    fn from(value: &gltf::texture::Sampler) -> Self {
+        fn match_address_mode(m: gltf::texture::WrappingMode) -> wgpu::AddressMode {
+            match m {
+                gltf::texture::WrappingMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
+                gltf::texture::WrappingMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
+                gltf::texture::WrappingMode::Repeat => wgpu::AddressMode::Repeat,
+            }
+        }
+
+        fn match_mag_filter(f: Option<gltf::texture::MagFilter>) -> wgpu::FilterMode {
+            match f {
+                Some(gltf::texture::MagFilter::Nearest) | None => wgpu::FilterMode::Nearest,
+                Some(gltf::texture::MagFilter::Linear) => wgpu::FilterMode::Linear,
+            }
+        }
+
+        fn match_min_filter(f: Option<gltf::texture::MinFilter>) -> wgpu::FilterMode {
+            match f {
+                Some(gltf::texture::MinFilter::Nearest)
+                | Some(gltf::texture::MinFilter::NearestMipmapNearest)
+                | Some(gltf::texture::MinFilter::NearestMipmapLinear)
+                | None => wgpu::FilterMode::Nearest,
+                Some(gltf::texture::MinFilter::Linear)
+                | Some(gltf::texture::MinFilter::LinearMipmapNearest)
+                | Some(gltf::texture::MinFilter::LinearMipmapLinear) => wgpu::FilterMode::Linear,
+            }
+        }
+
+        fn match_mipmap_filter(f: Option<gltf::texture::MinFilter>) -> wgpu::MipmapFilterMode {
+            match f {
+                Some(gltf::texture::MinFilter::Nearest)
+                | Some(gltf::texture::MinFilter::Linear)
+                | Some(gltf::texture::MinFilter::NearestMipmapNearest)
+                | Some(gltf::texture::MinFilter::LinearMipmapNearest)
+                | None => wgpu::MipmapFilterMode::Nearest,
+                Some(gltf::texture::MinFilter::NearestMipmapLinear)
+                | Some(gltf::texture::MinFilter::LinearMipmapLinear) => wgpu::MipmapFilterMode::Linear,
+            }
+        }
+
+        Self {
+            address_mode: [ match_address_mode(value.wrap_s()), match_address_mode(value.wrap_t()), wgpu::AddressMode::ClampToEdge ],
+            mag_filter: match_mag_filter(value.mag_filter()),
+            min_filter: match_min_filter(value.min_filter()),
+            mipmap_filter: match_mipmap_filter(value.min_filter()),
+            ..Default::default()
+        }
+    }
+}
