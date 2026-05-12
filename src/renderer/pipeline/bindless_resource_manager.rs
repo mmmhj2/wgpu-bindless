@@ -1,7 +1,7 @@
 use std::{collections::{HashMap, hash_map::Entry}, num::NonZeroU32};
 use wgpu::TexelCopyBufferInfo;
 
-use crate::renderer::{device_interface::DeviceInterface, pipeline::{resource_allocator::LinearResourceAllocator, sampler::SamplerDescription}};
+use crate::renderer::{device_interface::DeviceInterface, pipeline::{resource_allocator::LinearResourceAllocator, sampler::SamplerDescription, texture::Texture}};
 
 use super::resource_allocator::LinearResourceAllocatorError;
 
@@ -58,70 +58,25 @@ impl BindlessResourceManager {
 
         ret.default_sampler_idx = ret.push_sampler(d.get_device(), Default::default()).expect("Failed to create default sampler.");
 
-        let packed_layout = wgpu::TexelCopyBufferLayout{
-            offset: 0,
-            bytes_per_row: None,
-            rows_per_image: None
-        };
-        let one_extent = wgpu::Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1
-        };
-
-        let white_texture = d.get_device().create_texture(&wgpu::TextureDescriptor {
-            label: Some("White texture"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        d.get_queue().write_texture(
-            wgpu::TexelCopyTextureInfo{
-                aspect: wgpu::TextureAspect::All,
-                mip_level: 0,
-                texture: &white_texture,
-                origin: wgpu::Origin3d{x: 0, y: 0, z: 0}
-            },
+        let white_texture = Texture::create_from_single_color_texel(
+            d,
             &[255, 255, 255, 255],
-            packed_layout.clone(),
-            one_extent.clone()
+            wgpu::TextureDimension::D2,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+            Some("White texture")
         );
-        ret.white_txv_idx = ret.push_texture(white_texture.create_view(&Default::default())).expect("Failed to create white texture");
+        ret.white_txv_idx = ret.push_texture(wgpu::Texture::from(white_texture).create_view(&Default::default())).expect("Failed to create white texture");
 
-        let default_normal_texture = d.get_device().create_texture(&wgpu::TextureDescriptor {
-            label: Some("Default normal texture"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        d.get_queue().write_texture(
-            wgpu::TexelCopyTextureInfo{
-                aspect: wgpu::TextureAspect::All,
-                mip_level: 0,
-                texture: &default_normal_texture,
-                origin: wgpu::Origin3d{x: 0, y: 0, z: 0}
-            },
+        let default_normal_texture = Texture::create_from_single_color_texel(
+            d,
             &[128, 128, 255, 0],
-            packed_layout.clone(),
-            one_extent.clone()
+            wgpu::TextureDimension::D2,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+            Some("Default normal texture")
         );
-        ret.default_bump_txv_idx = ret.push_texture(default_normal_texture.create_view(&Default::default())).expect("Failed to create default normal texture");
+        ret.default_bump_txv_idx = ret.push_texture(wgpu::Texture::from(default_normal_texture).create_view(&Default::default())).expect("Failed to create default normal texture");
 
         return ret;
     }
