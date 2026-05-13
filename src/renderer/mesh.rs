@@ -1,7 +1,7 @@
 use crate::renderer::{mesh::vertex_types::VertexType, pipeline::pbr_material::{PBRMaterial}};
 
 pub mod vertex_types;
-pub mod tangent_calulation;
+pub mod vertex_reconditioner;
 pub mod immediate_mesh;
 pub mod instanced_mesh;
 

@@ -1,7 +1,7 @@
 use bytemuck::Zeroable;
 use wgpu::{BufferDescriptor, BufferUsages};
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::{tangent_calulation::{CanRecaluclateTangent, TangentRecalculator}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::{vertex_reconditioner::{TangentRecalculator, VertexReconditionable, VertexReconditionableAttributeWrite}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial}};
 
 pub struct ImmediateMeshBuilder {
     state       : VertexBufferOthers,
@@ -127,21 +127,15 @@ impl super::DrawableMesh for ImmediateMesh {
     }
 }
 
-impl CanRecaluclateTangent for ImmediateMeshBuilder {
-    fn get_position_buffer_tgt(&self) -> &Vec<VertexBufferPosition> {
-        &self.position
-    }
+impl VertexReconditionable for ImmediateMeshBuilder {
+    fn get_position_buffer(&self) -> &Vec<VertexBufferPosition> { &self.position }
+    fn get_attribute_buffer(&self) -> &Vec<VertexBufferOthers> { &self.attributes }
+    fn get_index_buffer(&self) -> Option<&Vec<u32>> { None }
+}
 
-    fn get_attribute_buffer_tgt(&self) -> &Vec<VertexBufferOthers> {
-        &self.attributes
-    }
-
-    fn get_attribute_buffer_tgt_mut(&mut self) -> &mut Vec<VertexBufferOthers> {
+impl VertexReconditionableAttributeWrite for ImmediateMeshBuilder {
+    fn get_attribute_buffer_mut(&mut self) -> &mut Vec<VertexBufferOthers> {
         &mut self.attributes
-    }
-
-    fn get_index_buffer_tgt(&self) -> Option<&Vec<u32>> {
-        None
     }
 }
 

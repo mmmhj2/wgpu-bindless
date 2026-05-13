@@ -4,7 +4,7 @@ use cgmath::SquareMatrix;
 use gltf::Node;
 use wgpu::VertexAttribute;
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, Mesh, tangent_calulation::{CanRecaluclateTangent, TangentRecalculator}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription, texture::{Texture, TextureType}}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, Mesh, vertex_reconditioner::{TangentRecalculator, VertexReconditionable, VertexReconditionableAttributeWrite}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription, texture::{Texture, TextureType}}};
 
 
 pub struct InstancedMesh {
@@ -168,7 +168,7 @@ impl InstancedMeshTransient {
         Some(indices)
     }
 
-    pub fn new(
+    fn new(
         di: &DeviceInterface,
         bindless_manager: &mut BindlessResourceManager,
         primitive: &gltf::Primitive,
@@ -189,28 +189,20 @@ impl InstancedMeshTransient {
     }
 }
 
-impl CanRecaluclateTangent for InstancedMeshTransient {
-    fn get_position_buffer_tgt(&self) -> &Vec<VertexBufferPosition> {
-        &self.vp
-    }
+impl VertexReconditionable for InstancedMeshTransient {
+    fn get_position_buffer(&self) -> &Vec<VertexBufferPosition> { &self.vp }
+    fn get_attribute_buffer(&self) -> &Vec<VertexBufferOthers> { &self.va }
+    fn get_index_buffer(&self) -> Option<&Vec<u32>> { self.vi.as_ref() }
+}
 
-    fn get_attribute_buffer_tgt(&self) -> &Vec<VertexBufferOthers> {
-        &self.va
-    }
-
-    fn get_attribute_buffer_tgt_mut(&mut self) -> &mut Vec<VertexBufferOthers> {
-        &mut self.va
-    }
-
-    fn get_index_buffer_tgt(&self) -> Option<&Vec<u32>> {
-        self.vi.as_ref()
-    }
+impl VertexReconditionableAttributeWrite for InstancedMeshTransient {
+    fn get_attribute_buffer_mut(&mut self) -> &mut Vec<VertexBufferOthers> { &mut self.va }
 }
 
 impl TangentRecalculator for InstancedMeshTransient {}
 
 impl InstancedMesh {
-    pub fn create_from_gltf(
+    fn create_from_gltf(
         di: &DeviceInterface,
         bindless_manager: &mut BindlessResourceManager,
         primitive: &gltf::Primitive,
