@@ -1,7 +1,7 @@
 use bytemuck::Zeroable;
 use wgpu::{BufferDescriptor, BufferUsages};
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::vertex_types::{VertexBufferOthers, VertexBufferPosition}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::{tangent_calulation::{CanRecaluclateTangent, TangentRecalculator}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial}};
 
 pub struct ImmediateMeshBuilder {
     state       : VertexBufferOthers,
@@ -46,6 +46,14 @@ impl ImmediateMeshBuilder {
 
     pub fn color4f(&mut self, c: [f32; 4]) -> () {
         self.state.color = c;
+    }
+
+    pub fn tangent3f(&mut self, t: [f32; 3]) -> () {
+        self.tangent4f([t[0], t[1], t[2], 1.0]);
+    }
+
+    pub fn tangent4f(&mut self, t: [f32; 4]) -> () {
+        self.state.tangent = t;
     }
 
     pub fn normal3f(&mut self, n: [f32; 3]) -> () {
@@ -118,3 +126,23 @@ impl super::DrawableMesh for ImmediateMesh {
         &self.material
     }
 }
+
+impl CanRecaluclateTangent for ImmediateMeshBuilder {
+    fn get_position_buffer_tgt(&self) -> &Vec<VertexBufferPosition> {
+        &self.position
+    }
+
+    fn get_attribute_buffer_tgt(&self) -> &Vec<VertexBufferOthers> {
+        &self.attributes
+    }
+
+    fn get_attribute_buffer_tgt_mut(&mut self) -> &mut Vec<VertexBufferOthers> {
+        &mut self.attributes
+    }
+
+    fn get_index_buffer_tgt(&self) -> Option<&Vec<u32>> {
+        None
+    }
+}
+
+impl TangentRecalculator for ImmediateMeshBuilder {}
