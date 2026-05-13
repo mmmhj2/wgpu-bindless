@@ -209,7 +209,6 @@ impl CanRecaluclateTangent for InstancedMeshTransient {
 impl TangentRecalculator for InstancedMeshTransient {}
 
 impl InstancedMesh {
-
     pub fn create_from_gltf(
         di: &DeviceInterface,
         bindless_manager: &mut BindlessResourceManager,
@@ -295,7 +294,7 @@ impl Mesh for InstancedMesh {
 }
 
 #[derive(Clone)]
-struct InstancedMeshInstance {
+pub struct InstancedMeshInstance {
     mesh            : Arc<InstancedMesh>,
     model_matrix    : cgmath::Matrix4<f32>
 }

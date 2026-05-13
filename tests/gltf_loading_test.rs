@@ -4,22 +4,41 @@ mod test_fixture;
 #[cfg(target_os = "windows")]
 mod test {
     use std::sync::Arc;
-    use rust_renderer::renderer::{device_interface::DeviceInterface, window::RendererState};
+    use rust_renderer::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, instanced_mesh::InstancedMeshInstance}, pipeline::{pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline}, window::RendererState};
     use winit::{event_loop::EventLoop, window::Window};
 
-use crate::test_fixture;
+    use crate::test_fixture;
 
     pub struct State {
         window: Arc<Window>,
-        device: DeviceInterface
+        device: DeviceInterface,
+        pipeline: PipelineStates,
+        gltf_models: Vec<InstancedMeshInstance>
     }
 
     impl RendererState for State {
         async fn new(window: Arc<Window>) -> Self {
             let device = DeviceInterface::new(window.clone()).await.unwrap();
+            let mut pipeline = PipelineStates::prepare_default_pipelines(&device);
+
+            let (document, buffers, images) = gltf::import("resource/test_two_cubes.glb").expect("Cannot open glb file.");
+            
+            let mut gltf_models = Vec::new();
+            for mesh in document.meshes() {
+                let instances = InstancedMeshInstance::create_from_gltf(
+                    &device,
+                    pipeline.get_bindless_resource_manager_mut(),
+                    &mesh,
+                    &buffers,
+                    &images);
+                gltf_models.extend(instances);
+            }
+
             Self {
                 window: window.clone(),
-                device
+                device,
+                pipeline,
+                gltf_models
             }
         }
 
@@ -58,7 +77,7 @@ use crate::test_fixture;
             });
 
             {
-                let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Render Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &view,
@@ -79,6 +98,12 @@ use crate::test_fixture;
                     timestamp_writes: None,
                     multiview_mask: None,
                 });
+
+                self.pipeline.prepare_render_pass(self.get_device_interface(), &mut rp);
+                rp.set_rasterizer_pipeline(self.pipeline.get_default_pipeline());
+                for m in &self.gltf_models {
+                    m.draw(&mut rp);
+                }
             }
 
             self.device.get_queue().submit(std::iter::once(encoder.finish()));
