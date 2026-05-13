@@ -152,6 +152,16 @@ pub trait TangentRecalculator : VertexReconditionable + VertexReconditionableAtt
     }
 }
 
+pub trait VertexColorApplyScale : VertexReconditionable + VertexReconditionableAttributeWrite {
+    fn rescale_vertex_color(&mut self, scale: [f32; 4]) {
+        for v in self.get_attribute_buffer_mut() {
+            for i in 0..4 {
+                v.color[i] *= scale[i]
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::renderer::mesh::vertex_types::{VertexBufferOthers, VertexBufferPosition};

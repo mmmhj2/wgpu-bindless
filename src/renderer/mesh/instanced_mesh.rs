@@ -2,7 +2,7 @@ use std::{collections::VecDeque, sync::Arc};
 
 use cgmath::SquareMatrix;
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, Mesh, vertex_reconditioner::{TangentRecalculator, VertexReconditionable, VertexReconditionableAttributeWrite}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription, texture::{Texture, TextureType}}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, Mesh, vertex_reconditioner::{TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription, texture::{Texture, TextureType}}};
 
 /// Actual instanced mesh, whose data have already been pushed onto GPU.
 struct InstancedMesh {
@@ -30,6 +30,7 @@ pub struct InstancedMeshBuilder {
     vi  : Option<Vec<u32>>,
     material : PBRMaterial,
     vertex_draw_count : u32,
+    vertex_color_scale: [f32; 4],
     need_tangent : bool
 }
 
@@ -183,7 +184,7 @@ impl InstancedMeshBuilder {
             bindless_manager.get_default_sampler()
         );
 
-        Self { vp, va, vi, vertex_draw_count, need_tangent, material }
+        Self { vp, va, vi, vertex_draw_count, need_tangent, material, vertex_color_scale: pbr_material.base_color_factor() }
     }
 
     fn push_buffers(
@@ -231,7 +232,13 @@ impl InstancedMeshBuilder {
 
     /// Recondition the vertex attributes, and commit the builder onto the GPU.
     fn recondition_and_commit(mut self, di: &DeviceInterface) -> InstancedMesh {
-        if self.need_tangent  { self.recalculate_tangents(); }
+        log::debug!("Applying vertex color scale: {:?}.", self.vertex_color_scale);
+        self.rescale_vertex_color(self.vertex_color_scale);
+
+        if self.need_tangent  { 
+            log::debug!("Recalculating tangent vectors.");
+            self.recalculate_tangents();
+        }
         let (vp_va, vi) = self.push_buffers(di);
         InstancedMesh { vertex_attribute_buffers: vp_va, index_buffer: vi, vertex_draw_count: self.vertex_draw_count, material: self.material }
     }
@@ -245,6 +252,7 @@ impl VertexReconditionableAttributeWrite for InstancedMeshBuilder {
     fn get_attribute_buffer_mut(&mut self) -> &mut Vec<VertexBufferOthers> { &mut self.va }
 }
 impl TangentRecalculator for InstancedMeshBuilder {}
+impl VertexColorApplyScale for InstancedMeshBuilder {}
 
 /// Instances of instanced mesh.
 /// Holds unique data for each instance such as model matrix, and a reference to the underlying mesh.
