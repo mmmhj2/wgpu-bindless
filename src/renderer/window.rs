@@ -1,5 +1,5 @@
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, Mesh, immediate_mesh::ImmediateMeshBuilder}, pipeline::{pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, immediate_mesh::ImmediateMeshBuilder}, pipeline::{pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline}};
 
 use std::sync::Arc;
 
@@ -11,25 +11,32 @@ pub struct State {
     window: Arc<Window>,
     device: DeviceInterface,
     pipelines: PipelineStates
-    
 }
 
-impl State {
-    pub async fn new(window: Arc<Window>) -> Result<Self, ()> {
+pub trait RendererState {
+    fn get_device_interface(&self) -> &DeviceInterface;
+    fn get_device_interface_mut(&mut self) -> &mut DeviceInterface;
+
+    fn resize(&mut self, width: u32, height: u32) {
+        self.get_device_interface_mut().create_surface(width, height);
+    }
+    
+    fn new(window: Arc<Window>) -> impl std::future::Future<Output = Self> + Send;
+    fn render(&mut self) -> Result<(), ()>;
+}
+
+impl RendererState for State {
+    async fn new(window: Arc<Window>) -> Self {
         let device = DeviceInterface::new(window.clone()).await.unwrap();
         let pipelines = PipelineStates::prepare_default_pipelines(&device);
-        Ok(Self {
+        Self {
             window: window.clone(),
             device,
             pipelines
-        })
+        }
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) {
-        self.device.create_surface(width, height);
-    }
-    
-    pub fn render(&mut self) -> Result<(), ()>{
+    fn render(&mut self) -> Result<(), ()>{
         self.window.request_redraw();
 
         // We can't render unless the surface is configured
@@ -108,5 +115,13 @@ impl State {
         output.present();
 
         Ok(())
+    }
+    
+    fn get_device_interface(&self) -> &DeviceInterface {
+        &self.device
+    }
+    
+    fn get_device_interface_mut(&mut self) -> &mut DeviceInterface {
+        &mut self.device
     }
 }
