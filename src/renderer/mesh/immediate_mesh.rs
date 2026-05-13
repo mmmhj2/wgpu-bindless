@@ -24,7 +24,7 @@ impl ImmediateMesh {
 
 impl ImmediateMeshBuilder {
     pub fn new(di: &DeviceInterface, mgr: &mut BindlessResourceManager) -> Self {
-        let material = PBRMaterial::new(
+        let material = PBRMaterial::create_from_views(
             di.get_device(),
             mgr,
             None,

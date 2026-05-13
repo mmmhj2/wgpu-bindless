@@ -11,6 +11,17 @@ pub struct PBRMaterial {
 
 impl PBRMaterial {
     pub fn new(
+        diffuse_tx: usize,
+        normal_tx: usize,
+        mrao_tx: usize,
+        diffuse_sp: usize,
+        normal_sp: usize,
+        mrao_sp: usize
+    ) -> Self {
+        Self { diffuse_tx, normal_tx, mrao_tx, diffuse_sp, normal_sp, mrao_sp }
+    }
+
+    pub fn create_from_views(
         d: &wgpu::Device,
         manager: &mut BindlessResourceManager,
         diffuse: Option<(wgpu::TextureView, Option<SamplerDescription>)>,
