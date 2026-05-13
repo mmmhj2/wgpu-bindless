@@ -20,13 +20,15 @@ pub struct VertexBufferOthers {
     pub color: [f32; 4],
     /// Object space normal in 3D
     pub normal: [f32; 3],
-    /// Barycentric 
+    /// Object space tangent vector, with the w component indicating handiness.
+    pub tangent: [f32; 4],
+    /// Texture coordinate channel 0
     pub uv0: [f32; 2]
 }
 
 impl VertexBufferOthers {
     /// TODO: try `wgpu::vertex_attr_array!()` macro
-    const BINDINGS : [wgpu::VertexAttribute; 3] = [
+    const BINDINGS : [wgpu::VertexAttribute; 4] = [
         wgpu::VertexAttribute{
             format: wgpu::VertexFormat::Float32x4,
             offset: 0,
@@ -38,9 +40,14 @@ impl VertexBufferOthers {
             shader_location: 2
         },
         wgpu::VertexAttribute{
-            format: wgpu::VertexFormat::Float32x2,
+            format: wgpu::VertexFormat::Float32x4,
             offset: (size_of::<f32>() * (4 + 3)) as u64,
             shader_location: 3
+        },
+        wgpu::VertexAttribute{
+            format: wgpu::VertexFormat::Float32x2,
+            offset: (size_of::<f32>() * (4 + 3 + 4)) as u64,
+            shader_location: 4
         }
     ];
 }
