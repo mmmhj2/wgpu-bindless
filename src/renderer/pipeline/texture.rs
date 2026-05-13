@@ -12,6 +12,15 @@ pub enum TextureType {
     Normal
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum TextureImportError {
+    /// The texture has only three channels, which is not supported by wGPU.
+    Unsupported3ChannelFormat,
+    /// Texture has less channels than expected.
+    /// For example, color and normal textures should have at least 3 channels.
+    ChannelNotSufficient
+}
+
 impl From<Texture> for wgpu::Texture {
     fn from(value: Texture) -> Self {
         value.inner
@@ -28,41 +37,47 @@ impl Texture {
         width: 1, height: 1, depth_or_array_layers: 1
     };
 
+    /// Extract texture descriptor from a GLTF texture.
+    /// 
+    /// Returns a wgpu texture descriptor, and a u8 slice containing texel data.
+    /// The texture descriptor will have *no* views attached to and a usage of `COPY_DST` and `TEXTURE_BINDING`.
     pub fn extract_texture_info<'a>(
         texture: &gltf::Texture,
         images: &'a Vec<gltf::image::Data>,
         ttype: TextureType
-    ) -> (wgpu::TextureDescriptor<'static>, &'a [u8]) {
+    ) -> Result<(wgpu::TextureDescriptor<'static>, &'a [u8]), TextureImportError> {
         let image = &images[texture.index()];
 
-        fn match_texture_format(f: gltf::image::Format) -> Option<wgpu::TextureFormat> {
+        fn match_texture_format(f: gltf::image::Format) -> Result<wgpu::TextureFormat, TextureImportError> {
             use wgpu::TextureFormat;
             match f {
-                gltf::image::Format::R8 => Some(TextureFormat::R8Unorm),
-                gltf::image::Format::R8G8 => Some(TextureFormat::Rg8Unorm),
-                gltf::image::Format::R8G8B8 => None,
-                gltf::image::Format::R8G8B8A8 => Some(TextureFormat::Rgba8Unorm),
-                gltf::image::Format::R16 => Some(TextureFormat::R16Unorm),
-                gltf::image::Format::R16G16 => Some(TextureFormat::Rg16Unorm),
-                gltf::image::Format::R16G16B16 => None,
-                gltf::image::Format::R16G16B16A16 => Some(TextureFormat::Rgba16Unorm),
-                gltf::image::Format::R32G32B32FLOAT => None,
-                gltf::image::Format::R32G32B32A32FLOAT => Some(TextureFormat::Rgba32Float),
+                gltf::image::Format::R8 => Ok(TextureFormat::R8Unorm),
+                gltf::image::Format::R8G8 => Ok(TextureFormat::Rg8Unorm),
+                gltf::image::Format::R8G8B8 => Err(TextureImportError::Unsupported3ChannelFormat),
+                gltf::image::Format::R8G8B8A8 => Ok(TextureFormat::Rgba8Unorm),
+                gltf::image::Format::R16 => Ok(TextureFormat::R16Unorm),
+                gltf::image::Format::R16G16 => Ok(TextureFormat::Rg16Unorm),
+                gltf::image::Format::R16G16B16 => Err(TextureImportError::Unsupported3ChannelFormat),
+                gltf::image::Format::R16G16B16A16 => Ok(TextureFormat::Rgba16Unorm),
+                gltf::image::Format::R32G32B32FLOAT => Err(TextureImportError::Unsupported3ChannelFormat),
+                gltf::image::Format::R32G32B32A32FLOAT => Ok(TextureFormat::Rgba32Float),
             }
         }
 
-        let converted_format = match_texture_format(image.format).expect("Unsupported texture format. 3-channel textures are not supported by WGPU.");
+        let converted_format = match_texture_format(image.format)?;
 
         let final_format = match ttype {
-            TextureType::Linear => { converted_format },
-            TextureType::ColorSrgb => { converted_format.add_srgb_suffix() },
+            TextureType::Linear => { Ok(converted_format) },
+            TextureType::ColorSrgb => { Ok(converted_format.add_srgb_suffix()) },
             TextureType::Normal => { 
                 match converted_format {
-                    wgpu::TextureFormat::Rgba8Unorm => wgpu::TextureFormat::Rgba8Snorm,
-                    _ => converted_format
+                    wgpu::TextureFormat::Rgba8Unorm => Ok(wgpu::TextureFormat::Rgba8Snorm),
+                    wgpu::TextureFormat::Rgba16Unorm => Ok(wgpu::TextureFormat::Rgba16Snorm),
+                    wgpu::TextureFormat::Rgba32Float => Ok(wgpu::TextureFormat::Rgba32Float),
+                    _ => Err(TextureImportError::ChannelNotSufficient)
                 }
              },
-        };
+        }?;
 
         let descriptor: wgpu::TextureDescriptor = wgpu::TextureDescriptor{
             label: None,
@@ -75,7 +90,7 @@ impl Texture {
             view_formats: &[],
         };
 
-        (descriptor, &image.pixels)
+        Ok((descriptor, &image.pixels))
     }
 
     pub fn create_from_gltf(
@@ -156,7 +171,7 @@ mod test {
         let (desc, raw_data) = Texture::extract_texture_info(
             &material.pbr_metallic_roughness().base_color_texture().expect("cube_textured has no base color texture.").texture(),
             &images, TextureType::ColorSrgb
-        );
+        ).expect("Texture import unsuccessful.");
         assert_eq!(desc.size.width, 32);
         assert_eq!(desc.size.height, 32);
         assert_eq!(desc.size.depth_or_array_layers, 1);
@@ -177,7 +192,7 @@ mod test {
         let (desc, raw_data) = Texture::extract_texture_info(
             &material.normal_texture().expect("cube_textured has no normal map texture.").texture(),
             &images, TextureType::Normal
-        );
+        ).expect("Texture import unsuccessful.");
         assert_eq!(desc.size.width, 32);
         assert_eq!(desc.size.height, 32);
         assert_eq!(desc.size.depth_or_array_layers, 1);
