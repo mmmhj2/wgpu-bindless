@@ -1,6 +1,6 @@
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct VertexBufferPosition {
     pub position: [f32; 3]
 }
@@ -14,7 +14,7 @@ impl VertexBufferPosition {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct VertexBufferOthers {
     /// Vertex color in RGBA
     pub color: [f32; 4],

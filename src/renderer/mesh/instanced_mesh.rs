@@ -291,3 +291,33 @@ impl DrawableMesh for InstancedMeshInstance {
         self.mesh.get_material()
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_buffer_import() {
+        let (document, buffers, _) = gltf::import("resource/test_two_cubes.glb").expect("Failed to import GLB file.");
+
+        let mesh = document.meshes()
+            .find(|x| x.name().unwrap_or_default() == "cube_textured")
+            .expect("Cannot find cube_textured.");
+
+        let primitive = mesh.primitives().next().expect("cube_textured has not primitives.");
+        assert_eq!(primitive.mode(), gltf::mesh::Mode::Triangles);
+
+        let vp = InstancedMesh::construct_position_buffer(&primitive, &buffers);
+        let va = InstancedMesh::construct_attribute_buffer(&primitive, &buffers, vp.len());
+        let vi = InstancedMesh::construct_index_buffer(&primitive, &buffers).expect("Cannot find index buffer.");
+
+        // Four vertices for each face.
+        assert_eq!(vp.len(), 4 * 6);
+        assert_eq!(vp.len(), va.len());
+        // Every face has two triangles and therefore six vertices.
+        assert_eq!(vi.len(), 2 * 6 * 3);
+        println!("Vertex positions: {:?}", &vp);
+        println!("Vertex attributes: {:?}", &va);
+        println!("Indices: {:?}", &vi);
+    }
+}
