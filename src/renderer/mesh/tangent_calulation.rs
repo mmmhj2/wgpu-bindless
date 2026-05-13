@@ -3,7 +3,7 @@ use crate::renderer::mesh::vertex_types::{VertexBufferOthers, VertexBufferPositi
 mod private {
     use cgmath::Zero;
 
-use crate::renderer::mesh::immediate_mesh::ImmediateMeshBuilder;
+use crate::renderer::mesh::{immediate_mesh::ImmediateMeshBuilder, instanced_mesh::InstancedMeshTransient};
     pub trait TangentRecalculatorImpl : super::CanRecaluclateTangent {
         fn renormalize_and_write(&mut self, tangents1: Vec<cgmath::Vector3<f32>>, tangents2: Vec<cgmath::Vector3<f32>>) {
             let attribute = self.get_attribute_buffer_tgt_mut();
@@ -125,6 +125,7 @@ use crate::renderer::mesh::immediate_mesh::ImmediateMeshBuilder;
     }
 
     impl TangentRecalculatorImpl for ImmediateMeshBuilder {}
+    impl TangentRecalculatorImpl for InstancedMeshTransient {}
 }
 
 pub trait CanRecaluclateTangent {

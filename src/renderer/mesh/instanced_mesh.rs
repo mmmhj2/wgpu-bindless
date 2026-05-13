@@ -3,10 +3,10 @@ use std::sync::Arc;
 use cgmath::SquareMatrix;
 use wgpu::VertexAttribute;
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, Mesh, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription, texture::{Texture, TextureType}}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, Mesh, tangent_calulation::{CanRecaluclateTangent, TangentRecalculator}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription, texture::{Texture, TextureType}}};
 
 
-struct InstancedMesh {
+pub struct InstancedMesh {
     vertex_attribute_buffers    : [wgpu::Buffer; 2],
     index_buffer                : Option<wgpu::Buffer>,
     vertex_draw_count           : u32,
@@ -14,83 +14,6 @@ struct InstancedMesh {
 }
 
 impl InstancedMesh {
-    fn get_material(&self) -> &PBRMaterial {
-        &self.material
-    }
-}
-
-impl InstancedMesh {
-
-    fn construct_position_buffer (
-        primitive: &gltf::Primitive,
-        buffers: &Vec<gltf::buffer::Data>
-    ) -> Vec<VertexBufferPosition> {
-        let mut position_buffer: Vec<VertexBufferPosition> = Vec::new();
-
-        let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
-        if let Some(iter) = reader.read_positions() {
-           for vertex_position in iter {
-               position_buffer.push(VertexBufferPosition { position: vertex_position });
-           }
-       }
-
-        position_buffer
-    }
-
-    fn construct_attribute_buffer (
-        primitive: &gltf::Primitive,
-        buffers: &Vec<gltf::buffer::Data>,
-        vertices: usize
-    ) -> Vec<VertexBufferOthers> {
-        let mut attribute_buffer = Vec::new();
-        attribute_buffer.resize(
-            vertices,
-            VertexBufferOthers { color: [1.0, 1.0, 1.0, 1.0], normal: [0.0, 0.0, 0.0], uv0: [0.0, 0.0] }
-        );
-
-        let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
-        if let Some(iter) = reader.read_colors(0) {
-            for (i, c) in iter.into_rgba_f32().enumerate() {
-                attribute_buffer[i].color = c;
-            }
-        } else {
-            log::warn!("Imported mesh does not have vertex color, or the vertex color is not located at set 0.")
-        }
-
-        if let Some(iter) = reader.read_normals() {
-            for (i, n) in iter.enumerate() {
-                attribute_buffer[i].normal = n;
-            }
-        } else {
-            log::warn!("Imported mesh does not vertex have normal.")
-        }
-
-        if let Some(iter) = reader.read_tex_coords(0) {
-            for (i, uv) in iter.into_f32().enumerate() {
-                attribute_buffer[i].uv0 = uv;
-            }
-        } else {
-            log::warn!("Imported mesh does not have texture coordinate, or the texcoord is not located at set 0.")
-        }
-
-        attribute_buffer
-    }
-
-    fn construct_index_buffer (
-        primitive: &gltf::Primitive,
-        buffers: &Vec<gltf::buffer::Data>
-    ) -> Option<Vec<u32>> {
-        let mut indices = Vec::new();
-
-        let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
-        let iter = reader.read_indices()?;
-        for i in iter.into_u32() {
-            indices.push(i);
-        }
-
-        Some(indices)
-    }
-
     fn push_buffers(
         di: &DeviceInterface,
         position: Vec<VertexBufferPosition>,
@@ -136,26 +59,167 @@ impl InstancedMesh {
         }
     }
 
+    fn get_material(&self) -> &PBRMaterial {
+        &self.material
+    }
+
+    /// Create a new instanced mesh from loaded buffers.
+    /// 
+    /// Tangent might be recalcuated if needed.
+    /// Device side buffers will be created and updated.
+    pub fn new(di: &DeviceInterface, mut imt: InstancedMeshTransient, material: PBRMaterial) -> Self {
+        if imt.need_tangent {
+            imt.recalculate_tangents();
+        };
+
+        let (vertex_attribute_buffers, index_buffer) = Self::push_buffers(di, imt.vp, imt.va, imt.vi);
+
+        Self { vertex_attribute_buffers, index_buffer, vertex_draw_count: imt.vertex_draw_count, material }
+    }
+}
+
+pub struct InstancedMeshTransient {
+    pub vp  : Vec<VertexBufferPosition>,
+    pub va  : Vec<VertexBufferOthers>,
+    pub vi  : Option<Vec<u32>>,
+    pub vertex_draw_count : u32,
+    pub need_tangent : bool
+}
+
+impl InstancedMeshTransient {
+    fn construct_position_buffer (
+        primitive: &gltf::Primitive,
+        buffers: &Vec<gltf::buffer::Data>
+    ) -> Vec<VertexBufferPosition> {
+        let mut position_buffer: Vec<VertexBufferPosition> = Vec::new();
+
+        let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+        if let Some(iter) = reader.read_positions() {
+           for vertex_position in iter {
+               position_buffer.push(VertexBufferPosition { position: vertex_position });
+           }
+       }
+
+        position_buffer
+    }
+
+    fn construct_attribute_buffer (
+        primitive: &gltf::Primitive,
+        buffers: &Vec<gltf::buffer::Data>,
+        vertices: usize
+    ) -> (Vec<VertexBufferOthers>, bool) {
+        let mut attribute_buffer = Vec::new();
+        attribute_buffer.resize(
+            vertices,
+            VertexBufferOthers { color: [1.0, 1.0, 1.0, 1.0], normal: [0.0, 0.0, 0.0], tangent: [0.0, 0.0, 0.0, 1.0], uv0: [0.0, 0.0] }
+        );
+
+        let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+        if let Some(iter) = reader.read_colors(0) {
+            for (i, c) in iter.into_rgba_f32().enumerate() {
+                attribute_buffer[i].color = c;
+            }
+        } else {
+            log::warn!("Imported mesh does not have vertex color, or the vertex color is not located at set 0.")
+        }
+
+        if let Some(iter) = reader.read_normals() {
+            for (i, n) in iter.enumerate() {
+                attribute_buffer[i].normal = n;
+            }
+        } else {
+            log::warn!("Imported mesh does not vertex have normal.")
+        }
+
+        if let Some(iter) = reader.read_tex_coords(0) {
+            for (i, uv) in iter.into_f32().enumerate() {
+                attribute_buffer[i].uv0 = uv;
+            }
+        } else {
+            log::warn!("Imported mesh does not have texture coordinate, or the texcoord is not located at set 0.")
+        }
+
+        if let Some(iter) = reader.read_tangents() {
+            for (i, n) in iter.enumerate() {
+                attribute_buffer[i].tangent = n;
+            }
+
+            (attribute_buffer, false)
+        } else {
+            // TODO: calculate tangent.
+            log::info!("Imported mesh does not vertex have tangent. It will be automatically calculated on upload.");
+            (attribute_buffer, true)
+        }
+    }
+
+    fn construct_index_buffer (
+        primitive: &gltf::Primitive,
+        buffers: &Vec<gltf::buffer::Data>
+    ) -> Option<Vec<u32>> {
+        let mut indices = Vec::new();
+
+        let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+        let iter = reader.read_indices()?;
+        for i in iter.into_u32() {
+            indices.push(i);
+        }
+
+        Some(indices)
+    }
+
+    pub fn new(
+        di: &DeviceInterface,
+        bindless_manager: &mut BindlessResourceManager,
+        primitive: &gltf::Primitive,
+        buffers: &Vec<gltf::buffer::Data>
+    ) -> Self {
+        let vp = Self::construct_position_buffer(
+            &primitive,
+            buffers
+        );
+        let (va, need_tangent) = Self::construct_attribute_buffer(&primitive, buffers, vp.len());
+        let vi = Self::construct_index_buffer(&primitive, buffers);
+        let vertex_draw_count = match vi.as_ref() {
+            Some(b) => b.len(),
+            None => vp.len()
+        } as u32;
+
+        Self { vp, va, vi, vertex_draw_count, need_tangent }
+    }
+}
+
+impl CanRecaluclateTangent for InstancedMeshTransient {
+    fn get_position_buffer_tgt(&self) -> &Vec<VertexBufferPosition> {
+        &self.vp
+    }
+
+    fn get_attribute_buffer_tgt(&self) -> &Vec<VertexBufferOthers> {
+        &self.va
+    }
+
+    fn get_attribute_buffer_tgt_mut(&mut self) -> &mut Vec<VertexBufferOthers> {
+        &mut self.va
+    }
+
+    fn get_index_buffer_tgt(&self) -> Option<&Vec<u32>> {
+        self.vi.as_ref()
+    }
+}
+
+impl TangentRecalculator for InstancedMeshTransient {}
+
+impl InstancedMesh {
+
     pub fn create_from_gltf(
         di: &DeviceInterface,
         bindless_manager: &mut BindlessResourceManager,
-        primitive: gltf::Primitive,
+        primitive: &gltf::Primitive,
         buffers: &Vec<gltf::buffer::Data>,
         images: &Vec<gltf::image::Data>
     ) -> Arc<Self> {
 
         // Construct buffers for the primitive.
-        let position = Self::construct_position_buffer(
-            &primitive,
-            buffers
-        );
-        let attribute = Self::construct_attribute_buffer(&primitive, buffers, position.len());
-        let index = Self::construct_index_buffer(&primitive, buffers);
-        let vertex_draw_count = match index.as_ref() {
-            Some(b) => b.len(),
-            None => position.len()
-        } as u32;
-        let pushed_buffers = Self::push_buffers(di, position, attribute, index);
+        let transient = InstancedMeshTransient::new(di, bindless_manager, primitive, buffers);
         
         // Construct textures for the primitive.
         let pbr_material = primitive.material().pbr_metallic_roughness();
@@ -208,7 +272,7 @@ impl InstancedMesh {
             normal_id.1,
             bindless_manager.get_default_sampler()
             );
-        Arc::new(Self { vertex_attribute_buffers: pushed_buffers.0, material, index_buffer: pushed_buffers.1, vertex_draw_count })
+        Arc::new(InstancedMesh::new(di, transient, material))
     }
 }
 
@@ -254,7 +318,7 @@ impl InstancedMeshInstance {
         for primitive in mesh.primitives() {
             ret.push(
                 Self::new(
-                    InstancedMesh::create_from_gltf(di, bindless_manager, primitive, buffers, images),
+                    InstancedMesh::create_from_gltf(di, bindless_manager, &primitive, buffers, images),
                     cgmath::Matrix4::identity().into()
                 )
             )
@@ -307,13 +371,13 @@ mod test {
         let primitive = mesh.primitives().next().expect("cube_textured has not primitives.");
         assert_eq!(primitive.mode(), gltf::mesh::Mode::Triangles);
 
-        let vp = InstancedMesh::construct_position_buffer(&primitive, &buffers);
-        let va = InstancedMesh::construct_attribute_buffer(&primitive, &buffers, vp.len());
-        let vi = InstancedMesh::construct_index_buffer(&primitive, &buffers).expect("Cannot find index buffer.");
+        let vp = InstancedMeshTransient::construct_position_buffer(&primitive, &buffers);
+        let va = InstancedMeshTransient::construct_attribute_buffer(&primitive, &buffers, vp.len());
+        let vi = InstancedMeshTransient::construct_index_buffer(&primitive, &buffers).expect("Cannot find index buffer.");
 
         // Four vertices for each face.
         assert_eq!(vp.len(), 4 * 6);
-        assert_eq!(vp.len(), va.len());
+        assert_eq!(vp.len(), va.0.len());
         // Every face has two triangles and therefore six vertices.
         assert_eq!(vi.len(), 2 * 6 * 3);
         println!("Vertex positions: {:?}", &vp);
