@@ -127,7 +127,14 @@ impl Texture {
         di.get_queue().write_texture(
             texture_copy_info,
             pixels,
-            Self::PACKED_TEXEL_LAYOUT,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(
+                    descriptor.format.block_copy_size(None).expect(
+                        "Designated format does not have a copy size."
+                    ) * descriptor.size.width),
+                rows_per_image: None
+            },
             descriptor.size
         );
 

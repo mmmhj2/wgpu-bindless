@@ -122,7 +122,7 @@ mod test {
     }
 
     #[test]
-    fn basic_functionality_test() {
+    fn gltf_loading_test() {
         env_logger::init();
 
         // We need to create the eventloop from the test thread.
