@@ -1,6 +1,18 @@
 use crate::renderer::device_interface::DeviceInterface;
 
 
+#[derive(Clone, Copy, Debug)]
+pub enum TextureImportError {
+    /// The texture has only three channels, which is not supported by wGPU.
+    Unsupported3ChannelFormat,
+    /// Texture has less channels than expected.
+    /// For example, color and normal textures should have at least 3 channels.
+    ChannelNotSufficient,
+    /// Texel size not correct.
+    /// The texel buffer obtained from GLTF is either too large or too small for the texture.
+    UnfitTexelDataSize
+}
+
 /// A simple wrapper around wgpu::Texture
 pub struct Texture {
     inner:  wgpu::Texture
@@ -10,15 +22,6 @@ pub enum TextureType {
     Linear,
     ColorSrgb,
     Normal
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum TextureImportError {
-    /// The texture has only three channels, which is not supported by wGPU.
-    Unsupported3ChannelFormat,
-    /// Texture has less channels than expected.
-    /// For example, color and normal textures should have at least 3 channels.
-    ChannelNotSufficient
 }
 
 impl From<Texture> for wgpu::Texture {
@@ -90,16 +93,45 @@ impl Texture {
             view_formats: &[],
         };
 
+        // Check whether texel size matches.
+        let expected_pixel_size = final_format.block_copy_size(None).expect("") as usize * image.width as usize * image.height as usize;
+        if image.pixels.len() != expected_pixel_size {
+            return Err(TextureImportError::UnfitTexelDataSize);
+        }
+
         Ok((descriptor, &image.pixels))
     }
 
+    /// Create a texture from a GLTF file.
     pub fn create_from_gltf(
         di: &DeviceInterface,
+        texture_type: TextureType,
         texture: &gltf::Texture,
-        buffers: &Vec<gltf::buffer::Data>,
-        images: &Vec<gltf::image::Data>
-    ) -> Self {
-        todo!()
+        images: &Vec<gltf::image::Data>,
+        label: Option<&str>
+    ) -> Result<Self, TextureImportError> {
+        let (descriptor, pixels) = Texture::extract_texture_info(texture, images, texture_type)?;
+        let texture = di.get_device().create_texture(
+            &wgpu::TextureDescriptor {
+                label,
+                ..descriptor
+            }
+        );
+
+        let texture_copy_info = wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        };
+        di.get_queue().write_texture(
+            texture_copy_info,
+            pixels,
+            Self::PACKED_TEXEL_LAYOUT,
+            descriptor.size
+        );
+
+        Ok(Self{inner: texture})
     }
 
     /// Create a texture from a single texel.
@@ -159,7 +191,7 @@ mod test {
 
     #[test]
     fn test_color_texture_import() {
-        let (document, buffers, images) = gltf::import("resource/test_two_cubes.glb").expect("Failed to import GLB file.");
+        let (document, _, images) = gltf::import("resource/test_two_cubes.glb").expect("Failed to import GLB file.");
 
         let mesh = document.meshes()
             .find(|x| x.name().unwrap_or_default() == "cube_textured")
@@ -168,7 +200,7 @@ mod test {
         let primitive = mesh.primitives().next().expect("cube_textured has not primitives.");
         let material = primitive.material();
 
-        let (desc, raw_data) = Texture::extract_texture_info(
+        let (desc, _) = Texture::extract_texture_info(
             &material.pbr_metallic_roughness().base_color_texture().expect("cube_textured has no base color texture.").texture(),
             &images, TextureType::ColorSrgb
         ).expect("Texture import unsuccessful.");
@@ -180,7 +212,7 @@ mod test {
 
     #[test]
     fn test_normal_texture_import() {
-        let (document, buffers, images) = gltf::import("resource/test_two_cubes.glb").expect("Failed to import GLB file.");
+        let (document, _, images) = gltf::import("resource/test_two_cubes.glb").expect("Failed to import GLB file.");
 
         let mesh = document.meshes()
             .find(|x| x.name().unwrap_or_default() == "cube_textured")
