@@ -1,6 +1,7 @@
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 use cgmath::SquareMatrix;
+use gltf::Node;
 use wgpu::VertexAttribute;
 
 use crate::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, Mesh, tangent_calulation::{CanRecaluclateTangent, TangentRecalculator}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription, texture::{Texture, TextureType}}};
@@ -305,7 +306,54 @@ impl InstancedMeshInstance {
         Self { mesh, model_matrix }
     }
 
-    pub fn create_from_gltf(
+    /// Create instances from a GLTF scene.
+    /// 
+    /// Only nodes that contains meshes are processed.
+    /// Transforms of the nodes will be preserved in the model matrices of the
+    /// instances produced.
+    pub fn create_from_gltf_scene(
+        di: &DeviceInterface,
+        bindless_manager: &mut BindlessResourceManager,
+        scene: &gltf::Scene,
+        buffers: &Vec<gltf::buffer::Data>,
+        images: &Vec<gltf::image::Data>
+    ) -> Vec<Self> {
+        let mut ret = Vec::new();
+
+        // Do a BFS to collect all meshes.
+        // DFS, recursion and trees in Rust are simply PITA.
+        let mut transform_queue = VecDeque::<cgmath::Matrix4<f32>>::new();
+        let mut node_queue = VecDeque::<usize>::new();
+
+        for root_node in scene.nodes() {
+            transform_queue.push_back(root_node.transform().matrix().into());
+            node_queue.push_back(root_node.index());
+
+            while !node_queue.is_empty() {
+                let current_node = scene.nodes().nth(node_queue.pop_front().unwrap()).expect("valid node index");
+                let current_transform = transform_queue.pop_front().unwrap();
+                if let Some(m) = current_node.mesh() {
+                    let mut instances = Self::create_from_gltf_mesh(di, bindless_manager, &m, buffers, images);
+                    for inst in &mut instances {
+                        inst.model_matrix = current_transform;
+                    }
+                    ret.extend(instances);
+                }
+
+                for ch in current_node.children() {
+                    transform_queue.push_back(current_transform * cgmath::Matrix4::from(ch.transform().matrix()));
+                    node_queue.push_back(ch.index());
+                }
+            }
+        }
+
+        return ret;
+    }
+
+    /// Create instances from a GLTF mesh.
+    /// 
+    /// All primitives will be processed, each one corresponding to an new instance.
+    pub fn create_from_gltf_mesh(
         di: &DeviceInterface,
         bindless_manager: &mut BindlessResourceManager,
         mesh: &gltf::Mesh,

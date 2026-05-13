@@ -17,16 +17,12 @@ impl RendererState for State {
 
         let (document, buffers, images) = gltf::import("resource/test_two_cubes.glb").expect("Cannot open glb file.");
         
-        let mut gltf_models = Vec::new();
-        for mesh in document.meshes() {
-            let instances = InstancedMeshInstance::create_from_gltf(
-                &device,
-                pipeline.get_bindless_resource_manager_mut(),
-                &mesh,
-                &buffers,
-                &images);
-            gltf_models.extend(instances);
-        }
+        let gltf_models = InstancedMeshInstance::create_from_gltf_scene(
+            &device,
+            pipeline.get_bindless_resource_manager_mut(),
+            &document.scenes().next().expect("Document should contain at least one scene"),
+            &buffers,
+            &images);
 
         Self {
             window: window.clone(),

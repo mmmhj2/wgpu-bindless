@@ -21,7 +21,7 @@ mod test {
             
             let mut gltf_models = Vec::new();
             for mesh in document.meshes() {
-                let instances = InstancedMeshInstance::create_from_gltf(
+                let instances = InstancedMeshInstance::create_from_gltf_mesh(
                     &device,
                     pipeline.get_bindless_resource_manager_mut(),
                     &mesh,
