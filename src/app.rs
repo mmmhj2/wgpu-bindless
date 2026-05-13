@@ -1,14 +1,14 @@
 use std::sync::Arc;
-use crate::renderer::window::{RendererState, State};
+use crate::renderer::window::{RendererState, DefaultRendererState};
 use winit::{
     application::ApplicationHandler, event::*, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window
 };
 
-pub struct App {
-    state: Option<State>,
+pub struct DefaultAppHandler<RState : RendererState + 'static> {
+    state: Option<RState>,
 }
 
-impl App {
+impl<RState : RendererState + 'static> DefaultAppHandler<RState> {
     pub fn new() -> Self {
         Self {
             state: None,
@@ -16,14 +16,14 @@ impl App {
     }
 }
 
-impl ApplicationHandler<State> for App {
+impl<RState : RendererState + 'static> ApplicationHandler<RState> for DefaultAppHandler<RState> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let mut window_attributes = Window::default_attributes();
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
-        self.state = Some(pollster::block_on(State::new(window)));
+        self.state = Some(pollster::block_on(RState::new(window)));
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, mut event: State) {
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, mut event: RState) {
         self.state = Some(event);
     }
 
@@ -72,8 +72,8 @@ pub fn run() -> Result<(), winit::error::EventLoopError> {
 
     env_logger::init();
 
-    let event_loop = EventLoop::with_user_event().build()?;
-    let mut app = App::new();
+    let event_loop = EventLoop::<DefaultRendererState>::with_user_event().build()?;
+    let mut app = DefaultAppHandler::new();
     event_loop.run_app(&mut app)?;
 
     Ok(())

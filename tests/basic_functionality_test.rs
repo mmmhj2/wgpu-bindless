@@ -1,13 +1,9 @@
-mod test_fixture;
-
 #[cfg(test)]
 #[cfg(target_os = "windows")]
 mod test {
     use std::sync::Arc;
-    use rust_renderer::renderer::{device_interface::DeviceInterface, window::RendererState};
+    use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, window::RendererState}};
     use winit::{event_loop::EventLoop, window::Window};
-
-use crate::test_fixture;
 
     pub struct State {
         window: Arc<Window>,
@@ -105,7 +101,7 @@ use crate::test_fixture;
 	    use winit::platform::windows::EventLoopBuilderExtWindows;
 
         let event_loop = EventLoop::<State>::with_user_event().with_any_thread(true).build().expect("Failed to build event loop.");
-        let mut app = test_fixture::App::new();
+        let mut app = DefaultAppHandler::new();
         event_loop.run_app(&mut app).unwrap();
     }
 }

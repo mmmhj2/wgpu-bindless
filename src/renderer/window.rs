@@ -7,12 +7,6 @@ use winit::{
     window::Window
 };
 
-pub struct State {
-    window: Arc<Window>,
-    device: DeviceInterface,
-    pipelines: PipelineStates
-}
-
 pub trait RendererState {
     fn get_device_interface(&self) -> &DeviceInterface;
     fn get_device_interface_mut(&mut self) -> &mut DeviceInterface;
@@ -25,7 +19,13 @@ pub trait RendererState {
     fn render(&mut self) -> Result<(), ()>;
 }
 
-impl RendererState for State {
+pub struct DefaultRendererState {
+    window: Arc<Window>,
+    device: DeviceInterface,
+    pipelines: PipelineStates
+}
+
+impl RendererState for DefaultRendererState {
     async fn new(window: Arc<Window>) -> Self {
         let device = DeviceInterface::new(window.clone()).await.unwrap();
         let pipelines = PipelineStates::prepare_default_pipelines(&device);
