@@ -4,7 +4,6 @@ use cgmath::Point3;
 
 use crate::renderer::device_interface::DeviceInterface;
 
-
 pub trait HasViewMatrix {
     fn get_view_matrix (&self) -> cgmath::Matrix4<f32>;
 }
@@ -130,6 +129,7 @@ impl CameraManager {
         entries: &Self::BGL_CAMERA,
     };
 
+    /// Create a new camera manager with a default perspective camera.
     pub fn new(di: &DeviceInterface) -> Self {
         Self {
             active_camera: CameraPerspective::new(),

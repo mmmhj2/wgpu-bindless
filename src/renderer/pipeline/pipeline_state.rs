@@ -1,7 +1,7 @@
 use std::{collections::HashMap, num::NonZero};
 use wgpu::{ColorTargetState, ColorWrites, PipelineLayoutDescriptor};
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::vertex_types::VertexType, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, HasViewProjectionMatrix}, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor}}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::vertex_types::VertexType, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, CameraPerspective, HasViewProjectionMatrix}, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor}}};
 
 pub struct PipelineStates {
     bindless_resources: BindlessResourceManager,
@@ -113,6 +113,8 @@ impl PipelineStates {
     pub fn query_pipeline(&self, name: &String) -> Option<&RasterizerPipeline> {
         self.rasterizer_pipelines.get(name)
     }
+
+    pub fn set_active_camera(&mut self, camera: CameraPerspective) { self.cameras.set_active_camera(camera); }
 
     /// Query the default pipeline layout.
     /// It is guaranteed to be valid. 
