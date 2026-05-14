@@ -87,7 +87,7 @@ impl BindlessResourceManager {
 
         let default_mrao_texture = Texture::create_from_single_color_texel(
             d,
-            &[0, 128, 128, 0],
+            &[0, 0, 0, 255],
             wgpu::TextureDimension::D2,
             wgpu::TextureFormat::Rgba8Unorm,
             wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -120,8 +120,8 @@ impl BindlessResourceManager {
     /// 
     /// This texture has three channels of valid data in range [0, 1]:
     /// - R: Ambient occlusion = 0;
-    /// - G: Metallic = 0.5;
-    /// - B: Roughness = 0.5.
+    /// - G: Metallic = 0;
+    /// - B: Roughness = 0.
     /// 
     /// It therefore shares the same layout as GLTF spec.
     pub fn get_default_mrao_texture(&self) -> usize { self.default_mrao_txv_idx }

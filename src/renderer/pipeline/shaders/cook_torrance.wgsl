@@ -4,6 +4,8 @@ var bindless_textures : binding_array<texture_2d<f32>, 512>;
 var bindless_samplers : binding_array<sampler, 128>;
 
 struct Camera {
+    view_matrix: mat4x4<f32>,
+    proj_matrix: mat4x4<f32>,
     vp_matrix: mat4x4<f32>
 };
 
@@ -40,7 +42,7 @@ fn unpack_tx(idx: u32) -> vec2<u32> {
 }
 
 const PI: f32 = 3.14159265359;
-const ONE_MINUS_EPSILON: f32 = 0.99999;
+const EPSILON: f32 = 0.0001;
 
 struct PBRVertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -108,6 +110,7 @@ fn fs_main(in: PBRVertexOutput) -> @location(0) vec4<f32> {
         bindless_samplers[diffuse_indices[1]],
         in.uv0
     );
+    var baseColor = in.color.rgb * diffuse_texture.rgb;
 
     var normal_indices = unpack_tx(immediates.normal_tx_sp);
     var normal_texture = textureSample(
@@ -123,17 +126,18 @@ fn fs_main(in: PBRVertexOutput) -> @location(0) vec4<f32> {
         in.uv0
     );
 
-    var metallic = mrao_texture.r;
-    var roughness = mrao_texture.g;
-    var ao = mrao_texture.b;
+    var ao = mrao_texture.r;
+    var metallic = mrao_texture.g;
+    var roughness = mrao_texture.b;
 
     var TBN = mat3x3<f32>(in.tangent, in.bitangent, in.normal);
     var tangent_normal = normal_texture.rgb * 2.0 - 1.0;
-    var N = normalize(TBN * tangent_normal);
-    var V = normalize(vec3<f32>(0.0, 0.0, 1.0) - in.world_position);
-
-    var light_dir = normalize(vec3<f32>(0.5, 1.0, 0.3));
-    var L = light_dir;
+    // Since WGSL does not have matrix inverse function,
+    // we will have to do everything in the view space.
+    var N = normalize((camera.view_matrix * vec4<f32>(TBN * tangent_normal, 0.0)).xyz);
+    var V = -normalize((camera.view_matrix * vec4<f32>(in.world_position, 1.0)).xyz);
+    var light_dir = vec3<f32>(-1.0, 1.0, 0.0);
+    var L = normalize((camera.view_matrix * vec4<f32>(light_dir, 0.0)).xyz);
     var H = normalize(V + L);
 
     var ndotV = max(dot(N, V), 0.0);
@@ -141,22 +145,16 @@ fn fs_main(in: PBRVertexOutput) -> @location(0) vec4<f32> {
     var ndotH = max(dot(N, H), 0.0);
     var dotV = max(dot(H, V), 0.0);
 
-    var baseColor = in.color.rgb * diffuse_texture.rgb;
     var F0 = mix(vec3<f32>(0.04), baseColor, metallic);
-    var diffuse = baseColor * (1.0 - metallic);
-
     var D = D_GGX(ndotH, roughness);
     var G = G_Smith(ndotV, ndotL, roughness);
     var F = F_Schlick(dotV, F0);
 
-    var numerator = D * G * F;
-    var denominator = 4.0 * ndotV * ndotL + 0.0001;
-    var specular = numerator / denominator;
+    var specular_brdf = (D * G * F) / max(4.0 * ndotV * ndotL, EPSILON);
 
-    var Lo = (diffuse / PI + specular) * ndotL * vec3<f32>(1.0);
+    var kd = mix(vec3<f32>(1.0) - F, vec3<f32>(0.0), metallic);
+    var diffuse_brdf = baseColor * kd;
 
-    var ambient = vec3<f32>(0.03) * baseColor * ao;
-    var final_color = ambient + Lo;
-
-    return vec4<f32>(final_color, 1.0);
+    var Lo = (diffuse_brdf + specular_brdf) * ndotL;
+    return vec4<f32>(Lo, 1.0);
 }
