@@ -1,93 +1,40 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use cgmath::SquareMatrix;
-use gltf::Node;
-use wgpu::VertexAttribute;
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, Mesh, tangent_calulation::{CanRecaluclateTangent, TangentRecalculator}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription, texture::{Texture, TextureType}}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, Mesh, vertex_reconditioner::{TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription, texture::{Texture, TextureType}}};
 
-
-pub struct InstancedMesh {
+/// Actual instanced mesh, whose data have already been pushed onto GPU.
+struct InstancedMesh {
     vertex_attribute_buffers    : [wgpu::Buffer; 2],
     index_buffer                : Option<wgpu::Buffer>,
     vertex_draw_count           : u32,
     material                    : PBRMaterial
 }
-
 impl InstancedMesh {
-    fn push_buffers(
-        di: &DeviceInterface,
-        position: Vec<VertexBufferPosition>,
-        attribute: Vec<VertexBufferOthers>,
-        index: Option<Vec<u32>>
-    ) -> ([wgpu::Buffer; 2], Option<wgpu::Buffer>) {
-        assert_eq!(position.len(), attribute.len());
-
-        let position_buffer = di.get_device().create_buffer(
-            &wgpu::BufferDescriptor{
-                label: None,
-                size: (position.len() as u64 * std::mem::size_of::<VertexBufferPosition>() as u64) as u64,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
-                mapped_at_creation: false,
-            }
-        );
-
-        let attribute_buffer = di.get_device().create_buffer(
-            &wgpu::BufferDescriptor{
-                label: None,
-                size: (attribute.len() as u64 * std::mem::size_of::<VertexBufferOthers>() as u64) as u64,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
-                mapped_at_creation: false,
-            }
-        );
-
-        di.get_queue().write_buffer(&position_buffer, 0, bytemuck::cast_slice(&position));
-        di.get_queue().write_buffer(&attribute_buffer, 0, bytemuck::cast_slice(&attribute));
-
-        if let Some(index) = index {
-            let index_buffer = di.get_device().create_buffer(
-                &wgpu::BufferDescriptor{
-                    label: None,
-                    size: (index.len() as u64 * std::mem::size_of::<u32>() as u64) as u64,
-                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::INDEX,
-                    mapped_at_creation: false,
-                }
-            );
-            di.get_queue().write_buffer(&index_buffer, 0, bytemuck::cast_slice(&index));
-            ([position_buffer, attribute_buffer], Some(index_buffer))
-        } else {
-            ([position_buffer, attribute_buffer], None)
-        }
-    }
-
-    fn get_material(&self) -> &PBRMaterial {
-        &self.material
-    }
-
-    /// Create a new instanced mesh from loaded buffers.
-    /// 
-    /// Tangent might be recalcuated if needed.
-    /// Device side buffers will be created and updated.
-    pub fn new(di: &DeviceInterface, mut imt: InstancedMeshTransient, material: PBRMaterial) -> Self {
-        if imt.need_tangent {
-            imt.recalculate_tangents();
-        };
-
-        let (vertex_attribute_buffers, index_buffer) = Self::push_buffers(di, imt.vp, imt.va, imt.vi);
-
-        Self { vertex_attribute_buffers, index_buffer, vertex_draw_count: imt.vertex_draw_count, material }
-    }
+    fn get_material(&self) -> &PBRMaterial { &self.material }
+}
+impl Mesh for InstancedMesh {
+    fn get_vertex_buffer(&self) -> &[wgpu::Buffer] { &self.vertex_attribute_buffers }
+    fn get_vertex_draw_count(&self) -> u32 { self.vertex_draw_count }
+    fn get_index_buffer(&self) -> Option<&wgpu::Buffer> { self.index_buffer.as_ref() }
+    fn get_vertex_type(&self) -> super::vertex_types::VertexType { super::vertex_types::VertexType::Basic }
 }
 
-pub struct InstancedMeshTransient {
-    pub vp  : Vec<VertexBufferPosition>,
-    pub va  : Vec<VertexBufferOthers>,
-    pub vi  : Option<Vec<u32>>,
-    pub vertex_draw_count : u32,
-    pub need_tangent : bool
+/// Builder for instanced mesh.
+/// It contains all data of an instanced mesh, but is stored on CPU for further reconditioning.
+/// It must be committed to GPU before using. 
+pub struct InstancedMeshBuilder {
+    vp  : Vec<VertexBufferPosition>,
+    va  : Vec<VertexBufferOthers>,
+    vi  : Option<Vec<u32>>,
+    material : PBRMaterial,
+    vertex_draw_count : u32,
+    vertex_color_scale: [f32; 4],
+    need_tangent : bool
 }
 
-impl InstancedMeshTransient {
+impl InstancedMeshBuilder {
     fn construct_position_buffer (
         primitive: &gltf::Primitive,
         buffers: &Vec<gltf::buffer::Data>
@@ -147,7 +94,6 @@ impl InstancedMeshTransient {
 
             (attribute_buffer, false)
         } else {
-            // TODO: calculate tangent.
             log::info!("Imported mesh does not vertex have tangent. It will be automatically calculated on upload.");
             (attribute_buffer, true)
         }
@@ -168,11 +114,12 @@ impl InstancedMeshTransient {
         Some(indices)
     }
 
-    pub fn new(
+    fn new(
         di: &DeviceInterface,
         bindless_manager: &mut BindlessResourceManager,
         primitive: &gltf::Primitive,
-        buffers: &Vec<gltf::buffer::Data>
+        buffers: &Vec<gltf::buffer::Data>,
+        images: &Vec<gltf::image::Data>
     ) -> Self {
         let vp = Self::construct_position_buffer(
             &primitive,
@@ -185,42 +132,6 @@ impl InstancedMeshTransient {
             None => vp.len()
         } as u32;
 
-        Self { vp, va, vi, vertex_draw_count, need_tangent }
-    }
-}
-
-impl CanRecaluclateTangent for InstancedMeshTransient {
-    fn get_position_buffer_tgt(&self) -> &Vec<VertexBufferPosition> {
-        &self.vp
-    }
-
-    fn get_attribute_buffer_tgt(&self) -> &Vec<VertexBufferOthers> {
-        &self.va
-    }
-
-    fn get_attribute_buffer_tgt_mut(&mut self) -> &mut Vec<VertexBufferOthers> {
-        &mut self.va
-    }
-
-    fn get_index_buffer_tgt(&self) -> Option<&Vec<u32>> {
-        self.vi.as_ref()
-    }
-}
-
-impl TangentRecalculator for InstancedMeshTransient {}
-
-impl InstancedMesh {
-    pub fn create_from_gltf(
-        di: &DeviceInterface,
-        bindless_manager: &mut BindlessResourceManager,
-        primitive: &gltf::Primitive,
-        buffers: &Vec<gltf::buffer::Data>,
-        images: &Vec<gltf::image::Data>
-    ) -> Arc<Self> {
-
-        // Construct buffers for the primitive.
-        let transient = InstancedMeshTransient::new(di, bindless_manager, primitive, buffers);
-        
         // Construct textures for the primitive.
         let pbr_material = primitive.material().pbr_metallic_roughness();
 
@@ -271,29 +182,80 @@ impl InstancedMesh {
             diffuse_id.1,
             normal_id.1,
             bindless_manager.get_default_sampler()
+        );
+
+        Self { vp, va, vi, vertex_draw_count, need_tangent, material, vertex_color_scale: pbr_material.base_color_factor() }
+    }
+
+    fn push_buffers(
+        &self,
+        di: &DeviceInterface
+    ) -> ([wgpu::Buffer; 2], Option<wgpu::Buffer>) {
+        assert_eq!(self.va.len(), self.vp.len());
+
+        let position_buffer = di.get_device().create_buffer(
+            &wgpu::BufferDescriptor{
+                label: None,
+                size: (self.vp.len() as u64 * std::mem::size_of::<VertexBufferPosition>() as u64) as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
+                mapped_at_creation: false,
+            }
+        );
+
+        let attribute_buffer = di.get_device().create_buffer(
+            &wgpu::BufferDescriptor{
+                label: None,
+                size: (self.va.len() as u64 * std::mem::size_of::<VertexBufferOthers>() as u64) as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
+                mapped_at_creation: false,
+            }
+        );
+
+        di.get_queue().write_buffer(&position_buffer, 0, bytemuck::cast_slice(&self.vp));
+        di.get_queue().write_buffer(&attribute_buffer, 0, bytemuck::cast_slice(&self.va));
+
+        if let Some(index) = self.vi.as_ref() {
+            let index_buffer = di.get_device().create_buffer(
+                &wgpu::BufferDescriptor{
+                    label: None,
+                    size: (index.len() as u64 * std::mem::size_of::<u32>() as u64) as u64,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::INDEX,
+                    mapped_at_creation: false,
+                }
             );
-        Arc::new(InstancedMesh::new(di, transient, material))
+            di.get_queue().write_buffer(&index_buffer, 0, bytemuck::cast_slice(&index));
+            ([position_buffer, attribute_buffer], Some(index_buffer))
+        } else {
+            ([position_buffer, attribute_buffer], None)
+        }
+    }
+
+    /// Recondition the vertex attributes, and commit the builder onto the GPU.
+    fn recondition_and_commit(mut self, di: &DeviceInterface) -> InstancedMesh {
+        log::debug!("Applying vertex color scale: {:?}.", self.vertex_color_scale);
+        self.rescale_vertex_color(self.vertex_color_scale);
+
+        if self.need_tangent  { 
+            log::debug!("Recalculating tangent vectors.");
+            self.recalculate_tangents();
+        }
+        let (vp_va, vi) = self.push_buffers(di);
+        InstancedMesh { vertex_attribute_buffers: vp_va, index_buffer: vi, vertex_draw_count: self.vertex_draw_count, material: self.material }
     }
 }
-
-impl Mesh for InstancedMesh {
-    fn get_vertex_buffer(&self) -> &[wgpu::Buffer] {
-        &self.vertex_attribute_buffers
-    }
-
-    fn get_vertex_draw_count(&self) -> u32 {
-        self.vertex_draw_count
-    }
-
-    fn get_index_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.index_buffer.as_ref()
-    }
-
-    fn get_vertex_type(&self) -> super::vertex_types::VertexType {
-        super::vertex_types::VertexType::Basic
-    }
+impl VertexReconditionable for InstancedMeshBuilder {
+    fn get_position_buffer(&self) -> &Vec<VertexBufferPosition> { &self.vp }
+    fn get_attribute_buffer(&self) -> &Vec<VertexBufferOthers> { &self.va }
+    fn get_index_buffer(&self) -> Option<&Vec<u32>> { self.vi.as_ref() }
 }
+impl VertexReconditionableAttributeWrite for InstancedMeshBuilder {
+    fn get_attribute_buffer_mut(&mut self) -> &mut Vec<VertexBufferOthers> { &mut self.va }
+}
+impl TangentRecalculator for InstancedMeshBuilder {}
+impl VertexColorApplyScale for InstancedMeshBuilder {}
 
+/// Instances of instanced mesh.
+/// Holds unique data for each instance such as model matrix, and a reference to the underlying mesh.
 #[derive(Clone)]
 pub struct InstancedMeshInstance {
     mesh            : Arc<InstancedMesh>,
@@ -301,11 +263,6 @@ pub struct InstancedMeshInstance {
 }
 
 impl InstancedMeshInstance {
-    /// Create a new instance from a pre-existing mesh and a new model matrix.
-    pub fn new(mesh: Arc<InstancedMesh>, model_matrix: cgmath::Matrix4<f32>) -> Self {
-        Self { mesh, model_matrix }
-    }
-
     /// Create instances from a GLTF scene.
     /// 
     /// Only nodes that contains meshes are processed.
@@ -364,10 +321,10 @@ impl InstancedMeshInstance {
 
         for primitive in mesh.primitives() {
             ret.push(
-                Self::new(
-                    InstancedMesh::create_from_gltf(di, bindless_manager, &primitive, buffers, images),
-                    cgmath::Matrix4::identity().into()
-                )
+                Self{
+                    mesh: InstancedMeshBuilder::new(di, bindless_manager, &primitive, buffers, images).recondition_and_commit(di).into(),
+                    model_matrix: cgmath::Matrix4::identity().into()
+                }
             )
         }
 
@@ -376,31 +333,15 @@ impl InstancedMeshInstance {
 }
 
 impl Mesh for InstancedMeshInstance {
-    fn get_vertex_buffer(&self) -> &[wgpu::Buffer] {
-        self.mesh.get_vertex_buffer()
-    }
-
-    fn get_vertex_draw_count(&self) -> u32 {
-        self.mesh.get_vertex_draw_count()
-    }
-
-    fn get_index_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.mesh.get_index_buffer()
-    }
-
-    fn get_vertex_type(&self) -> super::vertex_types::VertexType {
-        self.mesh.get_vertex_type()
-    }
+    fn get_vertex_buffer(&self) -> &[wgpu::Buffer] { self.mesh.get_vertex_buffer() }
+    fn get_vertex_draw_count(&self) -> u32 { self.mesh.get_vertex_draw_count() }
+    fn get_index_buffer(&self) -> Option<&wgpu::Buffer> { self.mesh.get_index_buffer() }
+    fn get_vertex_type(&self) -> super::vertex_types::VertexType { self.mesh.get_vertex_type() }
 }
 
 impl DrawableMesh for InstancedMeshInstance {
-    fn get_model_matrix(&self) -> &[[f32; 4]; 4] {
-        self.model_matrix.as_ref()
-    }
-
-    fn get_material(&self) -> &PBRMaterial {
-        self.mesh.get_material()
-    }
+    fn get_model_matrix(&self) -> &[[f32; 4]; 4] { self.model_matrix.as_ref() }
+    fn get_material(&self) -> &PBRMaterial { self.mesh.get_material() }
 }
 
 #[cfg(test)]
@@ -418,9 +359,9 @@ mod test {
         let primitive = mesh.primitives().next().expect("cube_textured has not primitives.");
         assert_eq!(primitive.mode(), gltf::mesh::Mode::Triangles);
 
-        let vp = InstancedMeshTransient::construct_position_buffer(&primitive, &buffers);
-        let va = InstancedMeshTransient::construct_attribute_buffer(&primitive, &buffers, vp.len());
-        let vi = InstancedMeshTransient::construct_index_buffer(&primitive, &buffers).expect("Cannot find index buffer.");
+        let vp = InstancedMeshBuilder::construct_position_buffer(&primitive, &buffers);
+        let va = InstancedMeshBuilder::construct_attribute_buffer(&primitive, &buffers, vp.len());
+        let vi = InstancedMeshBuilder::construct_index_buffer(&primitive, &buffers).expect("Cannot find index buffer.");
 
         // Four vertices for each face.
         assert_eq!(vp.len(), 4 * 6);
