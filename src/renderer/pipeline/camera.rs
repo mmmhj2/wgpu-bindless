@@ -25,11 +25,15 @@ pub trait HasViewProjectionMatrix : HasViewMatrix {
         Self::OPENGL_TO_WGPU_MATRIX * self.get_projection_matrix() * self.get_view_matrix()
     }
 
-    /// Get the u8 array containing the view-projection matrix.
+    /// Get the u8 array containing the view, projection and view-projection matrices.
     /// 
     /// Useful for committing its data to GPU.
-    fn get_vp_matrix_as_u8_arr(&self) -> [u8; std::mem::size_of::<f32>() * 16] {
-        let arr: [[f32; 4]; 4] = self.get_vp_matrix().into();
+    fn get_v_p_vp_matrices_as_u8(&self) -> [u8; std::mem::size_of::<f32>() * 16 * 3] {
+        let arr: [[[f32; 4]; 4]; 3] = [
+            self.get_view_matrix().into(),
+            self.get_projection_matrix().into(),
+            self.get_vp_matrix().into()
+        ];
         bytemuck::cast(arr)
     }
 }
@@ -118,7 +122,7 @@ impl CameraManager {
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
-                min_binding_size: Some(NonZero::new(std::mem::size_of::<[[f32; 4]; 4]>() as u64).unwrap())
+                min_binding_size: Some(NonZero::new(std::mem::size_of::<[[f32; 4]; 4]>() as u64 * 3).unwrap())
             },
             count: None,
         }

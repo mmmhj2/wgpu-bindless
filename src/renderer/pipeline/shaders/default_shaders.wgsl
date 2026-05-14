@@ -6,6 +6,8 @@ var bindless_textures : binding_array<texture_2d<f32>, 512>;
 var bindless_samplers : binding_array<sampler, 128>;
 
 struct Camera {
+    view_matrix: mat4x4<f32>,
+    proj_matrix: mat4x4<f32>,
     vp_matrix: mat4x4<f32>
 };
 
