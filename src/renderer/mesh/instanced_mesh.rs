@@ -175,13 +175,21 @@ impl InstancedMeshBuilder {
             (bindless_manager.get_default_bump_texture(), bindless_manager.get_default_sampler())
         };
 
+        let should_have_mrao_texture = primitive.material().pbr_metallic_roughness().metallic_roughness_texture().is_some() || primitive.material().occlusion_texture().is_some();
+
+        let mrao_id = if should_have_mrao_texture {
+            panic!("")
+        } else {
+            (bindless_manager.get_default_mrao_texture(), bindless_manager.get_default_sampler())
+        };
+
         let material = PBRMaterial::new(
             diffuse_id.0,
             normal_id.0,
-            bindless_manager.get_default_sampler(),
+            mrao_id.0,
             diffuse_id.1,
             normal_id.1,
-            bindless_manager.get_default_sampler()
+            mrao_id.1
         );
 
         Self { vp, va, vi, vertex_draw_count, need_tangent, material, vertex_color_scale: pbr_material.base_color_factor() }

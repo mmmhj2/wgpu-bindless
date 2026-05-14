@@ -74,9 +74,9 @@ impl Texture {
             TextureType::ColorSrgb => { Ok(converted_format.add_srgb_suffix()) },
             TextureType::Normal => { 
                 match converted_format {
-                    wgpu::TextureFormat::Rgba8Unorm => Ok(wgpu::TextureFormat::Rgba8Snorm),
-                    wgpu::TextureFormat::Rgba16Unorm => Ok(wgpu::TextureFormat::Rgba16Snorm),
-                    wgpu::TextureFormat::Rgba32Float => Ok(wgpu::TextureFormat::Rgba32Float),
+                    x @ (wgpu::TextureFormat::Rgba8Unorm 
+                    | wgpu::TextureFormat::Rgba16Unorm 
+                    | wgpu::TextureFormat::Rgba32Float) => Ok(x),
                     _ => Err(TextureImportError::ChannelNotSufficient)
                 }
              },
