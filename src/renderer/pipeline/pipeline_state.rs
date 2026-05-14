@@ -11,7 +11,7 @@ pub struct PipelineStates {
 }
 
 impl PipelineStates {
-    pub fn prepare_default_pipelines (di: & DeviceInterface) -> Self {
+    pub fn prepare_default_pipelines (di: & DeviceInterface, format: wgpu::TextureFormat) -> Self {
 
         let bindless_resources = BindlessResourceManager::new(di);
         let cameras = CameraManager::new(di);
@@ -30,7 +30,7 @@ impl PipelineStates {
         );
         let targets = [
             Some(ColorTargetState{
-                    format: di.get_default_texture_format(),
+                    format: format,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: ColorWrites::ALL
             })

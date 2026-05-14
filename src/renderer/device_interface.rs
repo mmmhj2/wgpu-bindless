@@ -129,6 +129,10 @@ impl DeviceInterface {
         self.surface.surface.get_current_texture()
     }
 
+    pub fn get_current_surface_configuration(&self) -> &wgpu::SurfaceConfiguration {
+        &self.surface.config
+    }
+
     pub fn is_presentation_ready(&self) -> bool { self.presentation_ready }
 
     /// Request the default color texture format for this device.

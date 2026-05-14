@@ -6,3 +6,4 @@ pub mod texture;
 pub mod bindless_resource_manager;
 pub mod pbr_material;
 pub mod camera;
+pub mod framebuffers;
