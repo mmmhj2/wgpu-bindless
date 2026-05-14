@@ -1,5 +1,5 @@
 use std::{collections::HashMap, num::NonZero};
-use wgpu::{ColorTargetState, ColorWrites, PipelineLayoutDescriptor};
+use wgpu::{ColorTargetState, ColorWrites, DepthBiasState, PipelineLayoutDescriptor};
 
 use crate::renderer::{device_interface::DeviceInterface, mesh::vertex_types::VertexType, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, CameraPerspective, HasViewProjectionMatrix}, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor}}};
 
@@ -47,6 +47,13 @@ impl PipelineStates {
                 entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &targets
+            },
+            wgpu::DepthStencilState{
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: Default::default(),
+                bias: Default::default()
             }
         ));
 
@@ -63,6 +70,13 @@ impl PipelineStates {
                 entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &targets
+            },
+            wgpu::DepthStencilState{
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: Default::default(),
+                bias: Default::default()
             }
         ));
 
@@ -85,7 +99,7 @@ impl PipelineStates {
     pub fn prepare_render_pass(&self, di: &DeviceInterface, rp: &mut wgpu::RenderPass) -> () {
         let bindless_bind_group = self.bindless_resources.get_bind_group(di.get_device());
 
-        let camera_buffer_size = std::mem::size_of::<[[f32; 4]; 4]>() as u64;
+        let camera_buffer_size = std::mem::size_of::<[[f32; 4]; 4]>() as u64 * 3;
         let camera_buffer = di.get_device().create_buffer(&wgpu::wgt::BufferDescriptor {
             label: None,
             size: camera_buffer_size,
@@ -110,7 +124,7 @@ impl PipelineStates {
         });
 
         rp.set_bind_group(0, &bindless_bind_group, &[]);
-        di.get_queue().write_buffer(&camera_buffer, 0, &self.cameras.get_active_camera().get_vp_matrix_as_u8_arr());
+        di.get_queue().write_buffer(&camera_buffer, 0, &self.cameras.get_active_camera().get_v_p_vp_matrices_as_u8());
         rp.set_bind_group(1, &camera_bind_group, &[]);
     }
 

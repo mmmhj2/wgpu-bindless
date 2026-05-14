@@ -83,7 +83,14 @@ impl RendererState for State {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: self.device.get_depth_texture_view().expect("Unprepared"),
+                    depth_ops: Some(wgpu::Operations{
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Discard
+                    }),
+                    stencil_ops: None
+                }),
                 occlusion_query_set: None,
                 timestamp_writes: None,
                 multiview_mask: None,
@@ -94,7 +101,7 @@ impl RendererState for State {
 
             self.pipeline.set_active_camera(camera);
             self.pipeline.prepare_render_pass(self.get_device_interface(), &mut rp);
-            rp.set_rasterizer_pipeline(self.pipeline.get_default_pipeline());
+            rp.set_rasterizer_pipeline(self.pipeline.query_pipeline(&String::from("cook_torrance")).expect("cook torrance pipeline not found"));
             for m in &self.gltf_models {
                 m.draw(&mut rp);
             }

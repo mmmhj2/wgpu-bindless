@@ -1,5 +1,5 @@
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, immediate_mesh::ImmediateMeshBuilder}, pipeline::{pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, immediate_mesh::ImmediateMeshBuilder}, pipeline::{camera::CameraPerspective, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline}};
 
 use std::sync::Arc;
 
@@ -90,7 +90,14 @@ impl RendererState for DefaultRendererState {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: self.device.get_depth_texture_view().expect("Unprepared"),
+                    depth_ops: Some(wgpu::Operations{
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Discard
+                    }),
+                    stencil_ops: None
+                }),
                 occlusion_query_set: None,
                 timestamp_writes: None,
                 multiview_mask: None,

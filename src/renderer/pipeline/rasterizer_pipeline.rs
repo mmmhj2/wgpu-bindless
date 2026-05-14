@@ -51,6 +51,18 @@ impl<'a> From<(wgpu::VertexState<'a>, wgpu::FragmentState<'a>)> for RasterizerPi
     }
 }
 
+impl<'a> From<(wgpu::VertexState<'a>, wgpu::FragmentState<'a>, wgpu::DepthStencilState)> for RasterizerPipelineDescriptor<'a> {
+    fn from(value: (wgpu::VertexState<'a>, wgpu::FragmentState<'a>, wgpu::DepthStencilState)) -> Self {
+        RasterizerPipelineDescriptor {
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+            vertex: value.0,
+            fragment: Some(value.1),
+            depthstencil: Some(value.2)
+        }
+    }
+}
+
 pub struct RasterizerPipeline {
     pipeline : wgpu::RenderPipeline
 }

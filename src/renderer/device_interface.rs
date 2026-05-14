@@ -1,11 +1,13 @@
 use std::{error, sync::Arc};
+use gltf::Texture;
 use winit::window::Window;
 
 use crate::renderer::pipeline::bindless_resource_manager::{MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS};
 
 struct SurfaceDetailInfo {
     surface     : wgpu::Surface<'static>,
-    config      : wgpu::SurfaceConfiguration
+    config      : wgpu::SurfaceConfiguration,
+    depth_texture_view  : Option<wgpu::TextureView>
 }
 
 /// Interface to WGPU hardware device
@@ -89,7 +91,7 @@ impl DeviceInterface {
         Ok(DeviceInterface {
             device,
             surface: SurfaceDetailInfo {
-                surface, config
+                surface, config, depth_texture_view: None
             },
             graphics_queue: queue,
             presentation_ready: false
@@ -98,6 +100,19 @@ impl DeviceInterface {
 
     pub fn configure_surface(&mut self) {
         self.surface.surface.configure(&self.device, &self.surface.config);
+
+        let depth_texture = self.get_device().create_texture(&wgpu::TextureDescriptor{
+            label: None,
+            size: wgpu::Extent3d { width: self.surface.config.width, height: self.surface.config.height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        self.surface.depth_texture_view = Some(depth_texture.create_view(&Default::default()));
+
         self.presentation_ready = true;
     }
 
@@ -127,4 +142,6 @@ impl DeviceInterface {
 
     /// Acquire the logical device
     pub fn get_device(&self) -> &wgpu::Device { &self.device }
+
+    pub fn get_depth_texture_view(&self) -> Option<&wgpu::TextureView> { self.surface.depth_texture_view.as_ref() }
 }
