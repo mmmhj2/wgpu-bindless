@@ -19,7 +19,7 @@ impl PipelineStates {
         let mut rasterizer_pipelines: HashMap<String, RasterizerPipeline> = HashMap::new();
 
         let default_shader_module = di.get_device().create_shader_module(
-            wgpu::include_wgsl!("default_shaders.wgsl")
+            wgpu::include_wgsl!("./shaders/default_shaders.wgsl")
         );
         let default_rasterizer_pipeline_layout = di.get_device().create_pipeline_layout(
             &PipelineLayoutDescriptor{
@@ -28,7 +28,6 @@ impl PipelineStates {
                 immediate_size: 80
             }
         );
-
         let targets = [
             Some(ColorTargetState{
                     format: di.get_default_texture_format(),
@@ -36,7 +35,6 @@ impl PipelineStates {
                     write_mask: ColorWrites::ALL
             })
         ];
-
         let default_rasterizer_pipeline_descriptor = RasterizerPipelineDescriptor::from((
             wgpu::VertexState{
                 module: &default_shader_module,
@@ -52,7 +50,24 @@ impl PipelineStates {
             }
         ));
 
+        let pbr_shader_module = di.get_device().create_shader_module(wgpu::include_wgsl!("./shaders/cook_torrance.wgsl"));
+        let pbr_rasterizer_pipeline_descriptor = RasterizerPipelineDescriptor::from((
+            wgpu::VertexState{
+                module: &pbr_shader_module,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: VertexType::get_vertex_buffer_layout(VertexType::Basic)
+            },
+            wgpu::FragmentState{
+                module: &pbr_shader_module,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &targets
+            }
+        ));
+
         rasterizer_pipelines.insert(String::from("default"), RasterizerPipeline::new(di, default_rasterizer_pipeline_descriptor, Some(&default_rasterizer_pipeline_layout)));
+        rasterizer_pipelines.insert(String::from("cook_torrance"), RasterizerPipeline::new(di, pbr_rasterizer_pipeline_descriptor, Some(&default_rasterizer_pipeline_layout)));
         rasterizer_pipeline_layouts.insert(String::from("default"), default_rasterizer_pipeline_layout);
 
         return Self{
