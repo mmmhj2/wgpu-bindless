@@ -75,9 +75,9 @@ impl BindlessResourceManager {
         let default_normal_texture = Texture::create_from_single_color_texel(
             d,
             // Texels are interpreted as signed 8-bit integers.
-            &[0, 0, 127, 0],
+            &[128, 128, 255, 0],
             wgpu::TextureDimension::D2,
-            wgpu::TextureFormat::Rgba8Snorm,
+            wgpu::TextureFormat::Rgba8Unorm,
             wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
             Some("Default normal texture")
         );
@@ -107,11 +107,13 @@ impl BindlessResourceManager {
     /// 
     /// This texture has three channels of data, representing tangent-space normals
     /// under the following specification:
-    /// - R: tangent space, X+
-    /// - G: tangent space, Y+
-    /// - B: tangent space, Z+
+    /// - R: tangent space, X+, \[0  , 1\]
+    /// - G: tangent space, Y+, \[0  , 1\]
+    /// - B: tangent space, Z+, \]0.5, 1\]
     /// 
-    /// The default normal vector is (0.0, 0.0, 1.0), pointing up.
+    /// The default normal vector is (0.5, 0.5, 1.0), pointing up.
+    /// It has the same representation as GLTF spec, meaning that you have to
+    /// manually renormalize the normal vector in the shader code.
     pub fn get_default_bump_texture(&self) -> usize { self.default_bump_txv_idx }
 
     /// Acquire the default MRAO texture.
