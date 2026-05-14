@@ -16,7 +16,8 @@ pub struct BindlessResourceManager {
 
     default_sampler_idx     : usize,
     white_txv_idx           : usize,
-    default_bump_txv_idx    : usize
+    default_bump_txv_idx    : usize,
+    default_mrao_txv_idx    : usize
 }
 
 impl BindlessResourceManager {
@@ -53,7 +54,8 @@ impl BindlessResourceManager {
             hashed_samplers: HashMap::new(),
             default_sampler_idx: 0,
             white_txv_idx: 0,
-            default_bump_txv_idx: 0
+            default_bump_txv_idx: 0,
+            default_mrao_txv_idx: 0
         };
 
         ret.default_sampler_idx = ret.push_sampler(d.get_device(), Default::default()).expect("Failed to create default sampler.");
@@ -66,24 +68,61 @@ impl BindlessResourceManager {
             wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
             Some("White texture")
         );
-        ret.white_txv_idx = ret.push_texture(wgpu::Texture::from(white_texture).create_view(&Default::default())).expect("Failed to create white texture");
+        ret.white_txv_idx = ret.push_texture(
+            wgpu::Texture::from(white_texture).create_view(&Default::default())
+        ).expect("Failed to create white texture");
 
         let default_normal_texture = Texture::create_from_single_color_texel(
             d,
-            &[128, 128, 255, 0],
+            // Texels are interpreted as signed 8-bit integers.
+            &[0, 0, 127, 0],
             wgpu::TextureDimension::D2,
-            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Rgba8Snorm,
             wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
             Some("Default normal texture")
         );
-        ret.default_bump_txv_idx = ret.push_texture(wgpu::Texture::from(default_normal_texture).create_view(&Default::default())).expect("Failed to create default normal texture");
+        ret.default_bump_txv_idx = ret.push_texture(
+            wgpu::Texture::from(default_normal_texture).create_view(&Default::default())
+        ).expect("Failed to create default normal texture");
+
+        let default_mrao_texture = Texture::create_from_single_color_texel(
+            d,
+            &[0, 128, 128, 0],
+            wgpu::TextureDimension::D2,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+            Some("Default MRAO texture")
+        );
+        ret.default_mrao_txv_idx = ret.push_texture(
+            wgpu::Texture::from(default_mrao_texture).create_view(&Default::default())
+        ).expect("Failed to create default MRAO texture");
 
         return ret;
     }
 
     pub fn get_default_sampler(&self) -> usize { self.default_sampler_idx }
     pub fn get_white_texture(&self) -> usize { self.white_txv_idx }
+
+    /// Acquire the default normal map texture.
+    /// 
+    /// This texture has three channels of data, representing tangent-space normals
+    /// under the following specification:
+    /// - R: tangent space, X+
+    /// - G: tangent space, Y+
+    /// - B: tangent space, Z+
+    /// 
+    /// The default normal vector is (0.0, 0.0, 1.0), pointing up.
     pub fn get_default_bump_texture(&self) -> usize { self.default_bump_txv_idx }
+
+    /// Acquire the default MRAO texture.
+    /// 
+    /// This texture has three channels of valid data in range [0, 1]:
+    /// - R: Ambient occlusion = 0;
+    /// - G: Metallic = 0.5;
+    /// - B: Roughness = 0.5.
+    /// 
+    /// It therefore shares the same layout as GLTF spec.
+    pub fn get_default_mrao_texture(&self) -> usize { self.default_mrao_txv_idx }
 
     /// Push a sampler into the manager, returning its index.
     ///

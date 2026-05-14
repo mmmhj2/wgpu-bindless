@@ -31,7 +31,7 @@ impl PBRMaterial {
         let mut ret = Self {
             diffuse_tx: manager.get_white_texture(),
             normal_tx: manager.get_default_bump_texture(),
-            mrao_tx: manager.get_white_texture(),
+            mrao_tx: manager.get_default_mrao_texture(),
             diffuse_sp: manager.get_default_sampler(),
             normal_sp: manager.get_default_sampler(),
             mrao_sp: manager.get_default_sampler()
