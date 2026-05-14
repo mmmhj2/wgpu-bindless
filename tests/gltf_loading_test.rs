@@ -15,7 +15,7 @@ mod test {
     impl RendererState for State {
         async fn new(window: Arc<Window>) -> Self {
             let device = DeviceInterface::new(window.clone()).await.unwrap();
-            let mut pipeline = PipelineStates::prepare_default_pipelines(&device);
+            let mut pipeline = PipelineStates::prepare_default_pipelines(&device, device.get_default_texture_format());
 
             let (document, buffers, images) = gltf::import("resource/test_two_cubes.glb").expect("Cannot open glb file.");
             

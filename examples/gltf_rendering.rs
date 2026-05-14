@@ -1,19 +1,21 @@
 use std::sync::Arc;
 
-use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, instanced_mesh::InstancedMeshInstance}, pipeline::{camera::CameraPerspective, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline}, window::RendererState}};
+use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, instanced_mesh::InstancedMeshInstance}, pipeline::{camera::CameraPerspective, framebuffers::Framebuffers, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline}, window::RendererState}};
 use winit::{event_loop::EventLoop, window::Window};
 
 pub struct State {
     window: Arc<Window>,
     device: DeviceInterface,
     pipeline: PipelineStates,
+    fb: Framebuffers,
     gltf_models: Vec<InstancedMeshInstance>
 }
 
 impl RendererState for State {
     async fn new(window: Arc<Window>) -> Self {
         let device = DeviceInterface::new(window.clone()).await.unwrap();
-        let mut pipeline = PipelineStates::prepare_default_pipelines(&device);
+        let mut pipeline = PipelineStates::prepare_default_pipelines(&device, wgpu::TextureFormat::Rgba16Float);
+        let fb = Framebuffers::new(&device, wgpu::TextureFormat::Rgba16Float);
 
         let (document, buffers, images) = gltf::import("resource/test_two_cubes.glb").expect("Cannot open glb file.");
         
@@ -28,6 +30,7 @@ impl RendererState for State {
             window: window.clone(),
             device,
             pipeline,
+            fb,
             gltf_models
         }
     }
@@ -61,7 +64,8 @@ impl RendererState for State {
             }
         };
 
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.fb.configure_with_surface(&self.device);
+
         let mut encoder = self.device.get_device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
@@ -70,7 +74,7 @@ impl RendererState for State {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: self.fb.get_hdr_framebuffer().expect("hdr framebuffer should be ready"),
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
@@ -97,7 +101,7 @@ impl RendererState for State {
             });
 
             let mut camera = CameraPerspective::new();
-            camera.set_origin(cgmath::point3(-10.0, 0.0, 0.0));
+            camera.set_origin(cgmath::point3(-3.0, 0.0, 0.0));
 
             self.pipeline.set_active_camera(camera);
             self.pipeline.prepare_render_pass(self.get_device_interface(), &mut rp);
@@ -106,6 +110,9 @@ impl RendererState for State {
                 m.draw(&mut rp);
             }
         }
+
+        let final_view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.fb.tonemap_with(&self.device, &mut encoder, &final_view);
 
         self.device.get_queue().submit(std::iter::once(encoder.finish()));
         output.present();
