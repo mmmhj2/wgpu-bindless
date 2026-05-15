@@ -143,6 +143,7 @@ impl PipelineStates {
         self.rasterizer_pipelines.get(name)
     }
 
+    pub fn get_camera_manager(&self) -> &CameraManager { &self.cameras }
     pub fn set_active_camera(&mut self, camera: CameraPerspective) { self.cameras.set_active_camera(camera); }
 
     /// Query the default pipeline layout.

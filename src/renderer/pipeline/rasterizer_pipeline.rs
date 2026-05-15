@@ -63,15 +63,11 @@ impl<'a> From<(wgpu::VertexState<'a>, wgpu::FragmentState<'a>, wgpu::DepthStenci
     }
 }
 
-pub struct RasterizerPipeline {
-    pipeline : wgpu::RenderPipeline
-}
-
-impl RasterizerPipeline {
-    pub fn new(di : &DeviceInterface, rpd : RasterizerPipelineDescriptor, layout : Option<&wgpu::PipelineLayout>) -> RasterizerPipeline {
-        let desc = RenderPipelineDescriptor{
+impl<'a> From<RasterizerPipelineDescriptor<'a>> for wgpu::RenderPipelineDescriptor<'a> {
+    fn from(rpd: RasterizerPipelineDescriptor<'a>) -> Self {
+        RenderPipelineDescriptor{
             label: None,
-            layout: layout,
+            layout: None,
             vertex: rpd.vertex,
             fragment: rpd.fragment,
             primitive: wgpu::PrimitiveState{
@@ -83,7 +79,18 @@ impl RasterizerPipeline {
             multisample: DEFAULT_MULTISAMPLE_STATE,
             multiview_mask: None,
             cache: None
-        };
+        }
+    }
+}
+
+pub struct RasterizerPipeline {
+    pipeline : wgpu::RenderPipeline
+}
+
+impl RasterizerPipeline {
+    pub fn new(di : &DeviceInterface, rpd : RasterizerPipelineDescriptor, layout : Option<&wgpu::PipelineLayout>) -> RasterizerPipeline {
+        let mut desc: RenderPipelineDescriptor<'_> = rpd.into();
+        desc.layout = layout;
 
         RasterizerPipeline{
             pipeline : di.get_device().create_render_pipeline(&desc)
