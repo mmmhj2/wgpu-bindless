@@ -91,7 +91,10 @@ impl SkyboxManager {
     pub fn set_texture(&mut self, texture: Texture) {
         let texture: wgpu::Texture = texture.into();
         assert_eq!(texture.depth_or_array_layers(), 6);
-        self.skybox_textures = Some(texture.create_view(&Default::default()));
+        self.skybox_textures = Some(texture.create_view(&wgpu::TextureViewDescriptor{
+            dimension: Some(wgpu::TextureViewDimension::Cube),
+            ..Default::default()
+        }));
     }
 
     /// Draw skybox on the given render pass.

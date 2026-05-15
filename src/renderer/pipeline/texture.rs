@@ -132,7 +132,9 @@ impl Texture {
         path: &[P],
         texture_type: TextureType
     ) -> Result<Self, TextureImportError> where P: AsRef<std::path::Path> {
-        let descriptor_slice: Vec<(Vec<u8>, u32, u32)> = path.iter().map(|p| Self::load_from_file_rgba8(p)).collect()?;
+        let descriptor_slice: Vec<Result<_, _>> = path.iter().map(|p| Self::load_from_file_rgba8(p)).collect();
+        let descriptor_slice: Result<_, _> = descriptor_slice.into_iter().collect();
+        let descriptor_slice: Vec<_> = descriptor_slice?;
         
         let width = descriptor_slice[0].1;
         let height = descriptor_slice[0].2;
