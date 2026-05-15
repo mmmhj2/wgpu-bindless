@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
-use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, instanced_mesh::InstancedMeshInstance}, pipeline::{camera::CameraPerspective, framebuffers::Framebuffers, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline}, window::RendererState}};
+use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, instanced_mesh::InstancedMeshInstance}, pipeline::{camera::CameraPerspective, framebuffers::Framebuffers, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager, texture::{Texture, TextureType}}, window::RendererState}};
 use winit::{event_loop::EventLoop, window::Window};
 
 pub struct State {
     window: Arc<Window>,
     device: DeviceInterface,
     pipeline: PipelineStates,
+    skybox: SkyboxManager,
     fb: Framebuffers,
     gltf_models: Vec<InstancedMeshInstance>
 }
@@ -15,6 +16,7 @@ impl RendererState for State {
     async fn new(window: Arc<Window>) -> Self {
         let device = DeviceInterface::new(window.clone()).await.unwrap();
         let mut pipeline = PipelineStates::prepare_default_pipelines(&device, wgpu::TextureFormat::Rgba16Float);
+        let mut skybox = SkyboxManager::new(&device, pipeline.get_camera_manager(), wgpu::TextureFormat::Rgba16Float, wgpu::TextureFormat::Depth32Float);
         let fb = Framebuffers::new(&device, wgpu::TextureFormat::Rgba16Float);
 
         let (document, buffers, images) = gltf::import("resource/test_two_cubes.glb").expect("Cannot open glb file.");
@@ -26,10 +28,25 @@ impl RendererState for State {
             &buffers,
             &images);
 
+        let skybox_texture = Texture::create_from_file_array_rgba8(
+            &device,
+            &[
+                "resource/skybox/right.jpg",
+                "resource/skybox/left.jpg",
+                "resource/skybox/top.jpg",
+                "resource/skybox/bottom.jpg",
+                "resource/skybox/front.jpg",
+                "resource/skybox/back.jpg"
+            ],
+            TextureType::ColorSrgb
+        ).expect("cannot load skybox textures");
+        skybox.set_texture(skybox_texture);
+
         Self {
             window: window.clone(),
             device,
             pipeline,
+            skybox,
             fb,
             gltf_models
         }
@@ -109,6 +126,8 @@ impl RendererState for State {
             for m in &self.gltf_models {
                 m.draw(&mut rp);
             }
+
+            self.skybox.draw_skybox(&self.device, &mut rp);
         }
 
         let final_view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
