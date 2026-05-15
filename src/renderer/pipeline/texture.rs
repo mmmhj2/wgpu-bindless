@@ -1,8 +1,10 @@
 use crate::renderer::device_interface::DeviceInterface;
 
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub enum TextureImportError {
+    FailedToOpenImage(std::io::Error),
+    FailedToDecodeImage(image::ImageError),
     /// The texture has only three channels, which is not supported by wGPU.
     Unsupported3ChannelFormat,
     /// Texture has less channels than expected.
@@ -11,6 +13,19 @@ pub enum TextureImportError {
     /// Texel size not correct.
     /// The texel buffer obtained from GLTF is either too large or too small for the texture.
     UnfitTexelDataSize
+}
+impl std::fmt::Display for TextureImportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TextureImportError::FailedToOpenImage(e) => write!(f, "failed to open image: {}", e),
+            TextureImportError::FailedToDecodeImage(e) => write!(f, "failed to decode image: {}", e),
+            TextureImportError::Unsupported3ChannelFormat => write!(f, "texture has only three channels, which is not supported by wGPU."),
+            TextureImportError::ChannelNotSufficient => write!(f, "texture has less channels than expected."),
+            TextureImportError::UnfitTexelDataSize => write!(f, "texel buffer size is not correct."),
+        }
+    }
+}
+impl std::error::Error for TextureImportError {
 }
 
 /// A simple wrapper around wgpu::Texture
@@ -29,6 +44,11 @@ impl From<Texture> for wgpu::Texture {
         value.inner
     }
 }
+impl From<Texture> for wgpu::TextureView {
+    fn from(value: Texture) -> Self {
+        value.inner.create_view(&Default::default())
+    }
+}
 
 impl Texture {
 
@@ -39,6 +59,126 @@ impl Texture {
     const SINGLE_TEXEL_EXTENT: wgpu::Extent3d = wgpu::Extent3d {
         width: 1, height: 1, depth_or_array_layers: 1
     };
+
+    fn load_from_file_rgba8<P>(
+        path: P
+    ) -> Result<(Vec<u8>, u32, u32), TextureImportError> where P: AsRef<std::path::Path> {
+        let image = image::ImageReader::open(path);
+        if let Err(e) = image {
+            return Err(TextureImportError::FailedToOpenImage(e));
+        }
+        let image = image.unwrap().decode();
+        if let Err(e) = image {
+            return Err(TextureImportError::FailedToDecodeImage(e));
+        }
+        let image = image.unwrap().into_rgba8();
+        let w = image.width();
+        let h = image.height();
+        return Ok((image.into_vec(), w, h));
+    }
+    
+    /// Create a texture from a file path with RGBA8 format.
+    /// 
+    /// The texture will be created, and a new write texture command will be recorded on the queue.
+    /// The texture will have `Rgba8UnormSrgb` format if `ColorSrgb` type is specified,
+    /// or `Rgba8Unorm` otherwise.
+    pub fn create_from_file_rgba8<P>(
+        di: &DeviceInterface,
+        path: P,
+        texture_type: TextureType
+    ) -> Result<Self, TextureImportError> where P: AsRef<std::path::Path> {
+        let (texels, width, height) = Self::load_from_file_rgba8(path)?;
+
+        let descriptor = wgpu::TextureDescriptor{
+            label: None,
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: match texture_type {
+                TextureType::ColorSrgb => wgpu::TextureFormat::Rgba8UnormSrgb,
+                _ => wgpu::TextureFormat::Rgba8Unorm,
+            },
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[]
+        };
+
+        let texture = di.get_device().create_texture(&descriptor);
+
+        di.get_queue().write_texture(
+            wgpu::TexelCopyTextureInfo{
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &texels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(
+                    descriptor.format.block_copy_size(None).expect(
+                        "Designated format does not have a copy size."
+                    ) * descriptor.size.width),
+                rows_per_image: None
+            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 }
+        );
+
+        Ok(Self{ inner: texture })
+    }
+
+    pub fn create_from_file_array_rgba8<P>(
+        di: &DeviceInterface,
+        path: &[P],
+        texture_type: TextureType
+    ) -> Result<Self, TextureImportError> where P: AsRef<std::path::Path> {
+        let descriptor_slice: Vec<(Vec<u8>, u32, u32)> = path.iter().map(|p| Self::load_from_file_rgba8(p)).collect()?;
+        
+        let width = descriptor_slice[0].1;
+        let height = descriptor_slice[0].2;
+
+        for desc in &descriptor_slice {
+            assert!(width == desc.1 && height == desc.2);
+        }
+
+        let descriptor = wgpu::TextureDescriptor{
+            label: None,
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: descriptor_slice.len() as u32 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: match texture_type {
+                TextureType::ColorSrgb => wgpu::TextureFormat::Rgba8UnormSrgb,
+                _ => wgpu::TextureFormat::Rgba8Unorm,
+            },
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[]
+        };
+        let texture = di.get_device().create_texture(&descriptor);
+
+        for (i, (texels, _, _)) in descriptor_slice.iter().enumerate() {
+            di.get_queue().write_texture(
+                wgpu::TexelCopyTextureInfo{
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d{x: 0, y: 0, z: i as u32},
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &texels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(
+                        descriptor.format.block_copy_size(None).expect(
+                            "Designated format does not have a copy size."
+                        ) * descriptor.size.width),
+                    rows_per_image: None
+                },
+                wgpu::Extent3d { width, height, depth_or_array_layers: 1 }
+            )
+        }
+
+        Ok(Self{ inner: texture })
+    }
 
     /// Extract texture descriptor from a GLTF texture.
     /// 
