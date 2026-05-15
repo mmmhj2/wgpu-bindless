@@ -112,7 +112,7 @@ impl RendererState for State {
         }
 
         let final_view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.fb.tonemap_with(&self.device, &mut encoder, &final_view);
+        self.fb.tonemap_to(&self.device, &mut encoder, &final_view);
 
         self.device.get_queue().submit(std::iter::once(encoder.finish()));
         output.present();

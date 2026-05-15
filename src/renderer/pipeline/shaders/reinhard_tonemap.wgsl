@@ -16,7 +16,7 @@ fn vs_main(
     var out: VertexOutput;
     out.uv = vec2f(f32((gl_VertexIndex << 1) & 2), f32(gl_VertexIndex & 2));
     out.pos = vec4f(out.uv * 2.0f + -1.0f, 0.0f, 1.0f);
-    out.uv.y *= -1;
+    out.uv.y = 1.0 - out.uv.y;
     return out;
 }
 
