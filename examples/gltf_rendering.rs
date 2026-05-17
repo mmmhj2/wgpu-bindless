@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, instanced_mesh::InstancedMeshInstance}, pipeline::{camera::CameraPerspective, framebuffers::Framebuffers, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager, texture::{Texture, TextureType}}, window::RendererState}};
+use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, instanced_mesh::InstancedMeshInstance}, pipeline::{camera::{CameraPerspective, CameraPerspectiveBuilder}, framebuffers::Framebuffers, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager, texture::{Texture, TextureType}}, window::RendererState}};
 use winit::{event_loop::EventLoop, window::Window};
 
 pub struct State {
@@ -117,8 +117,7 @@ impl RendererState for State {
                 multiview_mask: None,
             });
 
-            let mut camera = CameraPerspective::new();
-            camera.set_origin(cgmath::point3(-3.0, 0.0, 0.0));
+            let camera = CameraPerspectiveBuilder::new().set_origin(cgmath::point3(0.0, 0.0, -3.0)).build();
 
             self.pipeline.set_active_camera(camera);
             self.pipeline.prepare_render_pass(self.get_device_interface(), &mut rp);

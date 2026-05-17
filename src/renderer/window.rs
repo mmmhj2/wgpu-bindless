@@ -105,11 +105,11 @@ impl RendererState for DefaultRendererState {
 
             let mut mesh_builder = ImmediateMeshBuilder::new(&self.device, self.pipelines.get_bindless_resource_manager_mut());
             mesh_builder.color3f([1.0, 0.0, 0.0]);
-            mesh_builder.vertex3f([0.0,  0.0, 0.5]);
+            mesh_builder.vertex3f([ 0.0, 0.5, 1.0]);
             mesh_builder.color3f([0.0, 1.0, 0.0]);
-            mesh_builder.vertex3f([0.0, -0.5, -0.5]);
+            mesh_builder.vertex3f([-0.5,-0.5, 1.0]);
             mesh_builder.color3f([0.0, 0.0, 1.0]);
-            mesh_builder.vertex3f([0.0,  0.5, -0.5]);
+            mesh_builder.vertex3f([ 0.5,-0.5, 1.0]);
             let mesh = mesh_builder.commit(&self.device);
 
             self.pipelines.prepare_render_pass(&self.device, &mut render_pass);

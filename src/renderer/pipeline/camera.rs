@@ -41,10 +41,24 @@ pub trait HasViewProjectionMatrix : HasViewMatrix {
 /// Camera base class.
 /// 
 /// Contains spatial information for the view matrix.
+#[derive(Clone, Debug)]
 pub struct Camera {
     origin  : cgmath::Point3<f32>,
     target  : cgmath::Point3<f32>,
     up      : cgmath::Vector3<f32>
+}
+
+impl Default for Camera {
+    /// Construct a default camera that is positioned at origin, looking at +z, and up vector pointing to +y.
+    /// 
+    /// This coordinate system is therefore the expected one recommended by [the GLTF specification](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#coordinate-system-and-units).
+    fn default() -> Self {
+        Self { 
+            origin: cgmath::point3(0.0, 0.0, 0.0),
+            target: cgmath::point3(0.0, 0.0, 1.0),
+            up: cgmath::vec3(0.0, 1.0, 0.0)
+        }
+    }
 }
 
 impl Camera {
@@ -56,9 +70,9 @@ impl Camera {
         }
     }
 
-    pub fn set_origin(&mut self, v: cgmath::Point3<f32>) { self.origin = v }
-    pub fn set_target(&mut self, v: cgmath::Point3<f32>) { self.target = v }
-    pub fn set_up(&mut self, v: cgmath::Vector3<f32>) { self.up = v }
+    pub fn get_origin(&self) -> cgmath::Point3<f32> { self.origin }
+    pub fn get_target(&self) -> cgmath::Point3<f32> { self.target }
+    pub fn get_up(&self) -> cgmath::Vector3<f32> { self.up }
 }
 
 impl HasViewMatrix for Camera {
@@ -69,7 +83,8 @@ impl HasViewMatrix for Camera {
 
 /// Camera class for perspective cameras.
 /// 
-/// Contains additional information for the projection matrix.
+/// Contains additional information for the projection matrix
+#[derive(Clone, Debug)]
 pub struct CameraPerspective {
     camera              : Camera,
     fovy                : cgmath::Deg<f32>,
@@ -78,23 +93,20 @@ pub struct CameraPerspective {
     far_clip_distance   : f32
 }
 
-impl CameraPerspective {
-    pub fn new() -> Self {
+impl Default for CameraPerspective {
+    /// Constructa default perspective camera that:
+    /// - has a vertical FoV of 90 degrees;
+    /// - has an aspect ratio of 4:3;
+    /// - has a clip space range of \[0.1, 1e5\].
+    fn default() -> Self {
         Self {
-            camera: Camera::new(),
+            camera: Default::default(),
             fovy: cgmath::Deg(90.0),
             aspect: 800.0 / 600.0,
             near_clip_distance: 1e-1,
             far_clip_distance: 1e5
         }
     }
-
-    pub fn set_origin(&mut self, v: cgmath::Point3<f32>) { self.camera.origin = v }
-    pub fn set_target(&mut self, v: cgmath::Point3<f32>) { self.camera.target = v }
-    pub fn set_up(&mut self, v: cgmath::Vector3<f32>) { self.camera.up = v }
-    pub fn set_vertical_fov(&mut self, fov: cgmath::Deg<f32>) { self.fovy = fov }
-    pub fn set_aspect(&mut self, aspect: f32) { self.aspect = aspect }
-    pub fn set_clip_distance(&mut self, near: f32, far: f32) { self.near_clip_distance = near; self.far_clip_distance = far; }
 }
 
 impl HasViewMatrix for CameraPerspective {
@@ -107,6 +119,24 @@ impl HasViewProjectionMatrix for CameraPerspective {
     fn get_projection_matrix (&self) -> cgmath::Matrix4<f32> {
         cgmath::perspective(self.fovy, self.aspect, self.near_clip_distance, self.far_clip_distance)
     }
+}
+
+pub struct CameraPerspectiveBuilder {
+    camera: CameraPerspective
+}
+
+impl CameraPerspectiveBuilder {
+    pub fn new() -> Self { 
+        Self { camera: Default::default() } 
+    }
+
+    pub fn set_origin(&mut self, v: cgmath::Point3<f32>) -> &mut Self { self.camera.camera.origin = v; self }
+    pub fn set_target(&mut self, v: cgmath::Point3<f32>) -> &mut Self { self.camera.camera.target = v; self }
+    pub fn set_up(&mut self, v: cgmath::Vector3<f32>) -> &mut Self { self.camera.camera.up = v; self }
+    pub fn set_vertical_fov(&mut self, fov: cgmath::Deg<f32>) -> &mut Self { self.camera.fovy = fov; self }
+    pub fn set_aspect(&mut self, aspect: f32) -> &mut Self { self.camera.aspect = aspect; self }
+    pub fn set_clip_distance(&mut self, near: f32, far: f32) -> &mut Self { self.camera.near_clip_distance = near; self.camera.far_clip_distance = far; self }
+    pub fn build(&mut self) -> CameraPerspective { self.camera.clone() }
 }
 
 pub struct CameraManager {
@@ -136,7 +166,7 @@ impl CameraManager {
     /// Create a new camera manager with a default perspective camera.
     pub fn new(di: &DeviceInterface) -> Self {
         Self {
-            active_camera: CameraPerspective::new(),
+            active_camera: Default::default(),
             camera_bind_group_layout: di.get_device().create_bind_group_layout(&Self::BGLD_CAMERA),
         }
     }
