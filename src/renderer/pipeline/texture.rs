@@ -1,3 +1,5 @@
+use image::EncodableLayout;
+
 use crate::renderer::device_interface::DeviceInterface;
 
 
@@ -6,26 +8,36 @@ pub enum TextureImportError {
     FailedToOpenImage(std::io::Error),
     FailedToDecodeImage(image::ImageError),
     /// The texture has only three channels, which is not supported by wGPU.
-    Unsupported3ChannelFormat,
+    UnsupportedFormat,
     /// Texture has less channels than expected.
     /// For example, color and normal textures should have at least 3 channels.
     ChannelNotSufficient,
     /// Texel size not correct.
     /// The texel buffer obtained from GLTF is either too large or too small for the texture.
-    UnfitTexelDataSize
+    UnfitTexelDataSize,
+    /// A 2D texture array should be created,
+    /// but cannot due to different images having mismatched width, height or formats.
+    IncompatibleArrayFormat
 }
 impl std::fmt::Display for TextureImportError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TextureImportError::FailedToOpenImage(e) => write!(f, "failed to open image: {}", e),
             TextureImportError::FailedToDecodeImage(e) => write!(f, "failed to decode image: {}", e),
-            TextureImportError::Unsupported3ChannelFormat => write!(f, "texture has only three channels, which is not supported by wGPU."),
+            TextureImportError::UnsupportedFormat => write!(f, "texture has an unsupported texel format. For example, 3 channel RGB textures are not supported for GLTF import."),
             TextureImportError::ChannelNotSufficient => write!(f, "texture has less channels than expected."),
             TextureImportError::UnfitTexelDataSize => write!(f, "texel buffer size is not correct."),
+            TextureImportError::IncompatibleArrayFormat => write!(f, "a 2D texture array should be created, but cannot due to different images having mismatched width, height or formats."),
         }
     }
 }
-impl std::error::Error for TextureImportError {
+impl std::error::Error for TextureImportError {}
+
+struct ImportedTextureDescriptor {
+    pub data: Vec<u8>,
+    pub format: wgpu::TextureFormat,
+    pub width: u32,
+    pub height: u32
 }
 
 /// A simple wrapper around wgpu::Texture
@@ -51,18 +63,16 @@ impl From<Texture> for wgpu::TextureView {
 }
 
 impl Texture {
-
     const PACKED_TEXEL_LAYOUT: wgpu::TexelCopyBufferLayout = wgpu::TexelCopyBufferLayout {
         offset: 0, bytes_per_row: None, rows_per_image: None
     };
-
     const SINGLE_TEXEL_EXTENT: wgpu::Extent3d = wgpu::Extent3d {
         width: 1, height: 1, depth_or_array_layers: 1
     };
 
-    fn load_from_file_rgba8<P>(
+    fn load_from_file<P>(
         path: P
-    ) -> Result<(Vec<u8>, u32, u32), TextureImportError> where P: AsRef<std::path::Path> {
+    ) -> Result<ImportedTextureDescriptor, TextureImportError> where P: AsRef<std::path::Path> {
         let image = image::ImageReader::open(path);
         if let Err(e) = image {
             return Err(TextureImportError::FailedToOpenImage(e));
@@ -71,33 +81,59 @@ impl Texture {
         if let Err(e) = image {
             return Err(TextureImportError::FailedToDecodeImage(e));
         }
-        let image = image.unwrap().into_rgba8();
-        let w = image.width();
-        let h = image.height();
-        return Ok((image.into_vec(), w, h));
+        let image = image.unwrap();
+        let width = image.width();
+        let height = image.height();
+
+        let format = match image.color() {
+            image::ColorType::Rgb8 => wgpu::TextureFormat::Rgba8Unorm,
+            image::ColorType::Rgba8 => wgpu::TextureFormat::Rgba8Unorm,
+            image::ColorType::Rgb16 => wgpu::TextureFormat::Rgba16Unorm,
+            image::ColorType::Rgba16 => wgpu::TextureFormat::Rgba16Unorm,
+            image::ColorType::Rgb32F => wgpu::TextureFormat::Rgba32Float,
+            image::ColorType::Rgba32F => wgpu::TextureFormat::Rgba32Float,
+            _ => return Err(TextureImportError::UnsupportedFormat),
+        };
+
+        let data= match image.color() {
+            image::ColorType::Rgb8 | image::ColorType::Rgba8 => image.into_rgba8().into_vec(),
+            // TODO: eliminate the extra copy here.
+            image::ColorType::Rgb16 | image::ColorType::Rgba16 => image.into_rgba16().as_bytes().to_vec(),
+            image::ColorType::Rgb32F | image::ColorType::Rgba32F => image.into_rgba32f().as_bytes().to_vec(),
+            _ => return Err(TextureImportError::UnsupportedFormat),
+        };
+
+        return Ok(ImportedTextureDescriptor { data, format, width, height });
     }
     
-    /// Create a texture from a file path with RGBA8 format.
+    /// Create a texture from a file path.
     /// 
     /// The texture will be created, and a new write texture command will be recorded on the queue.
-    /// The texture will have `Rgba8UnormSrgb` format if `ColorSrgb` type is specified,
-    /// or `Rgba8Unorm` otherwise.
-    pub fn create_from_file_rgba8<P>(
+    /// The format of the texture will be automatically detected.
+    /// If the texture has only RGB channels, an extra alpha channel will be added.
+    /// 
+    /// The texture_type specified only affects intepretation of texel data in case of 8-bit per channel texels.
+    /// No gamma correction is performed.
+    pub fn create_from_file<P>(
         di: &DeviceInterface,
         path: P,
         texture_type: TextureType
     ) -> Result<Self, TextureImportError> where P: AsRef<std::path::Path> {
-        let (texels, width, height) = Self::load_from_file_rgba8(path)?;
+        let idesc = Self::load_from_file(path)?;
 
         let descriptor = wgpu::TextureDescriptor{
             label: None,
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: idesc.width,
+                height: idesc.height,
+                depth_or_array_layers: 1
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: match texture_type {
-                TextureType::ColorSrgb => wgpu::TextureFormat::Rgba8UnormSrgb,
-                _ => wgpu::TextureFormat::Rgba8Unorm,
+                TextureType::ColorSrgb => idesc.format.add_srgb_suffix(),
+                _ => idesc.format,
             },
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[]
@@ -112,7 +148,7 @@ impl Texture {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &texels,
+            idesc.data.as_slice(),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(
@@ -121,7 +157,7 @@ impl Texture {
                     ) * descriptor.size.width),
                 rows_per_image: None
             },
-            wgpu::Extent3d { width, height, depth_or_array_layers: 1 }
+            wgpu::Extent3d { width: idesc.width, height: idesc.height, depth_or_array_layers: 1 }
         );
 
         Ok(Self{ inner: texture })
@@ -132,15 +168,18 @@ impl Texture {
         path: &[P],
         texture_type: TextureType
     ) -> Result<Self, TextureImportError> where P: AsRef<std::path::Path> {
-        let descriptor_slice: Vec<Result<_, _>> = path.iter().map(|p| Self::load_from_file_rgba8(p)).collect();
+        let descriptor_slice: Vec<Result<_, _>> = path.iter().map(|p| Self::load_from_file(p)).collect();
         let descriptor_slice: Result<_, _> = descriptor_slice.into_iter().collect();
         let descriptor_slice: Vec<_> = descriptor_slice?;
         
-        let width = descriptor_slice[0].1;
-        let height = descriptor_slice[0].2;
+        let format = descriptor_slice[0].format;
+        let width = descriptor_slice[0].width;
+        let height = descriptor_slice[0].height;
 
         for desc in &descriptor_slice {
-            assert!(width == desc.1 && height == desc.2);
+            if !(width == desc.width && height == desc.height && format == desc.format) {
+                return Err(TextureImportError::IncompatibleArrayFormat);
+            }
         }
 
         let descriptor = wgpu::TextureDescriptor{
@@ -150,15 +189,15 @@ impl Texture {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: match texture_type {
-                TextureType::ColorSrgb => wgpu::TextureFormat::Rgba8UnormSrgb,
-                _ => wgpu::TextureFormat::Rgba8Unorm,
+                TextureType::ColorSrgb => format.add_srgb_suffix(),
+                _ => format,
             },
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[]
         };
         let texture = di.get_device().create_texture(&descriptor);
 
-        for (i, (texels, _, _)) in descriptor_slice.iter().enumerate() {
+        for (i, desc) in descriptor_slice.iter().enumerate() {
             di.get_queue().write_texture(
                 wgpu::TexelCopyTextureInfo{
                     texture: &texture,
@@ -166,7 +205,7 @@ impl Texture {
                     origin: wgpu::Origin3d{x: 0, y: 0, z: i as u32},
                     aspect: wgpu::TextureAspect::All,
                 },
-                &texels,
+                desc.data.as_slice(),
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(
@@ -198,13 +237,13 @@ impl Texture {
             match f {
                 gltf::image::Format::R8 => Ok(TextureFormat::R8Unorm),
                 gltf::image::Format::R8G8 => Ok(TextureFormat::Rg8Unorm),
-                gltf::image::Format::R8G8B8 => Err(TextureImportError::Unsupported3ChannelFormat),
+                gltf::image::Format::R8G8B8 => Err(TextureImportError::UnsupportedFormat),
                 gltf::image::Format::R8G8B8A8 => Ok(TextureFormat::Rgba8Unorm),
                 gltf::image::Format::R16 => Ok(TextureFormat::R16Unorm),
                 gltf::image::Format::R16G16 => Ok(TextureFormat::Rg16Unorm),
-                gltf::image::Format::R16G16B16 => Err(TextureImportError::Unsupported3ChannelFormat),
+                gltf::image::Format::R16G16B16 => Err(TextureImportError::UnsupportedFormat),
                 gltf::image::Format::R16G16B16A16 => Ok(TextureFormat::Rgba16Unorm),
-                gltf::image::Format::R32G32B32FLOAT => Err(TextureImportError::Unsupported3ChannelFormat),
+                gltf::image::Format::R32G32B32FLOAT => Err(TextureImportError::UnsupportedFormat),
                 gltf::image::Format::R32G32B32A32FLOAT => Ok(TextureFormat::Rgba32Float),
             }
         }
