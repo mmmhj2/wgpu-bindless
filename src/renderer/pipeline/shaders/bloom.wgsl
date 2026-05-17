@@ -6,6 +6,8 @@
 // because we need to use the source textures as render targets.
 @group(0) @binding(0)
 var source_tx: texture_2d<f32>;
+
+// This sampler is expected to be a bilinear, clamp-to-edge one.
 @group(0) @binding(1)
 var source_sp: sampler;
 

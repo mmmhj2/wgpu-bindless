@@ -168,8 +168,8 @@ impl Bloomer {
                     targets: &[ Some(wgpu::ColorTargetState{
                         format: hdr_format,
                         blend: Some(wgpu::BlendState {
-                            color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
-                            alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::Zero, operation: wgpu::BlendOperation::Add }
+                            color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Constant, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
+                            alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add }
                         }),
                         write_mask: wgpu::ColorWrites::ALL
                     }) ]
@@ -327,7 +327,7 @@ impl Framebuffers {
     /// 
     /// This method will begin several render passes to perform the screen space blooming.
     /// It will first downsample from the HDR framebuffer into the mipchain, and then upsample from the mipchain into the framebuffer.
-    pub fn bloom(&self, di: &DeviceInterface, ce: &mut wgpu::CommandEncoder, bloom_radius: f32) {
+    pub fn bloom(&self, di: &DeviceInterface, ce: &mut wgpu::CommandEncoder, bloom_radius: f32, strength: f64) {
         let mipchain = self.bloom_chain.get_textures();
         assert!(mipchain.len() > 0);
 
@@ -335,7 +335,7 @@ impl Framebuffers {
         let fb: &wgpu::TextureView = self.hdr_fb.get_texture().expect("call configure_with_surface before this method.");
         {
             let mut rp = ce.begin_render_pass(&wgpu::RenderPassDescriptor{
-                label: Some("Bloom downsample"),
+                label: Some("Bloom downsample from framebuffer"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment{
                     view: &mipchain[0],
                     depth_slice: None,
@@ -361,7 +361,7 @@ impl Framebuffers {
         // Blit along the mipchain
         for mip in 1..mipchain.len() {
             let mut rp = ce.begin_render_pass(&wgpu::RenderPassDescriptor{
-                label: Some("Bloom downsample"),
+                label: Some("Bloom downsample chain"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment{
                     view: &mipchain[mip],
                     depth_slice: None,
@@ -386,7 +386,7 @@ impl Framebuffers {
 
         for mip in (1..mipchain.len()).rev() {
             let mut rp = ce.begin_render_pass(&wgpu::RenderPassDescriptor{
-                label: Some("Bloom downsample"),
+                label: Some("Bloom upsample chain"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment{
                     view: &mipchain[mip - 1],
                     depth_slice: None,
@@ -404,6 +404,7 @@ impl Framebuffers {
 
             let bg = self.bloom.build_bind_group(di, &mipchain[mip], &self.fb_sampler);
             rp.set_pipeline(&self.bloom.ppl_bloom_up);
+            rp.set_blend_constant(wgpu::Color{r: 1.0, g: 1.0, b: 1.0, a: 1.0});
             rp.set_immediates(0, bytemuck::cast_slice(&[bloom_radius]));
             rp.set_bind_group(0, &bg, &[]);
             rp.draw(0..3, 0..1);
@@ -412,7 +413,7 @@ impl Framebuffers {
         // Finally blit to the framebuffer
         {
             let mut rp = ce.begin_render_pass(&wgpu::RenderPassDescriptor{
-                label: Some("Bloom downsample"),
+                label: Some("Bloom unsample and write"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment{
                     view: fb,
                     depth_slice: None,
@@ -430,6 +431,7 @@ impl Framebuffers {
 
             let bg = self.bloom.build_bind_group(di, &mipchain[0], &self.fb_sampler);
             rp.set_pipeline(&self.bloom.ppl_bloom_up);
+            rp.set_blend_constant(wgpu::Color{r: strength, g: strength, b: strength, a: 1.0});
             rp.set_immediates(0, bytemuck::cast_slice(&[bloom_radius]));
             rp.set_bind_group(0, &bg, &[]);
             rp.draw(0..3, 0..1);
