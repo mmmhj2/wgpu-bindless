@@ -129,6 +129,8 @@ impl RendererState for State {
             self.skybox.draw_skybox(&self.device, &mut rp);
         }
 
+        self.fb.bloom(&self.device, &mut encoder, 0.003);
+
         let final_view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
         self.fb.tonemap_to(&self.device, &mut encoder, &final_view);
 

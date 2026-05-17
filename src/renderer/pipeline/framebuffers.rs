@@ -1,4 +1,7 @@
 
+use std::{cmp::max, num::NonZero};
+
+
 use crate::renderer::device_interface::DeviceInterface;
 
 struct Tonemapper {
@@ -69,12 +72,126 @@ impl Tonemapper {
     }
 }
 
+struct Bloomer {
+    bgl_bloom: wgpu::BindGroupLayout,
+    ppl_bloom_down: wgpu::RenderPipeline,
+    ppl_bloom_up: wgpu::RenderPipeline
+}
+
+impl Bloomer {
+    const DBGL_BLOOM: wgpu::BindGroupLayoutDescriptor<'static> = wgpu::BindGroupLayoutDescriptor {
+        label: Some("Bloom descriptor set layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry{
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false
+                },
+                count:None,
+            },
+            wgpu::BindGroupLayoutEntry{
+                binding: 1,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None
+            }
+        ]
+    };
+
+    pub fn build_bind_group(&self, di: &DeviceInterface, tx: &wgpu::TextureView, sp: &wgpu::Sampler) -> wgpu::BindGroup {
+        di.get_device().create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.bgl_bloom,
+            entries: &[
+                wgpu::BindGroupEntry{ binding: 0, resource: wgpu::BindingResource::TextureView(tx) },
+                wgpu::BindGroupEntry{ binding: 1, resource: wgpu::BindingResource::Sampler(sp)}
+            ]
+        })
+    }
+
+    pub fn new (di: &DeviceInterface, hdr_format: wgpu::TextureFormat) -> Self {
+        let bgl_bloom = di.get_device().create_bind_group_layout(&Self::DBGL_BLOOM);
+
+        let module = di.get_device().create_shader_module(wgpu::include_wgsl!("./shaders/bloom.wgsl"));
+        let layout = di.get_device().create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(&bgl_bloom)], immediate_size: 4 });
+
+        let ppl_bloom_down = di.get_device().create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("Bloom Downsample Pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState { module: &module, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &[] },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState{ count: 1, mask: !0, alpha_to_coverage_enabled: false },
+                fragment: Some(wgpu::FragmentState{
+                    module: &module,
+                    entry_point: Some("fs_downsample"),
+                    compilation_options: Default::default(),
+                    targets: &[ Some(wgpu::ColorTargetState{ format: hdr_format, blend: None, write_mask: wgpu::ColorWrites::ALL }) ]
+                }),
+                multiview_mask: None,
+                cache: None
+            }
+        );
+
+        let ppl_bloom_up = di.get_device().create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("Bloom Upsample Pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState { module: &module, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &[] },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState{ count: 1, mask: !0, alpha_to_coverage_enabled: false },
+                fragment: Some(wgpu::FragmentState{
+                    module: &module,
+                    entry_point: Some("fs_upsample"),
+                    compilation_options: Default::default(),
+                    targets: &[ Some(wgpu::ColorTargetState{
+                        format: hdr_format,
+                        blend: Some(wgpu::BlendState {
+                            color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
+                            alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::Zero, operation: wgpu::BlendOperation::Add }
+                        }),
+                        write_mask: wgpu::ColorWrites::ALL
+                    }) ]
+                }),
+                multiview_mask: None,
+                cache: None
+            }
+        );
+
+        Self {
+            bgl_bloom,
+            ppl_bloom_down,
+            ppl_bloom_up
+        }
+    }
+}
+
 struct Framebuffer {
     format: wgpu::TextureFormat,
     label: &'static str,
     texture: Option<wgpu::TextureView>
 }
-
 impl Framebuffer {
     fn new(format: wgpu::TextureFormat, label: &'static str) -> Self {
         Self { format, label, texture: None }
@@ -83,10 +200,10 @@ impl Framebuffer {
     fn get_format(&self) -> wgpu::TextureFormat { self.format }
     fn get_texture(&self) -> Option<&wgpu::TextureView> { self.texture.as_ref() }
 
-    fn create_texture(&mut self, di: &DeviceInterface, width: u32, height: u32) {
+    fn create_texture(&mut self, di: &DeviceInterface, width: NonZero<u32>, height: NonZero<u32>) {
         self.texture = Some(di.get_device().create_texture(&wgpu::TextureDescriptor{
             label: Some(self.label),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d { width: width.get(), height: height.get(), depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -97,12 +214,57 @@ impl Framebuffer {
     }
 }
 
+struct FramebufferMipChain {
+    format: wgpu::TextureFormat,
+    texture: Vec<wgpu::TextureView>
+}
+
+impl FramebufferMipChain {
+    fn new(format: wgpu::TextureFormat) -> Self {
+        Self { format, texture: Vec::new() }
+    }
+
+    fn get_format(&self) -> wgpu::TextureFormat { self.format }
+    fn get_textures(&self) -> &Vec<wgpu::TextureView> { self.texture.as_ref() }
+    
+    /// Create a mipchain from the framebuffer size.
+    /// 
+    /// The first miplevel of the mipchain will have a size of (full_res_width / 2, full_res_height / 2).
+    fn create_textures(&mut self, di: &DeviceInterface, full_res_width: NonZero<u32>, full_res_height: NonZero<u32>) {
+        self.texture.clear();
+        let width = full_res_width.get() / 2;
+        let height = full_res_height.get() / 2;
+        let miplevels = (max(width, height) as f32).log2().floor() as u32 + 1;
+
+        let texture = di.get_device().create_texture(
+            &wgpu::TextureDescriptor {
+                label: Some("Framebuffer mipchain"),
+                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                mip_level_count: miplevels,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            }
+        );
+
+        for i in 0..miplevels {
+            self.texture.push(texture.create_view(&wgpu::TextureViewDescriptor{ base_mip_level: i, mip_level_count: Some(1), ..Default::default() }))
+        }
+    }
+}
+
 /// Framebuffers and the post-processing stack.
 pub struct Framebuffers {
-    fb_size     : Option<(u32, u32)>,
+    fb_size     : Option<(NonZero<u32>, NonZero<u32>)>,
+    fb_sampler  : wgpu::Sampler,
+
     hdr_fb      : Framebuffer,
-    hdr_fb_sp   : wgpu::Sampler,
-    tm          : Tonemapper
+    tm          : Tonemapper,
+
+    bloom_chain : FramebufferMipChain,
+    bloom       : Bloomer
 }
 
 impl Framebuffers {
@@ -111,11 +273,11 @@ impl Framebuffers {
         Self {
             fb_size: None,
             hdr_fb: Framebuffer::new(hdr_format, "HDR Attachment"),
-            hdr_fb_sp: di.get_device().create_sampler(&wgpu::SamplerDescriptor{
+            fb_sampler: di.get_device().create_sampler(&wgpu::SamplerDescriptor{
                 label: None,
-                address_mode_u: wgpu::AddressMode::Repeat,
-                address_mode_v: wgpu::AddressMode::Repeat,
-                address_mode_w: wgpu::AddressMode::Repeat,
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
                 mipmap_filter: wgpu::MipmapFilterMode::Nearest,
@@ -125,13 +287,15 @@ impl Framebuffers {
                 anisotropy_clamp: 1,
                 border_color: None
             }),
-            tm: Tonemapper::new(di)
+            tm: Tonemapper::new(di),
+            bloom_chain: FramebufferMipChain::new(hdr_format),
+            bloom: Bloomer::new(di, hdr_format)
         }
     }
 
     pub fn configure_with_surface(&mut self, di: &DeviceInterface) {
-        let width = di.get_current_surface_configuration().width;
-        let height = di.get_current_surface_configuration().height;
+        let width = NonZero::<u32>::new(di.get_current_surface_configuration().width).expect("framebuffer width should be larger than zero.");
+        let height = NonZero::<u32>::new(di.get_current_surface_configuration().height).expect("framebuffer height should be larger than zero.");
 
         let need_rebuild = if let Some(t) = self.fb_size {
             !(t.0 == width && t.1 == height)
@@ -142,6 +306,7 @@ impl Framebuffers {
         if need_rebuild {
             log::info!("Rebuilding framebuffers with size {}x{}", width, height);
             self.hdr_fb.create_texture(di, width, height);
+            self.bloom_chain.create_textures(di, width, height);
             self.fb_size = Some((width, height));
         }
         
@@ -158,6 +323,119 @@ impl Framebuffers {
         }
     }
 
+    /// Perform bloom within the command encoder.
+    /// 
+    /// This method will begin several render passes to perform the screen space blooming.
+    /// It will first downsample from the HDR framebuffer into the mipchain, and then upsample from the mipchain into the framebuffer.
+    pub fn bloom(&self, di: &DeviceInterface, ce: &mut wgpu::CommandEncoder, bloom_radius: f32) {
+        let mipchain = self.bloom_chain.get_textures();
+        assert!(mipchain.len() > 0);
+
+        // Blit from framebuffer into the first level of the mipchain
+        let fb: &wgpu::TextureView = self.hdr_fb.get_texture().expect("call configure_with_surface before this method.");
+        {
+            let mut rp = ce.begin_render_pass(&wgpu::RenderPassDescriptor{
+                label: Some("Bloom downsample"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment{
+                    view: &mipchain[0],
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations{
+                        load: wgpu::LoadOp::DontCare(unsafe { wgpu::LoadOpDontCare::enabled() }),
+                        store: wgpu::StoreOp::Store
+                    }
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+
+            let bg = self.bloom.build_bind_group(di, fb, &self.fb_sampler);
+            rp.set_pipeline(&self.bloom.ppl_bloom_down);
+            rp.set_immediates(0, bytemuck::cast_slice(&[bloom_radius]));
+            rp.set_bind_group(0, &bg, &[]);
+            rp.draw(0..3, 0..1);
+        }
+
+        // Blit along the mipchain
+        for mip in 1..mipchain.len() {
+            let mut rp = ce.begin_render_pass(&wgpu::RenderPassDescriptor{
+                label: Some("Bloom downsample"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment{
+                    view: &mipchain[mip],
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations{
+                        load: wgpu::LoadOp::DontCare(unsafe { wgpu::LoadOpDontCare::enabled() }),
+                        store: wgpu::StoreOp::Store
+                    }
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+
+            let bg = self.bloom.build_bind_group(di, &mipchain[mip - 1], &self.fb_sampler);
+            rp.set_pipeline(&self.bloom.ppl_bloom_down);
+            rp.set_immediates(0, bytemuck::cast_slice(&[bloom_radius]));
+            rp.set_bind_group(0, &bg, &[]);
+            rp.draw(0..3, 0..1);
+        }
+
+        for mip in (1..mipchain.len()).rev() {
+            let mut rp = ce.begin_render_pass(&wgpu::RenderPassDescriptor{
+                label: Some("Bloom downsample"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment{
+                    view: &mipchain[mip - 1],
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations{
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store
+                    }
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+
+            let bg = self.bloom.build_bind_group(di, &mipchain[mip], &self.fb_sampler);
+            rp.set_pipeline(&self.bloom.ppl_bloom_up);
+            rp.set_immediates(0, bytemuck::cast_slice(&[bloom_radius]));
+            rp.set_bind_group(0, &bg, &[]);
+            rp.draw(0..3, 0..1);
+        }
+
+        // Finally blit to the framebuffer
+        {
+            let mut rp = ce.begin_render_pass(&wgpu::RenderPassDescriptor{
+                label: Some("Bloom downsample"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment{
+                    view: fb,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations{
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store
+                    }
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+
+            let bg = self.bloom.build_bind_group(di, &mipchain[0], &self.fb_sampler);
+            rp.set_pipeline(&self.bloom.ppl_bloom_up);
+            rp.set_immediates(0, bytemuck::cast_slice(&[bloom_radius]));
+            rp.set_bind_group(0, &bg, &[]);
+            rp.draw(0..3, 0..1);
+        }
+    }
+
     /// Perform tonemap with the specified pipeline.
     /// 
     /// This method will begin a render pass with the view as the only color attachment.
@@ -170,7 +448,7 @@ impl Framebuffers {
     /// Safety
     /// ---
     /// The load operation on the color attachment is *Don't Care*.
-    /// The primitive generated by the vertex shader should cover the whole screen space.
+    /// The primitive generated by the vertex shader should cover the whole screen space, which is true for the default pipeline.
     /// Otherwise the behavior is undefined.
     pub fn tonemap_to(&self, di: &DeviceInterface, ce: &mut wgpu::CommandEncoder, final_texture_view: &wgpu::TextureView) {
 
@@ -184,7 +462,7 @@ impl Framebuffers {
                 },
                 wgpu::BindGroupEntry{
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.hdr_fb_sp)
+                    resource: wgpu::BindingResource::Sampler(&self.fb_sampler)
                 }
             ]
         });
