@@ -24,8 +24,15 @@ impl DeviceInterface {
     /// Swapchain creation (i.e. surface configuration) is delayed until render
     /// time. Check `DeviceInterface::presentation_ready` to query its state.
     /// 
+    /// Parameters
+    /// ---
+    /// - `request_srgb_surface`: request that the created surface to be sRGB gamma corrected.
+    /// 
     /// TODO: replace `Box<dyn error::Error>` by anyhow.
-    pub async fn new(window : Arc<Window>) -> Result<DeviceInterface, Box<dyn error::Error>> {
+    pub async fn new(
+        window : Arc<Window>,
+        request_srgb_surface: bool
+    ) -> Result<DeviceInterface, Box<dyn error::Error>> {
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -72,10 +79,14 @@ impl DeviceInterface {
 
         // Set up swapchain
         let surface_caps = surface.get_capabilities(&adapter);
-        let surface_format = surface_caps.formats.iter()
-            .find(|f| f.is_srgb())          // Enforce sRGB texture format
-            .copied()
-            .unwrap_or(surface_caps.formats[0]);
+        let surface_format = if request_srgb_surface {
+            surface_caps.formats.iter()
+                .find(|f| f.is_srgb()) 
+        } else {
+            surface_caps.formats.iter()
+                .find(|f| !f.is_srgb())
+        }.copied()
+        .unwrap_or(surface_caps.formats[0]);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
@@ -83,7 +94,7 @@ impl DeviceInterface {
             height: size.height,
             present_mode: surface_caps.present_modes[0],
             alpha_mode: surface_caps.alpha_modes[0],
-            view_formats: vec![],
+            view_formats: vec![surface_format.add_srgb_suffix(), surface_format.remove_srgb_suffix()],
             desired_maximum_frame_latency: 2,
         };
 

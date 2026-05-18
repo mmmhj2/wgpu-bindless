@@ -14,7 +14,7 @@ pub struct State {
 
 impl RendererState for State {
     async fn new(window: Arc<Window>) -> Self {
-        let device = DeviceInterface::new(window.clone()).await.unwrap();
+        let device = DeviceInterface::new(window.clone(), true).await.unwrap();
         let mut pipeline = PipelineStates::prepare_default_pipelines(&device, wgpu::TextureFormat::Rgba16Float);
         let mut skybox = SkyboxManager::new(&device, pipeline.get_camera_manager(), wgpu::TextureFormat::Rgba16Float, wgpu::TextureFormat::Depth32Float);
         let fb = Framebuffers::new(&device, wgpu::TextureFormat::Rgba16Float);

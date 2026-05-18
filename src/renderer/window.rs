@@ -27,7 +27,7 @@ pub struct DefaultRendererState {
 
 impl RendererState for DefaultRendererState {
     async fn new(window: Arc<Window>) -> Self {
-        let device = DeviceInterface::new(window.clone()).await.unwrap();
+        let device = DeviceInterface::new(window.clone(), true).await.unwrap();
         let pipelines = PipelineStates::prepare_default_pipelines(&device, device.get_default_texture_format());
         Self {
             window: window.clone(),

@@ -12,7 +12,7 @@ mod test {
 
     impl RendererState for State {
         async fn new(window: Arc<Window>) -> Self {
-            let device = DeviceInterface::new(window.clone()).await.unwrap();
+            let device = DeviceInterface::new(window.clone(), true).await.unwrap();
             Self {
                 window: window.clone(),
                 device
