@@ -49,7 +49,7 @@ impl Tonemapper {
 
         let bgl_tonemap = di.get_device().create_bind_group_layout(&Self::DBGL_TONEMAP);
 
-        let module = di.get_device().create_shader_module(wgpu::include_wgsl!("./shaders/reinhard_tonemap.wgsl"));
+        let module = di.get_device().create_shader_module(wgpu::include_wgsl!("./shaders/aces_tonemap.wgsl"));
         let layout = di.get_device().create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(&bgl_tonemap)], immediate_size: 0 });
 
         let ppl = di.get_device().create_render_pipeline(
