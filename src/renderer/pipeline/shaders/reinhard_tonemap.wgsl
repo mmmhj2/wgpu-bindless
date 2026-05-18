@@ -1,6 +1,8 @@
 @group(0) @binding(0)
 var hdr_input: texture_2d<f32>;
 @group(0) @binding(1)
+var luminance_tx: texture_2d<f32>;
+@group(0) @binding(2)
 var hdr_input_sp: sampler;
 
 
@@ -8,6 +10,10 @@ struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
     @location(1) uv: vec2<f32>
 };
+
+fn luminance(col : vec3f) -> f32 {
+    return 0.2125 * col.r + 0.7154 * col.g + 0.0721 * col.b;
+}
 
 @vertex
 fn vs_main(
@@ -23,5 +29,7 @@ fn vs_main(
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var out = textureSample(hdr_input, hdr_input_sp, in.uv);
+    var lum = luminance(textureLoad(luminance_tx, vec2u(0, 0), 0).rgb);
+    out /= lum;
     return out / (out + 1.0f);
 }

@@ -13,9 +13,22 @@ impl Tonemapper {
     const DBGL_TONEMAP: wgpu::BindGroupLayoutDescriptor<'static> = wgpu::BindGroupLayoutDescriptor {
         label: Some("Tonemapping descriptor set layout"),
         entries: &[
+            // Slot for HDR image
             wgpu::BindGroupLayoutEntry{
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false
+                },
+                count:None,
+            },
+            // Slot for the last level of mipmap chain.
+            // Used to estimate the average luminance of the framebuffer.
+            wgpu::BindGroupLayoutEntry{
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     view_dimension: wgpu::TextureViewDimension::D2,
@@ -24,8 +37,8 @@ impl Tonemapper {
                 count:None,
             },
             wgpu::BindGroupLayoutEntry{
-                binding: 1,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None
             }
@@ -84,7 +97,7 @@ impl Bloomer {
         entries: &[
             wgpu::BindGroupLayoutEntry{
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     view_dimension: wgpu::TextureViewDimension::D2,
@@ -94,7 +107,7 @@ impl Bloomer {
             },
             wgpu::BindGroupLayoutEntry{
                 binding: 1,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None
             }
@@ -168,8 +181,16 @@ impl Bloomer {
                     targets: &[ Some(wgpu::ColorTargetState{
                         format: hdr_format,
                         blend: Some(wgpu::BlendState {
-                            color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Constant, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
-                            alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add }
+                            color: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::Constant,
+                                dst_factor: wgpu::BlendFactor::OneMinusConstant,
+                                operation: wgpu::BlendOperation::Add
+                            },
+                            alpha: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::Zero,
+                                dst_factor: wgpu::BlendFactor::One,
+                                operation: wgpu::BlendOperation::Add
+                            }
                         }),
                         write_mask: wgpu::ColorWrites::ALL
                     }) ]
@@ -226,6 +247,7 @@ impl FramebufferMipChain {
 
     fn get_format(&self) -> wgpu::TextureFormat { self.format }
     fn get_textures(&self) -> &Vec<wgpu::TextureView> { self.texture.as_ref() }
+    fn get_mipchain_length(&self) -> Option<NonZero<usize>> { NonZero::new(self.texture.len()) }
     
     /// Create a mipchain from the framebuffer size.
     /// 
@@ -464,6 +486,10 @@ impl Framebuffers {
                 },
                 wgpu::BindGroupEntry{
                     binding: 1,
+                    resource: wgpu::BindingResource::TextureView(self.bloom_chain.get_textures().last().expect("call configure_with_surface before this method."))
+                },
+                wgpu::BindGroupEntry{
+                    binding: 2,
                     resource: wgpu::BindingResource::Sampler(&self.fb_sampler)
                 }
             ]

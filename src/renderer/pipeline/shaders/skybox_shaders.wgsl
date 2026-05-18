@@ -66,13 +66,8 @@ fn vs_main(
 ) -> VertexOutput {
     var out: VertexOutput;
     out.uvw = VERTICES[gl_VertexIndex];
-    var view_mat = mat4x4f(
-        vec4f(camera.view_matrix[0].xyz, 0.0),
-        vec4f(camera.view_matrix[1].xyz, 0.0),
-        vec4f(camera.view_matrix[2].xyz, 0.0),
-        vec4f(0.0)
-    );
-    out.clip_position = camera.proj_matrix * view_mat * vec4f(VERTICES[gl_VertexIndex], 1.0);
+    var view_dir = camera.view_matrix * vec4f(VERTICES[gl_VertexIndex], 0.0);
+    out.clip_position = camera.proj_matrix * vec4f(view_dir.xyz, 1.0);
     out.clip_position = out.clip_position.xyww;
     return out;
 }
