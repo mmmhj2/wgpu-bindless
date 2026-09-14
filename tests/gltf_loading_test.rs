@@ -2,14 +2,14 @@
 #[cfg(target_os = "windows")]
 mod test {
     use std::sync::Arc;
-    use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, mesh::instanced_mesh::InstancedMeshInstance, pipeline::pipeline_state::PipelineStates, window::RendererState}};
+    use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, mesh::static_mesh::StaticMeshInstance, pipeline::pipeline_state::PipelineStates, window::RendererState}};
     use winit::{event_loop::EventLoop, window::Window};
 
     pub struct State {
         window: Arc<Window>,
         device: DeviceInterface,
         pipeline: PipelineStates,
-        gltf_models: Vec<InstancedMeshInstance>
+        gltf_models: Vec<StaticMeshInstance>
     }
 
     impl RendererState for State {
@@ -21,7 +21,7 @@ mod test {
             
             let mut gltf_models = Vec::new();
             for mesh in document.meshes() {
-                let instances = InstancedMeshInstance::create_from_gltf_mesh(
+                let instances = StaticMeshInstance::create_from_gltf_mesh(
                     &device,
                     pipeline.get_bindless_resource_manager_mut(),
                     &mesh,

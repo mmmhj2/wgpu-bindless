@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, instanced_mesh::InstancedMeshInstance}, pipeline::{camera::{CameraPerspective, CameraPerspectiveBuilder}, framebuffers::Framebuffers, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager, texture::{Texture, TextureType}}, window::RendererState}};
+use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, static_mesh::StaticMeshInstance}, pipeline::{camera::{CameraPerspective, CameraPerspectiveBuilder}, framebuffers::Framebuffers, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager, texture::{Texture, TextureType}}, window::RendererState}};
 use winit::{event_loop::EventLoop, window::Window};
 
 pub struct State {
@@ -9,7 +9,7 @@ pub struct State {
     pipeline: PipelineStates,
     skybox: SkyboxManager,
     fb: Framebuffers,
-    gltf_models: Vec<InstancedMeshInstance>
+    gltf_models: Vec<StaticMeshInstance>
 }
 
 impl RendererState for State {
@@ -21,7 +21,7 @@ impl RendererState for State {
 
         let (document, buffers, images) = gltf::import("resource/test_two_cubes.glb").expect("Cannot open glb file.");
         
-        let gltf_models = InstancedMeshInstance::create_from_gltf_scene(
+        let gltf_models = StaticMeshInstance::create_from_gltf_scene(
             &device,
             pipeline.get_bindless_resource_manager_mut(),
             &document.scenes().next().expect("Document should contain at least one scene"),

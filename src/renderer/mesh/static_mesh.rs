@@ -5,16 +5,16 @@ use cgmath::SquareMatrix;
 use crate::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, Mesh, vertex_reconditioner::{TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription, texture::{Texture, TextureType}}};
 
 /// Actual instanced mesh, whose data have already been pushed onto GPU.
-struct InstancedMesh {
+struct StaticMesh {
     vertex_attribute_buffers    : [wgpu::Buffer; 2],
     index_buffer                : Option<wgpu::Buffer>,
     vertex_draw_count           : u32,
     material                    : PBRMaterial
 }
-impl InstancedMesh {
+impl StaticMesh {
     fn get_material(&self) -> &PBRMaterial { &self.material }
 }
-impl Mesh for InstancedMesh {
+impl Mesh for StaticMesh {
     fn get_vertex_buffer(&self) -> &[wgpu::Buffer] { &self.vertex_attribute_buffers }
     fn get_vertex_draw_count(&self) -> u32 { self.vertex_draw_count }
     fn get_index_buffer(&self) -> Option<&wgpu::Buffer> { self.index_buffer.as_ref() }
@@ -24,7 +24,7 @@ impl Mesh for InstancedMesh {
 /// Builder for instanced mesh.
 /// It contains all data of an instanced mesh, but is stored on CPU for further reconditioning.
 /// It must be committed to GPU before using. 
-pub struct InstancedMeshBuilder {
+pub struct StaticMeshBuilder {
     vp  : Vec<VertexBufferPosition>,
     va  : Vec<VertexBufferOthers>,
     vi  : Option<Vec<u32>>,
@@ -34,7 +34,7 @@ pub struct InstancedMeshBuilder {
     need_tangent : bool
 }
 
-impl InstancedMeshBuilder {
+impl StaticMeshBuilder {
     fn construct_position_buffer (
         primitive: &gltf::Primitive,
         buffers: &Vec<gltf::buffer::Data>
@@ -239,7 +239,7 @@ impl InstancedMeshBuilder {
     }
 
     /// Recondition the vertex attributes, and commit the builder onto the GPU.
-    fn recondition_and_commit(mut self, di: &DeviceInterface) -> InstancedMesh {
+    fn recondition_and_commit(mut self, di: &DeviceInterface) -> StaticMesh {
         log::debug!("Applying vertex color scale: {:?}.", self.vertex_color_scale);
         self.rescale_vertex_color(self.vertex_color_scale);
 
@@ -248,29 +248,29 @@ impl InstancedMeshBuilder {
             self.recalculate_tangents();
         }
         let (vp_va, vi) = self.push_buffers(di);
-        InstancedMesh { vertex_attribute_buffers: vp_va, index_buffer: vi, vertex_draw_count: self.vertex_draw_count, material: self.material }
+        StaticMesh { vertex_attribute_buffers: vp_va, index_buffer: vi, vertex_draw_count: self.vertex_draw_count, material: self.material }
     }
 }
-impl VertexReconditionable for InstancedMeshBuilder {
+impl VertexReconditionable for StaticMeshBuilder {
     fn get_position_buffer(&self) -> &Vec<VertexBufferPosition> { &self.vp }
     fn get_attribute_buffer(&self) -> &Vec<VertexBufferOthers> { &self.va }
     fn get_index_buffer(&self) -> Option<&Vec<u32>> { self.vi.as_ref() }
 }
-impl VertexReconditionableAttributeWrite for InstancedMeshBuilder {
+impl VertexReconditionableAttributeWrite for StaticMeshBuilder {
     fn get_attribute_buffer_mut(&mut self) -> &mut Vec<VertexBufferOthers> { &mut self.va }
 }
-impl TangentRecalculator for InstancedMeshBuilder {}
-impl VertexColorApplyScale for InstancedMeshBuilder {}
+impl TangentRecalculator for StaticMeshBuilder {}
+impl VertexColorApplyScale for StaticMeshBuilder {}
 
 /// Instances of instanced mesh.
 /// Holds unique data for each instance such as model matrix, and a reference to the underlying mesh.
 #[derive(Clone)]
-pub struct InstancedMeshInstance {
-    mesh            : Arc<InstancedMesh>,
+pub struct StaticMeshInstance {
+    mesh            : Arc<StaticMesh>,
     model_matrix    : cgmath::Matrix4<f32>
 }
 
-impl InstancedMeshInstance {
+impl StaticMeshInstance {
     /// Create instances from a GLTF scene.
     /// 
     /// Only nodes that contains meshes are processed.
@@ -330,24 +330,23 @@ impl InstancedMeshInstance {
         for primitive in mesh.primitives() {
             ret.push(
                 Self{
-                    mesh: InstancedMeshBuilder::new(di, bindless_manager, &primitive, buffers, images).recondition_and_commit(di).into(),
+                    mesh: StaticMeshBuilder::new(di, bindless_manager, &primitive, buffers, images).recondition_and_commit(di).into(),
                     model_matrix: cgmath::Matrix4::identity().into()
                 }
             )
         }
-
         return ret;
     }
 }
 
-impl Mesh for InstancedMeshInstance {
+impl Mesh for StaticMeshInstance {
     fn get_vertex_buffer(&self) -> &[wgpu::Buffer] { self.mesh.get_vertex_buffer() }
     fn get_vertex_draw_count(&self) -> u32 { self.mesh.get_vertex_draw_count() }
     fn get_index_buffer(&self) -> Option<&wgpu::Buffer> { self.mesh.get_index_buffer() }
     fn get_vertex_type(&self) -> super::vertex_types::VertexType { self.mesh.get_vertex_type() }
 }
 
-impl DrawableMesh for InstancedMeshInstance {
+impl DrawableMesh for StaticMeshInstance {
     fn get_model_matrix(&self) -> &[[f32; 4]; 4] { self.model_matrix.as_ref() }
     fn get_material(&self) -> &PBRMaterial { self.mesh.get_material() }
 }
@@ -367,9 +366,9 @@ mod test {
         let primitive = mesh.primitives().next().expect("cube_textured has not primitives.");
         assert_eq!(primitive.mode(), gltf::mesh::Mode::Triangles);
 
-        let vp = InstancedMeshBuilder::construct_position_buffer(&primitive, &buffers);
-        let va = InstancedMeshBuilder::construct_attribute_buffer(&primitive, &buffers, vp.len());
-        let vi = InstancedMeshBuilder::construct_index_buffer(&primitive, &buffers).expect("Cannot find index buffer.");
+        let vp = StaticMeshBuilder::construct_position_buffer(&primitive, &buffers);
+        let va = StaticMeshBuilder::construct_attribute_buffer(&primitive, &buffers, vp.len());
+        let vi = StaticMeshBuilder::construct_index_buffer(&primitive, &buffers).expect("Cannot find index buffer.");
 
         // Four vertices for each face.
         assert_eq!(vp.len(), 4 * 6);

@@ -3,7 +3,7 @@ use crate::renderer::{mesh::vertex_types::VertexType, pipeline::pbr_material::{P
 pub mod vertex_types;
 pub mod vertex_reconditioner;
 pub mod immediate_mesh;
-pub mod instanced_mesh;
+pub mod static_mesh;
 
 pub trait Mesh {
     /// Get a slice of references to all vertex attribute buffers.
