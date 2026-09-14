@@ -1,8 +1,6 @@
 use cgmath::num_traits::Euclid;
 
-
 const BIT_PER_DWORD: usize = 64;
-
 
 /// A lowest integer cache using the same idea as Linux file descriptor allocation.
 /// 
@@ -14,7 +12,7 @@ const BIT_PER_DWORD: usize = 64;
 /// actual integer capacity of the cache. Actual capacity can be caculated by
 /// *multiplying it by 64*.
 #[derive(Debug)]
-pub struct LowestIntegerCache <const BITFIELD_CAPACITY: usize> {
+pub(crate) struct LowestIntegerCache <const BITFIELD_CAPACITY: usize> {
     watermark   : usize,
     // Maybe we can use BitSet instead.
     bitfield    : [u64; BITFIELD_CAPACITY]

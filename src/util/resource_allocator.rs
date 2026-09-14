@@ -5,7 +5,7 @@ pub enum LinearResourceAllocatorError {
     NotAllocated
 }
 
-pub struct LinearResourceAllocator<T, const SIZE: usize> {
+pub(crate) struct LinearResourceAllocator<T, const SIZE: usize> {
     occupied    : usize,
     buffer      : [Option<T>; SIZE]
 }

@@ -1,9 +1,15 @@
 use std::{collections::{HashMap, hash_map::Entry}, num::NonZeroU32};
 use wgpu::TexelCopyBufferInfo;
 
-use crate::renderer::{device_interface::DeviceInterface, pipeline::{resource_allocator::LinearResourceAllocator, sampler::SamplerDescription, texture::Texture}};
-
-use super::resource_allocator::LinearResourceAllocatorError;
+use crate::{
+    renderer::{
+        device_interface::DeviceInterface,
+        pipeline::{sampler::SamplerDescription, texture::Texture}
+    },
+    util::resource_allocator::{
+        LinearResourceAllocator, LinearResourceAllocatorError
+    }
+};
 
 pub const MAX_TEXTURE_SLOTS : usize = 512;
 pub const MAX_SAMPLER_SLOTS : usize = 128;

@@ -1,4 +1,9 @@
-use crate::renderer::pipeline::{bindless_resource_manager::BindlessResourceManager, resource_allocator::LinearResourceAllocatorError, sampler::SamplerDescription};
+use crate::{
+    renderer::pipeline::{
+        bindless_resource_manager::BindlessResourceManager, sampler::SamplerDescription
+    },
+    util::resource_allocator::LinearResourceAllocatorError
+};
 
 pub struct PBRMaterial {
     diffuse_tx  : usize,
