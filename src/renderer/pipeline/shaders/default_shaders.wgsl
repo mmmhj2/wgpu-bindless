@@ -14,6 +14,9 @@ struct Camera {
 @group(1) @binding(0)
 var<uniform> camera: Camera;
 
+@group(2) @binding(0)
+var<storage, read> model_matrices: array<mat4x4<f32>>;
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) color: vec4<f32>,
@@ -29,7 +32,6 @@ struct VertexOutput {
 };
 
 struct Immediates {
-    model_matrix    : mat4x4<f32>,
     diffuse_tx_sp   : u32,
     normal_tx_sp    : u32,
     mrao_tx_sp      : u32
@@ -46,11 +48,12 @@ fn unpack_tx(idx: u32) -> vec2<u32> {
 
 @vertex
 fn vs_main(
-    model: VertexInput
+    model: VertexInput,
+    @builtin(instance_index) instance_index: u32
 ) -> VertexOutput {
     var out: VertexOutput;
 
-    out.clip_position = camera.vp_matrix * immediates.model_matrix * vec4<f32>(model.position.xyz, 1.0);
+    out.clip_position = camera.vp_matrix * model_matrices[instance_index] * vec4<f32>(model.position.xyz, 1.0);
 
     out.color = model.color;
     out.uv0 = model.uv0;

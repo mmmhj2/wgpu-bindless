@@ -1,7 +1,7 @@
 use bytemuck::Zeroable;
 use wgpu::{BufferDescriptor, BufferUsages};
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::{vertex_reconditioner::{TangentRecalculator, VertexReconditionable, VertexReconditionableAttributeWrite}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::{drawable_mesh_traits::{DrawableMesh, ImmediateContext, ImmediateDrawableMesh}, mesh_manager::MeshManager, vertex_reconditioner::{TangentRecalculator, VertexReconditionable, VertexReconditionableAttributeWrite}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial}};
 
 pub struct ImmediateMeshBuilder {
     state       : VertexBufferOthers,
@@ -13,12 +13,13 @@ pub struct ImmediateMeshBuilder {
 pub struct ImmediateMesh {
     vertex_count        : u32,
     vertex_buffer_arr   : [wgpu::Buffer; 2],
-    material            : PBRMaterial
+    material            : PBRMaterial,
+    bind_group          : wgpu::BindGroup
 }
 
 impl ImmediateMesh {
-    fn new(cnt: u32, pb: wgpu::Buffer, ab: wgpu::Buffer, material: PBRMaterial) -> Self {
-        Self { vertex_count: cnt, vertex_buffer_arr: [pb, ab], material}
+    fn new(cnt: u32, pb: wgpu::Buffer, ab: wgpu::Buffer, material: PBRMaterial, bind_group: wgpu::BindGroup) -> Self {
+        Self { vertex_count: cnt, vertex_buffer_arr: [pb, ab], material, bind_group}
     }
 }
 
@@ -74,7 +75,7 @@ impl ImmediateMeshBuilder {
     }
 
     /// Commit 
-    pub fn commit(self, di: &DeviceInterface) -> ImmediateMesh {
+    pub fn commit(self, di: &DeviceInterface, mmgr: &MeshManager) -> ImmediateMesh {
         assert_eq!(self.position.len(), self.attributes.len());
 
         let pb = di.get_device().create_buffer(&BufferDescriptor{
@@ -91,9 +92,11 @@ impl ImmediateMeshBuilder {
             usage: BufferUsages::VERTEX | BufferUsages::COPY_DST
         });
 
+        let bg = self.build_immediate_model_matrix(di, mmgr);
+
         di.get_queue().write_buffer(&pb, 0, bytemuck::cast_slice(self.position.as_slice()));
         di.get_queue().write_buffer(&ab, 0, bytemuck::cast_slice(self.attributes.as_slice()));
-        ImmediateMesh::new(self.position.len() as u32, pb, ab, self.material)
+        ImmediateMesh::new(self.position.len() as u32, pb, ab, self.material, bg)
     }
 }
 
@@ -115,15 +118,15 @@ impl super::Mesh for ImmediateMesh {
     }
 }
 
-impl super::DrawableMesh for ImmediateMesh {
+impl DrawableMesh for ImmediateMesh {
+    fn get_model_matrix_bind_group(&self) -> &wgpu::BindGroup { &self.bind_group }
+    fn get_material(&self) -> &PBRMaterial { &self.material }
+}
 
+impl ImmediateDrawableMesh for ImmediateMeshBuilder {
     fn get_model_matrix(&self) -> &[[f32; 4]; 4] {
         // Wanted to use cgmath::Matrix4::identity() but failed.
         &[[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
-    }
-
-    fn get_material(&self) -> &PBRMaterial {
-        &self.material
     }
 }
 

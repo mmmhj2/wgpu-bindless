@@ -1,5 +1,5 @@
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, immediate_mesh::ImmediateMeshBuilder}, pipeline::{camera::CameraPerspective, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::{drawable_mesh_traits::DrawableMesh, immediate_mesh::ImmediateMeshBuilder}, pipeline::{pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline}};
 
 use std::sync::Arc;
 
@@ -110,7 +110,7 @@ impl RendererState for DefaultRendererState {
             mesh_builder.vertex3f([-0.5,-0.5, 1.0]);
             mesh_builder.color3f([0.0, 0.0, 1.0]);
             mesh_builder.vertex3f([ 0.5,-0.5, 1.0]);
-            let mesh = mesh_builder.commit(&self.device);
+            let mesh = mesh_builder.commit(&self.device, self.pipelines.get_mesh_manager());
 
             self.pipelines.prepare_render_pass(&self.device, &mut render_pass);
             render_pass.set_rasterizer_pipeline(self.pipelines.get_default_pipeline());

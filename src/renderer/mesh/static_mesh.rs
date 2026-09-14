@@ -2,7 +2,7 @@ use std::{collections::VecDeque, sync::Arc};
 
 use cgmath::SquareMatrix;
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, Mesh, vertex_reconditioner::{TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription, texture::{Texture, TextureType}}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::{Mesh, drawable_mesh_traits::DrawableMesh, vertex_reconditioner::{TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription, texture::{Texture, TextureType}}};
 
 /// Actual instanced mesh, whose data have already been pushed onto GPU.
 struct StaticMesh {
@@ -347,8 +347,11 @@ impl Mesh for StaticMeshInstance {
 }
 
 impl DrawableMesh for StaticMeshInstance {
-    fn get_model_matrix(&self) -> &[[f32; 4]; 4] { self.model_matrix.as_ref() }
     fn get_material(&self) -> &PBRMaterial { self.mesh.get_material() }
+    
+    fn get_model_matrix_bind_group(&self) -> &wgpu::BindGroup {
+        todo!()
+    }
 }
 
 #[cfg(test)]

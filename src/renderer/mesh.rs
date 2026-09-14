@@ -1,9 +1,13 @@
-use crate::renderer::{mesh::vertex_types::VertexType, pipeline::pbr_material::{PBRMaterial}};
+use std::num::NonZero;
+
+use crate::renderer::{device_interface::DeviceInterface, mesh::{mesh_manager::MeshManager, vertex_types::VertexType}, pipeline::pbr_material::PBRMaterial};
 
 pub mod vertex_types;
 pub mod vertex_reconditioner;
 pub mod immediate_mesh;
 pub mod static_mesh;
+pub mod mesh_manager;
+pub mod drawable_mesh_traits;
 
 pub trait Mesh {
     /// Get a slice of references to all vertex attribute buffers.
@@ -29,34 +33,3 @@ pub trait Mesh {
     #[allow(unused)]
     fn get_vertex_type(&self) -> VertexType;
 }
-
-pub trait DrawableMesh : Mesh{
-    /// Get the model matrix of the mesh.
-    /// 
-    /// To save bandwidth the model matrix should have 4 rows and 4 columns.
-    /// Note that both cgmath and WGSL uses *column-major* matrices.
-    /// While Rust has enforces row-major order, so long as you don't manipulate
-    /// the matrix directly with Rust array, it will be fine.
-    fn get_model_matrix(&self) -> &[[f32; 4]; 4];
-
-    /// Get the material description of the mesh.
-    fn get_material(&self) -> &PBRMaterial;
-
-    fn draw(&self, rp: &mut wgpu::RenderPass) -> () {
-
-        rp.set_immediates(0, bytemuck::cast_slice(self.get_model_matrix()));
-        rp.set_immediates(64, &self.get_material().as_u8_arr());
-
-        let vbs = self.get_vertex_buffer();
-        for (i, b) in vbs.iter().enumerate() {
-            rp.set_vertex_buffer(i as u32, b.slice(..));
-        }
-
-        if let Some(ib) = self.get_index_buffer() {
-            rp.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-            rp.draw_indexed(0..self.get_vertex_draw_count(), 0, 0..1);
-        } else {
-            rp.draw(0..self.get_vertex_draw_count(), 0..1);
-        }
-    }
-} 

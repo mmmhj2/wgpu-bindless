@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, mesh::{DrawableMesh, static_mesh::StaticMeshInstance}, pipeline::{camera::{CameraPerspective, CameraPerspectiveBuilder}, framebuffers::Framebuffers, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager, texture::{Texture, TextureType}}, window::RendererState}};
+use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, mesh::{drawable_mesh_traits::DrawableMesh, static_mesh::StaticMeshInstance}, pipeline::{camera::CameraPerspectiveBuilder, framebuffers::Framebuffers, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager, texture::{Texture, TextureType}}, window::RendererState}};
 use winit::{event_loop::EventLoop, window::Window};
 
 pub struct State {

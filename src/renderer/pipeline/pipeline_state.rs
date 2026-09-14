@@ -1,11 +1,13 @@
 use std::{collections::HashMap, num::NonZero};
+use gltf::Mesh;
 use wgpu::{ColorTargetState, ColorWrites, DepthBiasState, PipelineLayoutDescriptor};
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::vertex_types::VertexType, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, CameraPerspective, HasViewProjectionMatrix}, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor}}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::{mesh_manager::{self, MeshManager}, vertex_types::VertexType}, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, CameraPerspective, HasViewProjectionMatrix}, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor}}};
 
 pub struct PipelineStates {
     bindless_resources: BindlessResourceManager,
     cameras: CameraManager,
+    mesh_manager: MeshManager,
     rasterizer_pipeline_layouts: HashMap<String, wgpu::PipelineLayout>,
     rasterizer_pipelines: HashMap<String, RasterizerPipeline>
 }
@@ -15,6 +17,7 @@ impl PipelineStates {
 
         let bindless_resources = BindlessResourceManager::new(di);
         let cameras = CameraManager::new(di);
+        let mesh_manager = MeshManager::new(di);
         let mut rasterizer_pipeline_layouts: HashMap<String, wgpu::PipelineLayout> = HashMap::new();
         let mut rasterizer_pipelines: HashMap<String, RasterizerPipeline> = HashMap::new();
 
@@ -24,8 +27,12 @@ impl PipelineStates {
         let default_rasterizer_pipeline_layout = di.get_device().create_pipeline_layout(
             &PipelineLayoutDescriptor{
                 label: None,
-                bind_group_layouts: &[Some(bindless_resources.get_bind_group_layout()), Some(cameras.get_bind_group_layout())],
-                immediate_size: 80
+                bind_group_layouts: &[
+                        Some(bindless_resources.get_bind_group_layout()),
+                        Some(cameras.get_bind_group_layout()),
+                        Some(mesh_manager.get_bind_group_layout())
+                    ],
+                immediate_size: (std::mem::size_of::<u32>() * 3) as u32
             }
         );
         let targets = [
@@ -87,6 +94,7 @@ impl PipelineStates {
         return Self{
             bindless_resources,
             cameras,
+            mesh_manager,
             rasterizer_pipeline_layouts,
             rasterizer_pipelines
         }
@@ -145,6 +153,8 @@ impl PipelineStates {
 
     pub fn get_camera_manager(&self) -> &CameraManager { &self.cameras }
     pub fn set_active_camera(&mut self, camera: CameraPerspective) { self.cameras.set_active_camera(camera); }
+
+    pub fn get_mesh_manager(&self) -> &MeshManager { &self.mesh_manager }
 
     /// Query the default pipeline layout.
     /// It is guaranteed to be valid. 
