@@ -1,11 +1,9 @@
 use std::sync::Arc;
-use crate::renderer::window::{RendererState, DefaultRendererState};
-use winit::{
-    application::ApplicationHandler, event::*, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window
-};
+use winit::{application::ApplicationHandler, event::{KeyEvent, WindowEvent}, event_loop::ActiveEventLoop, keyboard::{KeyCode, PhysicalKey}, window::Window};
+use crate::renderer::window::RendererState;
 
 pub struct DefaultAppHandler<RState : RendererState + 'static> {
-    state: Option<RState>,
+    pub state: Option<RState>,
 }
 
 impl<RState : RendererState + 'static> DefaultAppHandler<RState> {
@@ -67,14 +65,3 @@ impl<RState : RendererState + 'static> ApplicationHandler<RState> for DefaultApp
     }
 }
 
-
-pub fn run() -> Result<(), winit::error::EventLoopError> {
-
-    env_logger::init();
-
-    let event_loop = EventLoop::<DefaultRendererState>::with_user_event().build()?;
-    let mut app = DefaultAppHandler::new();
-    event_loop.run_app(&mut app)?;
-
-    Ok(())
-}
