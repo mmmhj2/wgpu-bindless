@@ -1,37 +1,25 @@
 use image::EncodableLayout;
-
+use thiserror::Error;
 use crate::renderer::device_interface::DeviceInterface;
 
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum TextureImportError {
-    FailedToOpenImage(std::io::Error),
-    FailedToDecodeImage(image::ImageError),
-    /// The texture has only three channels, which is not supported by wGPU.
-    UnsupportedFormat,
-    /// Texture has less channels than expected.
-    /// For example, color and normal textures should have at least 3 channels.
+    #[error("Failed to open image: {0}")]
+    FailedToOpenImage(#[from] std::io::Error),
+    #[error("Failed to decode image: {0}")]
+    FailedToDecodeImage(#[from] image::ImageError),
+    #[error("texture has an unsupported texel format {0:?} when importing from image file.")]
+    UnsupportedImageFormat(image::ColorType),
+    #[error("texture has an unsupported texel format {0:?} when importing from GLTF file.")]
+    UnsupportedGltfImageFormat(gltf::image::Format),
+    #[error("texture has less channels than expected.")]
     ChannelNotSufficient,
-    /// Texel size not correct.
-    /// The texel buffer obtained from GLTF is either too large or too small for the texture.
+    #[error("texel buffer size is not correct.")]
     UnfitTexelDataSize,
-    /// A 2D texture array should be created,
-    /// but cannot due to different images having mismatched width, height or formats.
+    #[error("a 2D texture array should be created, but cannot due to different images having mismatched width, height or formats.")]
     IncompatibleArrayFormat
 }
-impl std::fmt::Display for TextureImportError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TextureImportError::FailedToOpenImage(e) => write!(f, "failed to open image: {}", e),
-            TextureImportError::FailedToDecodeImage(e) => write!(f, "failed to decode image: {}", e),
-            TextureImportError::UnsupportedFormat => write!(f, "texture has an unsupported texel format. For example, 3 channel RGB textures are not supported for GLTF import."),
-            TextureImportError::ChannelNotSufficient => write!(f, "texture has less channels than expected."),
-            TextureImportError::UnfitTexelDataSize => write!(f, "texel buffer size is not correct."),
-            TextureImportError::IncompatibleArrayFormat => write!(f, "a 2D texture array should be created, but cannot due to different images having mismatched width, height or formats."),
-        }
-    }
-}
-impl std::error::Error for TextureImportError {}
 
 struct ImportedTextureDescriptor {
     pub data: Vec<u8>,
@@ -92,7 +80,7 @@ impl Texture {
             image::ColorType::Rgba16 => wgpu::TextureFormat::Rgba16Unorm,
             image::ColorType::Rgb32F => wgpu::TextureFormat::Rgba32Float,
             image::ColorType::Rgba32F => wgpu::TextureFormat::Rgba32Float,
-            _ => return Err(TextureImportError::UnsupportedFormat),
+            _ => return Err(TextureImportError::UnsupportedImageFormat(image.color())),
         };
 
         let data= match image.color() {
@@ -100,7 +88,7 @@ impl Texture {
             // TODO: eliminate the extra copy here.
             image::ColorType::Rgb16 | image::ColorType::Rgba16 => image.into_rgba16().as_bytes().to_vec(),
             image::ColorType::Rgb32F | image::ColorType::Rgba32F => image.into_rgba32f().as_bytes().to_vec(),
-            _ => return Err(TextureImportError::UnsupportedFormat),
+            _ => return Err(TextureImportError::UnsupportedImageFormat(image.color())),
         };
 
         return Ok(ImportedTextureDescriptor { data, format, width, height });
@@ -237,14 +225,12 @@ impl Texture {
             match f {
                 gltf::image::Format::R8 => Ok(TextureFormat::R8Unorm),
                 gltf::image::Format::R8G8 => Ok(TextureFormat::Rg8Unorm),
-                gltf::image::Format::R8G8B8 => Err(TextureImportError::UnsupportedFormat),
                 gltf::image::Format::R8G8B8A8 => Ok(TextureFormat::Rgba8Unorm),
                 gltf::image::Format::R16 => Ok(TextureFormat::R16Unorm),
                 gltf::image::Format::R16G16 => Ok(TextureFormat::Rg16Unorm),
-                gltf::image::Format::R16G16B16 => Err(TextureImportError::UnsupportedFormat),
                 gltf::image::Format::R16G16B16A16 => Ok(TextureFormat::Rgba16Unorm),
-                gltf::image::Format::R32G32B32FLOAT => Err(TextureImportError::UnsupportedFormat),
                 gltf::image::Format::R32G32B32A32FLOAT => Ok(TextureFormat::Rgba32Float),
+                _ => Err(TextureImportError::UnsupportedGltfImageFormat(f))
             }
         }
 

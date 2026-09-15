@@ -1,7 +1,12 @@
-#[derive(Debug, Clone, Copy)]
+use thiserror::Error;
+
+#[derive(Error, Debug)]
 pub enum LinearResourceAllocatorError {
+    #[error("Allocation failed due to no resource is available.")]
     BadAllocation,
+    #[error("Requested resource is out of bound.")]
     OutOfBound,
+    #[error("Requested resource is not allocated.")]
     NotAllocated
 }
 
