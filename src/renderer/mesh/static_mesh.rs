@@ -1,18 +1,16 @@
 use std::{collections::VecDeque, sync::Arc};
 
-use cgmath::SquareMatrix;
-
 use crate::renderer::{device_interface::DeviceInterface, mesh::{Mesh, drawable_mesh_traits::DrawableMesh, vertex_reconditioner::{TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription, texture::{Texture, TextureType}}};
 
 /// Actual instanced mesh, whose data have already been pushed onto GPU.
-struct StaticMesh {
+pub(crate) struct StaticMesh {
     vertex_attribute_buffers    : [wgpu::Buffer; 2],
     index_buffer                : Option<wgpu::Buffer>,
     vertex_draw_count           : u32,
     material                    : PBRMaterial
 }
 impl StaticMesh {
-    fn get_material(&self) -> &PBRMaterial { &self.material }
+    pub fn get_material(&self) -> &PBRMaterial { &self.material }
 }
 impl Mesh for StaticMesh {
     fn get_vertex_buffer(&self) -> &[wgpu::Buffer] { &self.vertex_attribute_buffers }
@@ -114,7 +112,7 @@ impl StaticMeshBuilder {
         Some(indices)
     }
 
-    fn new(
+    pub(crate) fn new(
         di: &DeviceInterface,
         bindless_manager: &mut BindlessResourceManager,
         primitive: &gltf::Primitive,
@@ -239,7 +237,7 @@ impl StaticMeshBuilder {
     }
 
     /// Recondition the vertex attributes, and commit the builder onto the GPU.
-    fn recondition_and_commit(mut self, di: &DeviceInterface) -> StaticMesh {
+    pub(crate) fn recondition_and_commit(mut self, di: &DeviceInterface) -> StaticMesh {
         log::debug!("Applying vertex color scale: {:?}.", self.vertex_color_scale);
         self.rescale_vertex_color(self.vertex_color_scale);
 
@@ -261,98 +259,6 @@ impl VertexReconditionableAttributeWrite for StaticMeshBuilder {
 }
 impl TangentRecalculator for StaticMeshBuilder {}
 impl VertexColorApplyScale for StaticMeshBuilder {}
-
-/// Instances of instanced mesh.
-/// Holds unique data for each instance such as model matrix, and a reference to the underlying mesh.
-#[derive(Clone)]
-pub struct StaticMeshInstance {
-    mesh            : Arc<StaticMesh>,
-    model_matrix    : cgmath::Matrix4<f32>
-}
-
-impl StaticMeshInstance {
-    /// Create instances from a GLTF scene.
-    /// 
-    /// Only nodes that contains meshes are processed.
-    /// Transforms of the nodes will be preserved in the model matrices of the
-    /// instances produced.
-    pub fn create_from_gltf_scene(
-        di: &DeviceInterface,
-        bindless_manager: &mut BindlessResourceManager,
-        scene: &gltf::Scene,
-        buffers: &Vec<gltf::buffer::Data>,
-        images: &Vec<gltf::image::Data>
-    ) -> Vec<Self> {
-        let mut ret = Vec::new();
-
-        // Do a BFS to collect all meshes.
-        // DFS, recursion and trees in Rust are simply PITA.
-        let mut transform_queue = VecDeque::<cgmath::Matrix4<f32>>::new();
-        let mut node_queue = VecDeque::<usize>::new();
-
-        for root_node in scene.nodes() {
-            transform_queue.push_back(root_node.transform().matrix().into());
-            node_queue.push_back(root_node.index());
-
-            while !node_queue.is_empty() {
-                let current_node = scene.nodes().nth(node_queue.pop_front().unwrap()).expect("valid node index");
-                let current_transform = transform_queue.pop_front().unwrap();
-                if let Some(m) = current_node.mesh() {
-                    let mut instances = Self::create_from_gltf_mesh(di, bindless_manager, &m, buffers, images);
-                    for inst in &mut instances {
-                        inst.model_matrix = current_transform;
-                    }
-                    ret.extend(instances);
-                }
-
-                for ch in current_node.children() {
-                    transform_queue.push_back(current_transform * cgmath::Matrix4::from(ch.transform().matrix()));
-                    node_queue.push_back(ch.index());
-                }
-            }
-        }
-
-        return ret;
-    }
-
-    /// Create instances from a GLTF mesh.
-    /// 
-    /// All primitives will be processed, each one corresponding to an new instance.
-    pub fn create_from_gltf_mesh(
-        di: &DeviceInterface,
-        bindless_manager: &mut BindlessResourceManager,
-        mesh: &gltf::Mesh,
-        buffers: &Vec<gltf::buffer::Data>,
-        images: &Vec<gltf::image::Data>
-    ) -> Vec<Self> {
-        let mut ret = Vec::new();
-
-        for primitive in mesh.primitives() {
-            ret.push(
-                Self{
-                    mesh: StaticMeshBuilder::new(di, bindless_manager, &primitive, buffers, images).recondition_and_commit(di).into(),
-                    model_matrix: cgmath::Matrix4::identity().into()
-                }
-            )
-        }
-        return ret;
-    }
-}
-
-impl Mesh for StaticMeshInstance {
-    fn get_vertex_buffer(&self) -> &[wgpu::Buffer] { self.mesh.get_vertex_buffer() }
-    fn get_vertex_draw_count(&self) -> u32 { self.mesh.get_vertex_draw_count() }
-    fn get_index_buffer(&self) -> Option<&wgpu::Buffer> { self.mesh.get_index_buffer() }
-    fn get_vertex_type(&self) -> super::vertex_types::VertexType { self.mesh.get_vertex_type() }
-}
-
-impl DrawableMesh for StaticMeshInstance {
-    fn get_material(&self) -> &PBRMaterial { self.mesh.get_material() }
-    
-    fn get_model_matrix_bind_group(&self) -> &wgpu::BindGroup {
-        todo!()
-    }
-}
 
 #[cfg(test)]
 mod test {

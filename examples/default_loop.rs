@@ -1,4 +1,4 @@
-use rust_renderer::{app::DefaultAppHandler, renderer::window::DefaultRendererState};
+ use rust_renderer::{app::DefaultAppHandler, renderer::window::DefaultRendererState};
 use winit::
     event_loop::EventLoop 
 ;

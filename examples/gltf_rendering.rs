@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, mesh::{drawable_mesh_traits::DrawableMesh, static_mesh::StaticMeshInstance}, pipeline::{camera::CameraPerspectiveBuilder, framebuffers::Framebuffers, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager, texture::{Texture, TextureType}}, window::RendererState}};
+use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance}, pipeline::{camera::CameraPerspectiveBuilder, framebuffers::Framebuffers, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager, texture::{Texture, TextureType}}, window::RendererState}};
 use winit::{event_loop::EventLoop, window::Window};
 
 pub struct State {
@@ -23,7 +23,7 @@ impl RendererState for State {
         
         let gltf_models = StaticMeshInstance::create_from_gltf_scene(
             &device,
-            pipeline.get_bindless_resource_manager_mut(),
+            &mut pipeline,
             &document.scenes().next().expect("Document should contain at least one scene"),
             &buffers,
             &images);
