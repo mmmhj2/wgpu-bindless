@@ -1,7 +1,29 @@
 use bytemuck::Zeroable;
 use wgpu::{BufferDescriptor, BufferUsages};
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::{drawable_mesh_traits::{DrawableMesh, ImmediateDrawableMesh}, mesh_manager::MeshManager, vertex_reconditioner::{TangentRecalculator, VertexReconditionable, VertexReconditionableAttributeWrite}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial}};
+use crate::{
+    asset::importer::vertex_reconditioner::{
+        TangentRecalculator, VertexReconditionable, VertexReconditionableAttributeWrite
+    },
+    renderer::{
+        device_interface::DeviceInterface,
+        mesh::{
+            drawable_mesh_traits::{
+                DrawableMesh,
+                ImmediateDrawableMesh
+            },
+            mesh_manager::MeshManager,
+            vertex_types::{
+                VertexBufferOthers,
+                VertexBufferPosition
+            }
+        },
+        pipeline::{
+            bindless_resource_manager::BindlessResourceManager,
+            pbr_material::PBRMaterial
+        }
+    }
+};
 
 pub struct ImmediateMeshBuilder {
     state       : VertexBufferOthers,

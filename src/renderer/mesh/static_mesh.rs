@@ -1,6 +1,28 @@
 use std::{collections::VecDeque, sync::Arc};
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::{Mesh, drawable_mesh_traits::DrawableMesh, vertex_reconditioner::{TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription, texture::{Texture, TextureType}}};
+use crate::{
+    asset::importer::vertex_reconditioner::{
+        TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite
+    },
+    renderer::{
+    device_interface::DeviceInterface,
+    mesh::{
+        Mesh,
+        drawable_mesh_traits::DrawableMesh,
+        vertex_types::{
+            VertexBufferOthers,
+            VertexBufferPosition
+        }
+    },
+    pipeline::{
+        bindless_resource_manager::BindlessResourceManager,
+        pbr_material::PBRMaterial,
+        sampler::SamplerDescription,
+        texture::{
+            Texture, TextureType
+        }
+    }
+}};
 
 /// Actual instanced mesh, whose data have already been pushed onto GPU.
 pub(crate) struct StaticMesh {

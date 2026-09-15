@@ -3,7 +3,6 @@ use std::num::NonZero;
 use crate::renderer::{device_interface::DeviceInterface, mesh::{mesh_manager::MeshManager, vertex_types::VertexType}, pipeline::pbr_material::PBRMaterial};
 
 pub mod vertex_types;
-pub mod vertex_reconditioner;
 pub mod immediate_mesh;
 pub mod static_mesh;
 pub mod static_mesh_instance;
