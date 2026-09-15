@@ -1,8 +1,23 @@
-use std::{collections::HashMap, num::NonZero};
-use gltf::Mesh;
+use std::{collections::HashMap, num::NonZero, borrow::Cow};
 use wgpu::{ColorTargetState, ColorWrites, DepthBiasState, PipelineLayoutDescriptor};
 
 use crate::renderer::{device_interface::DeviceInterface, mesh::{mesh_manager::{self, MeshManager}, vertex_types::VertexType}, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, CameraPerspective, HasViewProjectionMatrix}, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor}}};
+
+macro_rules! include_bindless_wgsl {
+    ($($token:tt)*) => {
+        {
+            let header = include_str!("./shaders/bindless_header.wgsl").to_owned();
+            let body = include_str!($($token)*);
+            let complete: String = header + body;
+            wgpu::ShaderModuleDescriptor {
+                label: Some($($token)*),
+                source: wgpu::ShaderSource::Wgsl(
+                    Cow::from(complete)
+                ),
+            }
+        }
+    };
+}
 
 pub struct PipelineStates {
     bindless_resources: BindlessResourceManager,
@@ -22,7 +37,7 @@ impl PipelineStates {
         let mut rasterizer_pipelines: HashMap<String, RasterizerPipeline> = HashMap::new();
 
         let default_shader_module = di.get_device().create_shader_module(
-            wgpu::include_wgsl!("./shaders/default_shaders.wgsl")
+            include_bindless_wgsl!("./shaders/default_shaders.wgsl")
         );
         let default_rasterizer_pipeline_layout = di.get_device().create_pipeline_layout(
             &PipelineLayoutDescriptor{
@@ -64,7 +79,7 @@ impl PipelineStates {
             }
         ));
 
-        let pbr_shader_module = di.get_device().create_shader_module(wgpu::include_wgsl!("./shaders/cook_torrance.wgsl"));
+        let pbr_shader_module = di.get_device().create_shader_module(include_bindless_wgsl!("./shaders/cook_torrance.wgsl"));
         let pbr_rasterizer_pipeline_descriptor = RasterizerPipelineDescriptor::from((
             wgpu::VertexState{
                 module: &pbr_shader_module,
