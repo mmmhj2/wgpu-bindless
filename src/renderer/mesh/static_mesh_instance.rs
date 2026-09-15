@@ -1,7 +1,5 @@
 use std::{collections::VecDeque, num::NonZero, sync::Arc};
-use cgmath::SquareMatrix;
 use crate::renderer::{device_interface::DeviceInterface, mesh::{Mesh, drawable_mesh_traits::DrawableMesh, mesh_manager::MeshManager, static_mesh::{StaticMesh, StaticMeshBuilder}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, pipeline_state::PipelineStates}};
-
 
 /// Instances of instanced mesh.
 /// Holds unique data for each instance such as model matrix, and a reference to the underlying mesh.
@@ -115,4 +113,5 @@ impl Mesh for StaticMeshInstance {
 impl DrawableMesh for StaticMeshInstance {
     fn get_material(&self) -> &PBRMaterial { self.mesh.get_material() }
     fn get_model_matrix_bind_group(&self) -> &wgpu::BindGroup { &self.model_matrix_bg }
+    fn get_instance_range(&self) -> std::ops::Range<u32> { 0..1 }
 }

@@ -1,7 +1,7 @@
 use bytemuck::Zeroable;
 use wgpu::{BufferDescriptor, BufferUsages};
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::{drawable_mesh_traits::{DrawableMesh, ImmediateContext, ImmediateDrawableMesh}, mesh_manager::MeshManager, vertex_reconditioner::{TangentRecalculator, VertexReconditionable, VertexReconditionableAttributeWrite}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial}};
+use crate::renderer::{device_interface::DeviceInterface, mesh::{drawable_mesh_traits::{DrawableMesh, ImmediateDrawableMesh}, mesh_manager::MeshManager, vertex_reconditioner::{TangentRecalculator, VertexReconditionable, VertexReconditionableAttributeWrite}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial}};
 
 pub struct ImmediateMeshBuilder {
     state       : VertexBufferOthers,
@@ -121,6 +121,7 @@ impl super::Mesh for ImmediateMesh {
 impl DrawableMesh for ImmediateMesh {
     fn get_model_matrix_bind_group(&self) -> &wgpu::BindGroup { &self.bind_group }
     fn get_material(&self) -> &PBRMaterial { &self.material }
+    fn get_instance_range(&self) -> std::ops::Range<u32> { 0..1 }
 }
 
 impl ImmediateDrawableMesh for ImmediateMeshBuilder {

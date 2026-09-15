@@ -1,4 +1,4 @@
-use std::num::NonZero;
+use std::{num::NonZero, ops::Range};
 
 use crate::renderer::{device_interface::DeviceInterface, mesh::{Mesh, mesh_manager::MeshManager}, pipeline::pbr_material::PBRMaterial};
 
@@ -9,6 +9,8 @@ pub trait DrawableMesh : Mesh {
     /// While Rust has enforces row-major order, so long as you don't manipulate
     /// the matrix directly with Rust array, it will be fine.
     fn get_model_matrix_bind_group(&self) -> &wgpu::BindGroup;
+
+    fn get_instance_range(&self) -> Range<u32>;
 
     /// Get the material description of the mesh.
     fn get_material(&self) -> &PBRMaterial;
@@ -24,9 +26,9 @@ pub trait DrawableMesh : Mesh {
 
         if let Some(ib) = self.get_index_buffer() {
             rp.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-            rp.draw_indexed(0..self.get_vertex_draw_count(), 0, 0..1);
+            rp.draw_indexed(0..self.get_vertex_draw_count(), 0, self.get_instance_range());
         } else {
-            rp.draw(0..self.get_vertex_draw_count(), 0..1);
+            rp.draw(0..self.get_vertex_draw_count(), self.get_instance_range());
         }
     }
 } 
