@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::File, sync::{Arc, RwLock}};
+use std::{collections::HashMap, fs::File, sync::{Arc, RwLock, RwLockReadGuard}};
 
 use crate::asset::{asset_types::{self, Asset}, importer::{AssetImporter, ImporterContext}};
 
@@ -29,5 +29,9 @@ impl AssetManager {
             r.save_to_disk().expect("Failed to save asset to disk.");
         }
         Ok(())
+    }
+
+    pub fn get_database(&self) -> std::sync::RwLockReadGuard<'_, HashMap<std::string::String, Arc<std::sync::RwLock<asset_types::Asset>>>> {
+        self.asset_database.read().expect("failed to acquire read lock for asset database")
     }
 }

@@ -22,12 +22,6 @@ pub struct StaticMeshAsset {
 }
 
 impl ConcreteAssetType for StaticMeshAsset {
-    fn save_to_disk(&self, name: &str, path: &std::path::Path) -> Result<(), ()> {
-        let s = serde_json::to_string(self).expect("failed to serialize static_mesh_asset");
-        let mut f = File::create(path).expect("failed to open disk file");
-        f.write(&s.into_bytes()).expect("failed to write to disk file.");
-        Ok(())
-    }
 }
 
 impl StaticMeshAsset {
@@ -142,23 +136,23 @@ impl StaticMeshAsset {
 
         ret.material.diffuse_texture_name = if let Some(base_color_texture) = pbr_material.base_color_texture() {
             Some(
-                GltfImporter::generate_subasset_filename_string(
+                GltfImporter::generate_subasset_name(
                     &context.imported_file_path,
                     base_color_texture.texture().index(),
                     crate::asset::importer::gltf_importer::SubAssetType::Texture
-                ).expect("Failed to resolve diffuse texture file name")
+                ).into_string().expect("diffuse texture name should contain UTF-8 chars only")
             )
         } else {
             None
         };
 
-        ret.material.diffuse_texture_name = if let Some(normal_texture) = primitive.material().normal_texture() {
+        ret.material.normal_texture_name = if let Some(normal_texture) = primitive.material().normal_texture() {
             Some(
-                GltfImporter::generate_subasset_filename_string(
+                GltfImporter::generate_subasset_name(
                     &context.imported_file_path,
                     normal_texture.texture().index(),
                     crate::asset::importer::gltf_importer::SubAssetType::Texture
-                ).expect("Failed to resolve normal texture file name")
+                ).into_string().expect("normal texture name should contain UTF-8 chars only")
             )
         } else {
             None

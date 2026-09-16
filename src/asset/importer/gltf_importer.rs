@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::{ffi::OsString, sync::{Arc, RwLock}};
 
 use crate::asset::{asset_types::{Asset, AssetMetadata, static_mesh_asset::{self, StaticMeshAsset}}, importer::AssetImporter};
 
@@ -17,7 +17,7 @@ impl AssetImporter for GltfImporter {
 
             for primitive in mesh.primitives() {
                 let subasset_path = Self::generate_subasset_filename(path, mesh.index(), SubAssetType::Primitive);
-                let subasset_name = subasset_path.file_name().unwrap().to_str().expect("Subasset contains non UTF-8 characters.").to_string();
+                let subasset_name = Self::generate_subasset_name(path, mesh.index(), SubAssetType::Primitive).into_string().expect("asset name should contain UTF-8 chars only.");
                 let imported_mesh = StaticMeshAsset::import_from_gltf_primitive(context, &primitive, &buffers);
                 let imported_asset = Arc::from(
                     RwLock::from(Asset::new(
@@ -54,17 +54,21 @@ impl GltfImporter {
     }
 
     pub(crate) fn generate_subasset_filename(gltf_file: &std::path::Path, index: usize, asset_type: SubAssetType) -> std::path::PathBuf {
+        gltf_file.with_file_name(Self::generate_subasset_name(gltf_file, index, asset_type)).with_added_extension("asset")
+    }
+
+    pub(crate) fn generate_subasset_name(gltf_file: &std::path::Path, index: usize, asset_type: SubAssetType) -> OsString {
         assert!(gltf_file.is_file());
 
         let new_suffix = match asset_type {
-            SubAssetType::Texture => format!(".tex_{}.asset", index),
+            SubAssetType::Texture => format!(".tex_{}", index),
             SubAssetType::Mesh => todo!("Mesh import is not supported yet."),
-            SubAssetType::Primitive => format!(".prim_{}.asset", index),
+            SubAssetType::Primitive => format!(".prim_{}", index),
         };
 
         let mut new_filename = gltf_file.file_name().unwrap().to_os_string();
         new_filename.push(new_suffix);
-        gltf_file.with_file_name(new_filename)
+        return new_filename;
     }
 
     pub(crate) fn generate_subasset_filename_string(gltf_file: &std::path::Path, index: usize, asset_type: SubAssetType) -> Option<String> {

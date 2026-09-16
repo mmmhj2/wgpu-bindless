@@ -20,7 +20,4 @@ pub struct TextureAsset {
 }
 
 impl ConcreteAssetType for TextureAsset {
-    fn save_to_disk(&self, name: &str, path: &std::path::Path) -> Result<(), ()> {
-        todo!()
-    }
 }
