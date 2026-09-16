@@ -1,36 +1,32 @@
+use std::{fs::File, io::Write};
+
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::{asset::{asset_types::ConcreteAssetType, importer::{ImporterContext, vertex_reconditioner::{TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite}}}, renderer::mesh::vertex_types::{VertexBufferOthers, VertexBufferPosition}};
+use crate::{asset::{asset_types::ConcreteAssetType, importer::{ImporterContext, gltf_importer::GltfImporter, vertex_reconditioner::{TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite}}}, renderer::mesh::vertex_types::{VertexBufferOthers, VertexBufferPosition}};
 
+#[derive(Serialize, Deserialize, Debug)]
+struct StaticMeshMaterial {
+    pub diffuse_texture_name: Option<String>,
+    pub normal_texture_name: Option<String>,
+    pub mrao_texture_name: Option<String>
+}
 
+#[derive(Serialize, Deserialize, Debug)]
 pub struct StaticMeshAsset {
     vp  : Vec<VertexBufferPosition>,
     va  : Vec<VertexBufferOthers>,
     vi  : Option<Vec<u32>>,
-    material : (),
+    material : StaticMeshMaterial,
     vertex_draw_count : u32,
     vertex_color_scale: [f32; 4]
 }
 
-impl Serialize for StaticMeshAsset {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer {
-        todo!()
-    }
-}
-
-impl<'de> Deserialize<'de> for StaticMeshAsset {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de> {
-        todo!()
-    }
-}
-
 impl ConcreteAssetType for StaticMeshAsset {
-    fn import(path: &std::path::Path) -> Self {
-        todo!()
+    fn save_to_disk(&self, name: &str, path: &std::path::Path) -> Result<(), ()> {
+        let s = serde_json::to_string(self).expect("failed to serialize static_mesh_asset");
+        let mut f = File::create(path).expect("failed to open disk file");
+        f.write(&s.into_bytes()).expect("failed to write to disk file.");
+        Ok(())
     }
 }
 
@@ -115,8 +111,8 @@ impl StaticMeshAsset {
     }
 
 
-    fn import_from_gltf_primitive(
-        context: &mut ImporterContext,
+    pub(crate) fn import_from_gltf_primitive(
+        context: &ImporterContext,
         primitive: &gltf::Primitive,
         buffers: &Vec<gltf::buffer::Data>
     ) -> Self {
@@ -132,9 +128,45 @@ impl StaticMeshAsset {
             vp: position_buffer,
             va: attribute_buffer,
             vi: index_buffer,
-            material: (),
+            material: StaticMeshMaterial {
+                diffuse_texture_name: None,
+                normal_texture_name: None,
+                mrao_texture_name: None
+            },
             vertex_draw_count,
             vertex_color_scale: [1.0; 4]
+        };
+
+        // Process the materials
+        let pbr_material = primitive.material().pbr_metallic_roughness();
+
+        ret.material.diffuse_texture_name = if let Some(base_color_texture) = pbr_material.base_color_texture() {
+            Some(
+                GltfImporter::generate_subasset_filename_string(
+                    &context.imported_file_path,
+                    base_color_texture.texture().index(),
+                    crate::asset::importer::gltf_importer::SubAssetType::Texture
+                ).expect("Failed to resolve diffuse texture file name")
+            )
+        } else {
+            None
+        };
+
+        ret.material.diffuse_texture_name = if let Some(normal_texture) = primitive.material().normal_texture() {
+            Some(
+                GltfImporter::generate_subasset_filename_string(
+                    &context.imported_file_path,
+                    normal_texture.texture().index(),
+                    crate::asset::importer::gltf_importer::SubAssetType::Texture
+                ).expect("Failed to resolve normal texture file name")
+            )
+        } else {
+            None
+        };
+
+        let should_have_mrao_texture = primitive.material().pbr_metallic_roughness().metallic_roughness_texture().is_some() || primitive.material().occlusion_texture().is_some();
+        if should_have_mrao_texture {
+            todo!("MRAO texture is not implemented.")
         };
         
         if calculate_tangent {

@@ -2,7 +2,7 @@
 #[cfg(target_os = "windows")]
 mod test {
     use std::sync::Arc;
-    use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, mesh::static_mesh::StaticMeshInstance, pipeline::pipeline_state::PipelineStates, window::RendererState}};
+    use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, mesh::static_mesh_instance::StaticMeshInstance, pipeline::pipeline_state::PipelineStates, window::RendererState}};
     use winit::{event_loop::EventLoop, window::Window};
 
     pub struct State {
@@ -23,7 +23,7 @@ mod test {
             for mesh in document.meshes() {
                 let instances = StaticMeshInstance::create_from_gltf_mesh(
                     &device,
-                    pipeline.get_bindless_resource_manager_mut(),
+                    &mut pipeline,
                     &mesh,
                     &buffers,
                     &images);

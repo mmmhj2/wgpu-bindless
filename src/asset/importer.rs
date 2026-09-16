@@ -1,11 +1,21 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fs::File, sync::{Arc, RwLock}};
 
 use crate::asset::asset_types::Asset;
 
 pub mod gltf_importer;
 pub mod vertex_reconditioner;
 
-pub(crate) struct ImporterContext {
-    pub asset_batch: HashMap<String, Asset>,
+pub struct ImporterContext {
+    pub asset_batch: RwLock<HashMap<String, Arc<RwLock<Asset>>>>,
     pub imported_file_path: Box<std::path::Path>
+}
+
+impl ImporterContext {
+    pub fn new(path: &std::path::Path) -> Self {
+        Self { asset_batch: HashMap::new().into(), imported_file_path: Box::from(path) }
+    }
+}
+
+pub trait AssetImporter {
+    fn import(&mut self, context: &ImporterContext);
 }
