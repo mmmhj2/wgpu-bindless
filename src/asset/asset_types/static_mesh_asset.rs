@@ -106,6 +106,7 @@ impl StaticMeshAsset {
 
 
     pub(crate) fn import_from_gltf_primitive(
+        importer: &mut GltfImporter,
         context: &ImporterContext,
         primitive: &gltf::Primitive,
         buffers: &Vec<gltf::buffer::Data>
@@ -135,13 +136,13 @@ impl StaticMeshAsset {
         let pbr_material = primitive.material().pbr_metallic_roughness();
 
         ret.material.diffuse_texture_name = if let Some(base_color_texture) = pbr_material.base_color_texture() {
-            Some(
-                GltfImporter::generate_subasset_name(
-                    &context.imported_file_path,
-                    base_color_texture.texture().index(),
-                    crate::asset::importer::gltf_importer::SubAssetType::Texture
-                ).into_string().expect("diffuse texture name should contain UTF-8 chars only")
-            )
+            let texture_name = GltfImporter::generate_subasset_name(
+                &context.imported_file_path,
+                base_color_texture.texture().index(),
+                crate::asset::importer::gltf_importer::SubAssetType::Texture
+            ).into_string().expect("diffuse texture name should contain UTF-8 chars only");
+            importer.color_textures.insert(texture_name.clone());
+            Some(texture_name)
         } else {
             None
         };

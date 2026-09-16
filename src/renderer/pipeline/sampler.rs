@@ -1,3 +1,5 @@
+use crate::asset::asset_types::texture_asset::Sampler;
+
 
 /// Wrapper around wgpu::SamplerDescriptor.
 /// 
@@ -12,6 +14,12 @@ pub struct SamplerDescription {
     pub compare         : Option<wgpu::CompareFunction>,
     pub anisotropy_clamp: u16,
     pub border_color    : Option<wgpu::SamplerBorderColor>  
+}
+
+impl Into<SamplerDescription> for Sampler {
+    fn into(self) -> SamplerDescription {
+        todo!()
+    }
 }
 
 impl Default for SamplerDescription {

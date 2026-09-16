@@ -9,9 +9,7 @@ use rust_renderer::asset::{asset_manager::AssetManager, asset_types::Asset, impo
         let test_filename: PathBuf;
         {
             let asset_manager = AssetManager::new();
-            let mut gltf_importer = GltfImporter::new();
-
-            asset_manager.import(Path::new("resource/test_two_cubes.glb"), &mut gltf_importer);
+            asset_manager.import(Path::new("resource/test_two_cubes.glb"), GltfImporter::new());
             asset_manager.save_to_disk().unwrap();
             {
                 let db = asset_manager.get_database();

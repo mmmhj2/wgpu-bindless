@@ -1,12 +1,14 @@
-use std::{ffi::OsString, sync::{Arc, RwLock}};
+use std::{collections::HashSet, ffi::OsString, sync::{Arc, RwLock}};
 
-use crate::asset::{asset_types::{Asset, AssetMetadata, static_mesh_asset::{self, StaticMeshAsset}}, importer::AssetImporter};
+use crate::asset::{asset_types::{Asset, AssetMetadata, static_mesh_asset::StaticMeshAsset, texture_asset::TextureAsset}, importer::AssetImporter};
 
 pub struct GltfImporter {
+    // Guard it by mutex if we want to parallelize it.
+    pub color_textures: HashSet<String>
 }
 
 impl AssetImporter for GltfImporter {
-    fn import(&mut self, context: &super::ImporterContext) {
+    fn import(mut self, context: &super::ImporterContext) {
         assert!(context.imported_file_path.is_file());
         
         let path = context.imported_file_path.as_ref();
@@ -18,23 +20,37 @@ impl AssetImporter for GltfImporter {
             for primitive in mesh.primitives() {
                 let subasset_path = Self::generate_subasset_filename(path, mesh.index(), SubAssetType::Primitive);
                 let subasset_name = Self::generate_subasset_name(path, mesh.index(), SubAssetType::Primitive).into_string().expect("asset name should contain UTF-8 chars only.");
-                let imported_mesh = StaticMeshAsset::import_from_gltf_primitive(context, &primitive, &buffers);
+                let imported_mesh = StaticMeshAsset::import_from_gltf_primitive(&mut self, context, &primitive, &buffers);
                 let imported_asset = Arc::from(
                     RwLock::from(Asset::new(
                         AssetMetadata{
                             asset_file_path: Some(subasset_path.into_boxed_path()),
                             asset_name: subasset_name.clone()
                         },
-                        crate::asset::asset_types::AssetData::StaticMeshAsset(imported_mesh)
+                        crate::asset::asset_types::AssetData::StaticMeshAssetType(imported_mesh)
                     ))
                 );
-                context.asset_batch.write().expect("msg").insert(subasset_name, imported_asset);
+                context.asset_batch.write().expect("cannot acquire write lock for asset database.").insert(subasset_name, imported_asset);
             }
         }
 
+        log::info!("Following textures are marked as color texture: {:?}", self.color_textures);
+
         for texture in document.textures() {
-            let subasset_name = Self::generate_subasset_filename(path, texture.index(), SubAssetType::Texture);
-            log::info!("Found texture {}.", subasset_name.display());
+            let subasset_path = Self::generate_subasset_filename(path, texture.index(), SubAssetType::Texture);
+            let subasset_name = Self::generate_subasset_name(path, texture.index(), SubAssetType::Texture).into_string().expect("asset name should contain UTF-8 chars only.");
+            log::info!("Found texture {}.", subasset_name);
+            let imported_texture = TextureAsset::import_from_gltf_texture(&texture, &textures, self.color_textures.contains(&subasset_name)).expect("failed to import texture asset");
+            let imported_asset = Arc::from(
+                RwLock::from(Asset::new(
+                    AssetMetadata {
+                        asset_file_path: Some(subasset_path.into_boxed_path()),
+                        asset_name: subasset_name.clone()
+                    },
+                    crate::asset::asset_types::AssetData::TextureAssetType(imported_texture)
+                ))
+            );
+            context.asset_batch.write().expect("cannot acquire write lock for asset database.").insert(subasset_name, imported_asset);
         }
     }
 }
@@ -50,7 +66,7 @@ pub(crate) enum SubAssetType {
 
 impl GltfImporter {
     pub fn new() -> Self {
-        Self {  }
+        Self { color_textures: HashSet::new() }
     }
 
     pub(crate) fn generate_subasset_filename(gltf_file: &std::path::Path, index: usize, asset_type: SubAssetType) -> std::path::PathBuf {

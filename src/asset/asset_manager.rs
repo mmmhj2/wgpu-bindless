@@ -13,7 +13,7 @@ impl AssetManager {
         }
     }
 
-    pub fn import<T: AssetImporter>(&self, path: &std::path::Path, importer: &mut T) {
+    pub fn import<T: AssetImporter>(&self, path: &std::path::Path, importer: T) {
         let context = ImporterContext::new(path);
         importer.import(&context);
         

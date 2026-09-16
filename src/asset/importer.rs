@@ -17,5 +17,5 @@ impl ImporterContext {
 }
 
 pub trait AssetImporter {
-    fn import(&mut self, context: &ImporterContext);
+    fn import(self, context: &ImporterContext);
 }

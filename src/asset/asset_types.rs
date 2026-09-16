@@ -15,8 +15,8 @@ pub struct AssetMetadata {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum AssetData {
-    StaticMeshAsset(StaticMeshAsset),
-    TextureAsset(TextureAsset)
+    StaticMeshAssetType(StaticMeshAsset),
+    TextureAssetType(TextureAsset)
 }
 
 trait ConcreteAssetType: Serialize + DeserializeOwned {
