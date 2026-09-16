@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::asset::asset_types::ConcreteAssetType;
 
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 pub enum TextureFormat {
     Rgba8Unorm,
     Rgba8Srgb,
@@ -54,7 +54,7 @@ impl Into<wgpu::MipmapFilterMode> for FilterMode {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Sampler {
     /// Address mode for u,v,w coordinates
     pub address_mode: (AddressMode, AddressMode, AddressMode),
@@ -62,17 +62,48 @@ pub struct Sampler {
     pub filter      : (FilterMode, FilterMode, FilterMode)
 }
 
+impl Default for Sampler {
+    fn default() -> Self {
+        Self {
+            address_mode: (AddressMode::ClampToEdge, AddressMode::ClampToEdge, AddressMode::ClampToEdge),
+            filter: (FilterMode::Nearest, FilterMode::Nearest, FilterMode::Nearest)
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub enum TextureDimension {
+    D1,
+    D2,
+    D2Array,
+    D3
+}
+
+impl Into<wgpu::TextureDimension> for TextureDimension {
+    fn into(self) -> wgpu::TextureDimension {
+        match self {
+            TextureDimension::D1 => wgpu::TextureDimension::D1,
+            TextureDimension::D2 => wgpu::TextureDimension::D2,
+            TextureDimension::D2Array => wgpu::TextureDimension::D2,
+            TextureDimension::D3 => wgpu::TextureDimension::D3,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum TexelData {
+    Uncompressed(Box<[u8]>),
+    BC7Compressed(Box<[u8]>)
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TextureAsset {
     pub format: TextureFormat,
-    pub dimension: u8,
+    pub dimension: TextureDimension,
     pub size: (u32, u32, u32),
     pub sampler: Sampler,
-    pub texels: Vec<u8>,
+    pub texels: TexelData,
 }
 
 impl ConcreteAssetType for TextureAsset {
-}
-
-impl TextureAsset {
 }

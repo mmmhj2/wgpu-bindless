@@ -1,8 +1,9 @@
-use std::{collections::HashMap, fs::File, sync::{Arc, RwLock}};
+use std::{collections::HashMap, sync::{Arc, RwLock}};
 
 use crate::asset::asset_types::Asset;
 
 pub mod gltf_importer;
+pub mod image_file_importer;
 pub mod vertex_reconditioner;
 
 pub struct ImporterContext {

@@ -1,6 +1,6 @@
 use std::{collections::HashSet, ffi::OsString, sync::{Arc, RwLock}};
 
-use crate::{asset::{asset_types::{Asset, AssetMetadata, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TextureAsset, TextureFormat}}, importer::{AssetImporter, ImporterContext, vertex_reconditioner::TangentRecalculator}}, renderer::mesh::vertex_types::{VertexBufferOthers, VertexBufferPosition}};
+use crate::{asset::{asset_types::{Asset, AssetMetadata, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat}}, importer::{AssetImporter, ImporterContext, vertex_reconditioner::TangentRecalculator}}, renderer::mesh::vertex_types::{VertexBufferOthers, VertexBufferPosition}};
 
 pub struct GltfImporter {
     // Guard it by mutex if we want to parallelize it.
@@ -310,12 +310,12 @@ impl GltfImporter {
 
         let asset = TextureAsset {
             format: converted_format,
-            dimension: 2,
+            dimension: D2,
             size: (image.width, image.height, 1),
             sampler: Self::import_from_gltf_sampler(&texture.sampler()),
             // One gltf image can correspond to multiple textures with different sampler.
             // So we must clone its data for safety.
-            texels: image.pixels.clone(),
+            texels: TexelData::Uncompressed(image.pixels.clone().into_boxed_slice()),
         };
 
         Ok(asset)
