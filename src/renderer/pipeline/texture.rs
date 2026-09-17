@@ -58,6 +58,10 @@ impl Texture {
         width: 1, height: 1, depth_or_array_layers: 1
     };
 
+    pub(crate) fn new(texture: wgpu::Texture) -> Self {
+        Self { inner: texture }
+    }
+
     fn load_from_file<P>(
         path: P
     ) -> Result<ImportedTextureDescriptor, TextureImportError> where P: AsRef<std::path::Path> {

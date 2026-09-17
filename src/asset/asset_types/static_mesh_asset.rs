@@ -25,7 +25,6 @@ impl ConcreteAssetType for StaticMeshAsset {
 }
 
 impl StaticMeshAsset {
-    
 }
 
 impl VertexReconditionable for StaticMeshAsset {

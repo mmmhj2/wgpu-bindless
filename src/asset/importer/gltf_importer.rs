@@ -311,11 +311,13 @@ impl GltfImporter {
         let asset = TextureAsset {
             format: converted_format,
             dimension: D2,
-            size: (image.width, image.height, 1),
+            width: image.width.try_into().expect("width of the texture should be at least 1"),
+            height: Some(image.height.try_into().expect("height of the texture should be at least 1")),
+            depth_or_array_slice: None,
             sampler: Self::import_from_gltf_sampler(&texture.sampler()),
             // One gltf image can correspond to multiple textures with different sampler.
             // So we must clone its data for safety.
-            texels: TexelData::Uncompressed(image.pixels.clone().into_boxed_slice()),
+            texels: TexelData::Plain(image.pixels.clone().into_boxed_slice()),
         };
 
         Ok(asset)

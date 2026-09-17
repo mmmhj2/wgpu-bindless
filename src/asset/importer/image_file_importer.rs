@@ -89,9 +89,11 @@ impl ImageFileImporter {
             TextureAsset {
                 format,
                 dimension: TextureDimension::D2,
-                size: (width, height, 1),
+                width: width.try_into().expect("width of the texture should be at least 1"),
+                height: Some(height.try_into().expect("height of the texture should be at least 1")),
+                depth_or_array_slice: None,
                 sampler: Default::default(),
-                texels: TexelData::Uncompressed(data)
+                texels: TexelData::Plain(data)
             }
         );
     }

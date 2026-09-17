@@ -20,7 +20,12 @@ pub enum AssetData {
     TextureAssetType(TextureAsset)
 }
 
-trait ConcreteAssetType: Serialize + DeserializeOwned {
+pub trait ConcreteAssetType: Serialize + DeserializeOwned {
+}
+
+pub trait GpuAssetType: ConcreteAssetType {
+    type GpuObjectType;
+    fn upload(&self, name: &str, device: &wgpu::Device, queue: &wgpu::Queue) -> Self::GpuObjectType;
 }
 
 #[derive(Serialize, Deserialize, Debug)]

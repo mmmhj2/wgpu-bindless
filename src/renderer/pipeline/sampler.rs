@@ -18,7 +18,13 @@ pub struct SamplerDescription {
 
 impl Into<SamplerDescription> for Sampler {
     fn into(self) -> SamplerDescription {
-        todo!()
+        SamplerDescription {
+            address_mode: [self.address_mode.0.into(), self.address_mode.1.into(), self.address_mode.2.into() ],
+            mag_filter: self.filter.0.into(),
+            min_filter: self.filter.1.into(),
+            mipmap_filter: self.filter.2.into(),
+            ..Default::default()
+        }
     }
 }
 

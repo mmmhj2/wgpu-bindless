@@ -4,10 +4,8 @@ use wgpu::{BufferDescriptor, BufferUsages};
 use crate::{
     asset::importer::vertex_reconditioner::{
         TangentRecalculator, VertexReconditionable, VertexReconditionableAttributeWrite
-    },
-    renderer::{
-        device_interface::DeviceInterface,
-        mesh::{
+    }, renderer::{
+        device_interface::DeviceInterface, mesh::{
             drawable_mesh_traits::{
                 DrawableMesh,
                 ImmediateDrawableMesh
@@ -17,10 +15,8 @@ use crate::{
                 VertexBufferOthers,
                 VertexBufferPosition
             }
-        },
-        pipeline::{
-            bindless_resource_manager::BindlessResourceManager,
-            pbr_material::PBRMaterial
+        }, pipeline::{
+            bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription
         }
     }
 };
@@ -46,15 +42,18 @@ impl ImmediateMesh {
 }
 
 impl ImmediateMeshBuilder {
-    pub fn new(di: &DeviceInterface, mgr: &mut BindlessResourceManager) -> Self {
-        let material = PBRMaterial::create_from_views(
-            di.get_device(),
-            mgr,
-            None,
-            None,
-            None
-        ).expect("Failed to create material for immediate mesh");
-
+    pub fn new(di: &DeviceInterface, mgr: &mut BindlessResourceManager, material: Option<PBRMaterial>) -> Self {
+        let material = if let Some(m) = material {
+            m
+        } else {
+            PBRMaterial::create_from_views(
+                di.get_device(),
+                mgr,
+                None,
+                None,
+                None
+            ).expect("Failed to create material for immediate mesh")
+        };
         Self {
             state: VertexBufferOthers::zeroed(),
             position: Vec::new(),
