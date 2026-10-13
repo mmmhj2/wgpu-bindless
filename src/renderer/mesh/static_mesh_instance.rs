@@ -1,7 +1,7 @@
 use std::{collections::VecDeque, num::NonZero, sync::Arc};
 use crate::{
     asset::{asset_manager::AssetManager, asset_types::AssetData, importer::gltf_importer::GltfImporter},
-    renderer::{device_interface::DeviceInterface, mesh::{Mesh, drawable_mesh_traits::DrawableMesh, mesh_manager::MeshManager, static_mesh::{StaticMesh, StaticMeshBuilder}}, pipeline::{pbr_material::PBRMaterial, pipeline_state::PipelineStates}}
+    renderer::{device_interface::DeviceInterface, mesh::{Mesh, drawable_mesh_traits::DrawableMesh, mesh_manager::MeshManager, static_mesh::StaticMesh}, pipeline::{pbr_material::PBRMaterial, pipeline_state::PipelineStates}}
 };
 
 /// Instances of instanced mesh.
@@ -80,6 +80,8 @@ impl StaticMeshInstance {
     /// 
     /// All primitives will be processed, each one corresponding to an new instance.
     /// Model matrix of the mesh will contain undefined contents.
+    /// 
+    /// TODO: Remove it entirely and use asset registry to resolve and upload the mesh.
     pub fn create_from_gltf_mesh(
         di: &DeviceInterface,
         pipeline_states: &mut PipelineStates,
@@ -108,7 +110,7 @@ impl StaticMeshInstance {
 
             ret.push(
                 Self{
-                    mesh: StaticMeshBuilder::new(di, pipeline_states.get_bindless_resource_manager_mut(), mesh_asset, assets).recondition_and_commit(di).into(),
+                    mesh: pipeline_states.get_asset_registry_mut().static_mesh_from_asset(di, assets, &name, mesh_asset),
                     model_matrix: buffer,
                     model_matrix_bg: bg
                 }
