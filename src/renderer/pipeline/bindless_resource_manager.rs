@@ -2,9 +2,13 @@ use std::{collections::{HashMap, hash_map::Entry}, num::NonZeroU32};
 use wgpu::TexelCopyBufferInfo;
 
 use crate::{
+    asset::asset_types::{
+        GpuAssetType,
+        texture_asset::{TextureAsset, TextureDimension, TextureFormat}
+    },
     renderer::{
         device_interface::DeviceInterface,
-        pipeline::{sampler::SamplerDescription, texture::Texture}
+        pipeline::sampler::SamplerDescription
     },
     util::resource_allocator::{
         LinearResourceAllocator, LinearResourceAllocatorError
@@ -66,41 +70,32 @@ impl BindlessResourceManager {
 
         ret.default_sampler_idx = ret.push_sampler(d.get_device(), Default::default()).expect("Failed to create default sampler.");
 
-        let white_texture = Texture::create_from_single_color_texel(
-            d,
-            &[255, 255, 255, 255],
-            wgpu::TextureDimension::D2,
-            wgpu::TextureFormat::Rgba8Unorm,
-            wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-            Some("White texture")
-        );
+        let white_texture = TextureAsset::from_single_color_texel(
+            vec![255u8, 255, 255, 255],
+            TextureFormat::Rgba8Unorm,
+            TextureDimension::D2
+        ).upload("White texture", d.get_device(), d.get_queue());
         ret.white_txv_idx = ret.push_texture(
-            wgpu::Texture::from(white_texture).create_view(&Default::default())
+            white_texture.create_view(&Default::default())
         ).expect("Failed to create white texture");
 
-        let default_normal_texture = Texture::create_from_single_color_texel(
-            d,
+        let default_normal_texture = TextureAsset::from_single_color_texel(
             // Texels are interpreted as signed 8-bit integers.
-            &[128, 128, 255, 0],
-            wgpu::TextureDimension::D2,
-            wgpu::TextureFormat::Rgba8Unorm,
-            wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-            Some("Default normal texture")
-        );
+            vec![128u8, 128, 255, 0],
+            TextureFormat::Rgba8Unorm,
+            TextureDimension::D2
+        ).upload("Default normal texture", d.get_device(), d.get_queue());
         ret.default_bump_txv_idx = ret.push_texture(
-            wgpu::Texture::from(default_normal_texture).create_view(&Default::default())
+            default_normal_texture.create_view(&Default::default())
         ).expect("Failed to create default normal texture");
 
-        let default_mrao_texture = Texture::create_from_single_color_texel(
-            d,
-            &[0, 0, 0, 255],
-            wgpu::TextureDimension::D2,
-            wgpu::TextureFormat::Rgba8Unorm,
-            wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-            Some("Default MRAO texture")
-        );
+        let default_mrao_texture = TextureAsset::from_single_color_texel(
+            vec![0u8, 0, 0, 255],
+            TextureFormat::Rgba8Unorm,
+            TextureDimension::D2
+        ).upload("Default MRAO texture", d.get_device(), d.get_queue());
         ret.default_mrao_txv_idx = ret.push_texture(
-            wgpu::Texture::from(default_mrao_texture).create_view(&Default::default())
+            default_mrao_texture.create_view(&Default::default())
         ).expect("Failed to create default MRAO texture");
 
         return ret;
