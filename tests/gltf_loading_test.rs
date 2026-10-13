@@ -18,12 +18,12 @@ mod test {
             let mut pipeline = PipelineStates::prepare_default_pipelines(&device, device.get_default_texture_format());
 
             let asset_manager = AssetManager::new();
-            asset_manager.import(GltfImporter::new("resource/test_two_cubes.glb"));
+            asset_manager.import(GltfImporter::new("resource/test_two_cubes.glb")).expect("import should succeed");
 
             // The scene graph is baked into a `SceneAsset` at import time, so
             // the glTF file is parsed exactly once.
             let gltf_models = {
-                let scene_name = GltfImporter::scene_subasset_name(std::path::Path::new("resource/test_two_cubes.glb"), 0);
+                let scene_name = GltfImporter::scene_subasset_name(std::path::Path::new("resource/test_two_cubes.glb"), 0).expect("scene name should resolve");
                 let asset = asset_manager.get_asset(&scene_name).expect("gltf scene asset should be present");
                 let asset = asset.read().expect("failed to read gltf scene asset");
                 if let AssetData::SceneAssetType(scene) = asset.get_data() {

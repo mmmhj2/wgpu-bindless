@@ -9,7 +9,7 @@ use rust_renderer::asset::{asset_manager::AssetManager, asset_types::{Asset, Ass
         let test_filename: PathBuf;
         {
             let asset_manager = AssetManager::new();
-            asset_manager.import(GltfImporter::new("resource/test_two_cubes.glb"));
+            asset_manager.import(GltfImporter::new("resource/test_two_cubes.glb")).expect("import should succeed");
             asset_manager.save_to_disk().unwrap();
             {
                 let db = asset_manager.get_database();
@@ -18,16 +18,16 @@ use rust_renderer::asset::{asset_manager::AssetManager, asset_types::{Asset, Ass
             }
         }
 
-        Asset::try_load_from_disk(&test_filename).unwrap();
+        Asset::load_from_disk(&test_filename).unwrap();
     }
 
     #[test]
     fn import_gltf_scene_test() {
         let gltf_path = std::path::Path::new("resource/test_two_cubes.glb");
         let asset_manager = AssetManager::new();
-        asset_manager.import(GltfImporter::new(gltf_path));
+        asset_manager.import(GltfImporter::new(gltf_path)).expect("import should succeed");
 
-        let scene_name = GltfImporter::scene_subasset_name(gltf_path, 0);
+        let scene_name = GltfImporter::scene_subasset_name(gltf_path, 0).expect("scene name should resolve");
         let asset = asset_manager.get_asset(&scene_name).expect("scene asset should be present");
         let asset = asset.read().unwrap();
         match asset.get_data() {
@@ -47,7 +47,7 @@ use rust_renderer::asset::{asset_manager::AssetManager, asset_types::{Asset, Ass
         let test_filename: PathBuf;
         {
             let asset_manager = AssetManager::new();
-            asset_manager.import(ImageFileImporter::new("resource/skybox/back.jpg", ColorSpace::Srgb));
+            asset_manager.import(ImageFileImporter::new("resource/skybox/back.jpg", ColorSpace::Srgb)).expect("import should succeed");
             asset_manager.save_to_disk().unwrap();
             {
                 let db = asset_manager.get_database();
@@ -56,7 +56,7 @@ use rust_renderer::asset::{asset_manager::AssetManager, asset_types::{Asset, Ass
             }
         }
 
-        Asset::try_load_from_disk(&test_filename).unwrap();
+        Asset::load_from_disk(&test_filename).unwrap();
     }
 
     #[test]
@@ -75,7 +75,7 @@ use rust_renderer::asset::{asset_manager::AssetManager, asset_types::{Asset, Ass
                     "resource/skybox/back.jpg"
                 ],
                 ColorSpace::Srgb
-            ));
+            )).expect("import should succeed");
             asset_manager.save_to_disk().unwrap();
             {
                 let db = asset_manager.get_database();
@@ -84,7 +84,7 @@ use rust_renderer::asset::{asset_manager::AssetManager, asset_types::{Asset, Ass
             }
         }
 
-        Asset::try_load_from_disk(&test_filename).unwrap();
+        Asset::load_from_disk(&test_filename).unwrap();
     }
 
     #[test]

@@ -33,7 +33,7 @@ mod test {
         // First manager imports, which persists the assets to the workspace.
         {
             let manager = AssetManager::new();
-            manager.import(GltfImporter::new(&glb));
+            manager.import(GltfImporter::new(&glb)).expect("import should succeed");
         }
 
         // A fresh manager loads everything from disk without importing.
@@ -42,7 +42,7 @@ mod test {
         assert!(report.loaded > 0, "load_directory should find persisted assets");
         assert_eq!(report.reimported, 0, "load_directory never imports");
 
-        let scene_name = GltfImporter::scene_subasset_name(&glb, 0);
+        let scene_name = GltfImporter::scene_subasset_name(&glb, 0).expect("scene name should resolve");
         assert!(loader.get_asset(&scene_name).is_some(), "scene asset should be loaded from disk");
     }
 
@@ -54,12 +54,12 @@ mod test {
 
         let mut entry = ManifestEntry { job: ImportJob::gltf(&glb), outputs: Vec::new() };
 
-        assert_eq!(manager.ensure_entry(&mut entry), EnsureOutcome::Reimported);
+        assert_eq!(manager.ensure_entry(&mut entry).expect("ensure should succeed"), EnsureOutcome::Reimported);
         assert!(!entry.outputs.is_empty(), "re-import should record outputs");
         assert!(entry.outputs.iter().all(|p| p.exists()));
 
         let outputs = entry.outputs.clone();
-        assert_eq!(manager.ensure_entry(&mut entry), EnsureOutcome::Fresh);
+        assert_eq!(manager.ensure_entry(&mut entry).expect("ensure should succeed"), EnsureOutcome::Fresh);
         assert_eq!(entry.outputs, outputs, "a fresh entry keeps the same outputs");
     }
 
@@ -70,10 +70,10 @@ mod test {
         let manager = AssetManager::new();
 
         let mut entry = ManifestEntry { job: ImportJob::gltf(&glb), outputs: Vec::new() };
-        assert_eq!(manager.ensure_entry(&mut entry), EnsureOutcome::Reimported);
+        assert_eq!(manager.ensure_entry(&mut entry).expect("ensure should succeed"), EnsureOutcome::Reimported);
 
         std::fs::remove_file(&entry.outputs[0]).unwrap();
-        assert_eq!(manager.ensure_entry(&mut entry), EnsureOutcome::Reimported);
+        assert_eq!(manager.ensure_entry(&mut entry).expect("ensure should succeed"), EnsureOutcome::Reimported);
         assert!(entry.outputs.iter().all(|p| p.exists()), "missing output should be regenerated");
     }
 
@@ -85,18 +85,18 @@ mod test {
 
         ImportManifest {
             entries: vec![ManifestEntry { job: ImportJob::gltf(&glb), outputs: Vec::new() }],
-        }.save(&manifest_path);
+        }.save(&manifest_path).expect("manifest save should succeed");
 
         // First run re-imports and writes the produced outputs back to disk.
-        let first = AssetManager::new().import_manifest(&manifest_path);
+        let first = AssetManager::new().import_manifest(&manifest_path).expect("manifest import should succeed");
         assert!(first.reimported > 0);
         assert_eq!(first.loaded, 0);
 
-        let reloaded = ImportManifest::load(&manifest_path);
+        let reloaded = ImportManifest::load(&manifest_path).expect("manifest load should succeed");
         assert!(!reloaded.entries[0].outputs.is_empty(), "manifest should persist outputs");
 
         // Second run finds everything fresh and only loads.
-        let second = AssetManager::new().import_manifest(&manifest_path);
+        let second = AssetManager::new().import_manifest(&manifest_path).expect("manifest import should succeed");
         assert_eq!(second.reimported, 0);
         assert!(second.loaded > 0);
     }
@@ -107,7 +107,7 @@ mod test {
         let glb = dir.join("test_two_cubes.glb");
         {
             let manager = AssetManager::new();
-            manager.import(GltfImporter::new(&glb));
+            manager.import(GltfImporter::new(&glb)).expect("import should succeed");
         }
 
         // A leftover pre-container (or otherwise corrupt) asset must not abort the scan.
@@ -123,7 +123,7 @@ mod test {
     fn manifest_load_of_missing_file_is_empty() {
         let path = std::env::temp_dir().join("rust_renderer_manifest_does_not_exist.ff");
         std::fs::remove_file(&path).ok();
-        let manifest = ImportManifest::load(Path::new(&path));
+        let manifest = ImportManifest::load(Path::new(&path)).expect("loading a missing manifest should yield an empty one");
         assert!(manifest.entries.is_empty());
     }
 }

@@ -21,17 +21,17 @@ fn main() {
 
     // Seed the manifest on first run; afterwards it just records outputs.
     let manifest_path = Path::new(MANIFEST_PATH);
-    let mut manifest = ImportManifest::load(manifest_path);
+    let mut manifest = ImportManifest::load(manifest_path).expect("failed to load import manifest");
     if manifest.entries.is_empty() {
         manifest.entries = vec![
             ManifestEntry { job: ImportJob::gltf(GLTF_PATH), outputs: Vec::new() },
         ];
-        manifest.save(manifest_path);
+        manifest.save(manifest_path).expect("failed to save import manifest");
     }
 
     // `import_manifest` loads fresh assets and re-imports stale/missing ones.
     let manager = AssetManager::new();
-    let report = manager.import_manifest(manifest_path);
+    let report = manager.import_manifest(manifest_path).expect("failed to import manifest");
     println!("manifest: loaded {} assets, re-imported {}", report.loaded, report.reimported);
 
     // Independently of any manifest, every serialized asset can be scanned and

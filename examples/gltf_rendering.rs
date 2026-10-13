@@ -36,7 +36,7 @@ impl RendererState for State {
         // source file or the importer changed.
         let asset_manager = AssetManager::new();
         let manifest_path = Path::new("resource/import_gltf_manifest.ff");
-        let mut manifest = ImportManifest::load(manifest_path);
+        let mut manifest = ImportManifest::load(manifest_path).expect("failed to load import manifest");
         if manifest.entries.is_empty() {
             manifest.entries = vec![
                 ManifestEntry { job: ImportJob::gltf(GLTF_PATH), outputs: Vec::new() },
@@ -56,12 +56,12 @@ impl RendererState for State {
                     outputs: Vec::new(),
                 },
             ];
-            manifest.save(manifest_path);
+            manifest.save(manifest_path).expect("failed to save import manifest");
         }
-        asset_manager.import_manifest(manifest_path);
+        asset_manager.import_manifest(manifest_path).expect("failed to import manifest");
 
         let gltf_models = {
-            let scene_name = GltfImporter::scene_subasset_name(Path::new(GLTF_PATH), 0);
+            let scene_name = GltfImporter::scene_subasset_name(Path::new(GLTF_PATH), 0).expect("failed to resolve scene subasset name");
             let asset = asset_manager.get_asset(&scene_name).expect("gltf scene asset should be present");
             let asset = asset.read().expect("failed to read gltf scene asset");
             if let SceneAssetType(scene) = asset.get_data() {

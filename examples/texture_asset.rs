@@ -20,14 +20,14 @@ impl RendererState for State {
         // once and reused from disk afterwards.
         let asset_manager = AssetManager::new();
         let manifest_path = Path::new("resource/import_manifest_texture.ff");
-        let mut manifest = ImportManifest::load(manifest_path);
+        let mut manifest = ImportManifest::load(manifest_path).expect("failed to load import manifest");
         if manifest.entries.is_empty() {
             manifest.entries = vec![
                 ManifestEntry { job: ImportJob::image("resource/skybox/back.jpg", ColorSpace::Srgb), outputs: Vec::new() },
             ];
-            manifest.save(manifest_path);
+            manifest.save(manifest_path).expect("failed to save import manifest");
         }
-        asset_manager.import_manifest(manifest_path);
+        asset_manager.import_manifest(manifest_path).expect("failed to import manifest");
 
         let texture_view;
         let sampler;

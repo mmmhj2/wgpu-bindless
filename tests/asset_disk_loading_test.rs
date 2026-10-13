@@ -20,7 +20,7 @@ mod test {
     #[test]
     fn imported_assets_are_persisted_as_zip_containers_with_provenance() {
         let manager = AssetManager::new();
-        manager.import(GltfImporter::new(GLTF_PATH));
+        manager.import(GltfImporter::new(GLTF_PATH)).expect("import should succeed");
 
         let (name, path, provenance) = {
             let database = manager.get_database();
@@ -46,19 +46,19 @@ mod test {
         assert!(provenance.is_fresh(), "an unchanged source should be fresh");
 
         // `peek` reads only metadata; the payload is never opened.
-        let peeked = AssetMetadata::peek(&path);
+        let peeked = AssetMetadata::peek(&path).expect("metadata should peek");
         assert_eq!(peeked.asset_name, name);
         assert!(peeked.provenance.is_some(), "peeked metadata should carry provenance");
 
         // The full container round-trips.
-        let loaded = Asset::try_load_from_disk(&path).expect("asset should load from its container");
+        let loaded = Asset::load_from_disk(&path).expect("asset should load from its container");
         assert_eq!(loaded.metadata().asset_name, name);
     }
 
     #[test]
     fn image_importer_records_its_own_identity() {
         let manager = AssetManager::new();
-        manager.import(ImageFileImporter::new(IMAGE_PATH, ColorSpace::Srgb));
+        manager.import(ImageFileImporter::new(IMAGE_PATH, ColorSpace::Srgb)).expect("import should succeed");
 
         let database = manager.get_database();
         let asset = database.values().next().expect("one texture asset should be imported").read().unwrap();
@@ -77,7 +77,7 @@ mod test {
         let path: PathBuf = dir.join("source.bin");
 
         std::fs::write(&path, b"hello world").unwrap();
-        let fingerprint = SourceFingerprint::of(&path);
+        let fingerprint = SourceFingerprint::of(&path).expect("fingerprint should succeed");
         assert_eq!(fingerprint.size, 11);
         assert!(fingerprint.size_matches());
         assert!(fingerprint.matches());
