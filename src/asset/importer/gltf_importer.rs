@@ -1,6 +1,35 @@
-use std::{collections::{HashSet, VecDeque}, ffi::OsString, sync::{Arc, RwLock}};
+use std::{collections::{HashSet, VecDeque}, ffi::OsString, path::{Path, PathBuf}, sync::{Arc, RwLock}};
 
-use crate::asset::{asset_types::{Asset, AssetMetadata, scene_asset::{SceneAsset, SceneMeshInstanceAsset}, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat}, vertex::{VertexBufferOthers, VertexBufferPosition}}, importer::{AssetImporter, vertex_reconditioner::TangentRecalculator}};
+use crate::asset::{asset_types::{Asset, AssetMetadata, scene_asset::{SceneAsset, SceneMeshInstanceAsset}, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat}, vertex::{VertexBufferOthers, VertexBufferPosition}}, error::ImportError, importer::{AssetImporter, vertex_reconditioner::{ReconditionerError, TangentRecalculator}}};
+
+/// Errors produced while importing a glTF document.
+#[derive(Debug, thiserror::Error)]
+pub enum GltfImportError {
+    #[error("glTF source '{0}' is not a file")]
+    SourceNotAFile(PathBuf),
+
+    #[error("cannot read glTF file '{path}'")]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: gltf::Error,
+    },
+
+    #[error("generated subresource name '{0}' is invalid.")]
+    InvalidSubresourceName(PathBuf),
+
+    #[error("gltf index {0} is out of range.")]
+    IndexOutOfRange(usize),
+
+    #[error("unsupported glTF texture format {0:?}")]
+    UnsupportedTextureFormat(gltf::image::Format),
+
+    #[error("texture has a zero dimension")]
+    ZeroDimension,
+
+    #[error("failed to recondition vertices")]
+    ReconditionFailed(#[from] ReconditionerError),
+}
 
 pub struct GltfImporter {
     // Guard it by mutex if we want to parallelize it.
@@ -13,23 +42,27 @@ impl AssetImporter for GltfImporter {
     const IMPORTER_ID: &'static str = "gltf";
     const IMPORTER_VERSION: u32 = 1;
 
-    fn import(mut self, context: &super::ImporterContext) {
-        assert!(self.path.is_file());
+    fn import(mut self, context: &super::ImporterContext) -> Result<(), ImportError> {
+        if !self.path.is_file() {
+            return Err(Box::new(GltfImportError::SourceNotAFile(self.path.to_path_buf())));
+        }
         context.record_source(&self.path);
 
         // Clone the path so borrowing it does not conflict with `&mut self` passed below.
         let source_path = self.path.clone();
         let path = source_path.as_ref();
-        let (document, buffers, textures) = gltf::import(path).expect("Failed to open gltf file.");
+        let (document, buffers, textures) = gltf::import(path)
+            .map_err(|source| GltfImportError::Read { path: path.to_path_buf(), source })?;
 
         for mesh in document.meshes() {
             log::info!("Found mesh {} with {} primitives, importing...", mesh.index(), mesh.primitives().len());
 
             for primitive in mesh.primitives() {
                 let asset_type = SubAssetType::Primitive { mesh: mesh.index(), primitive: primitive.index() };
-                let subasset_path = Self::generate_subasset_filename(path, asset_type);
-                let subasset_name = Self::generate_subasset_name(path, asset_type).into_string().expect("asset name should contain UTF-8 chars only.");
-                let imported_mesh = Self::import_from_gltf_primitive(&mut self, &primitive, &buffers);
+                let subasset_path = Self::generate_subasset_filename(path, asset_type)?;
+                let subasset_name = Self::generate_subasset_name(path, asset_type)?.into_string()
+                    .map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
+                let imported_mesh = Self::import_from_gltf_primitive(&mut self, &primitive, &buffers)?;
                 let imported_asset = Arc::from(
                     RwLock::from(Asset::new(
                         AssetMetadata::new(
@@ -39,7 +72,7 @@ impl AssetImporter for GltfImporter {
                         crate::asset::asset_types::AssetData::StaticMeshAssetType(imported_mesh)
                     ))
                 );
-                context.asset_batch.write().expect("cannot acquire write lock for asset database.").insert(subasset_name, imported_asset);
+                context.asset_batch.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(subasset_name, imported_asset);
             }
         }
 
@@ -47,10 +80,11 @@ impl AssetImporter for GltfImporter {
 
         for texture in document.textures() {
             let asset_type = SubAssetType::Texture(texture.index());
-            let subasset_path = Self::generate_subasset_filename(path, asset_type);
-            let subasset_name = Self::generate_subasset_name(path, asset_type).into_string().expect("asset name should contain UTF-8 chars only.");
+            let subasset_path = Self::generate_subasset_filename(path, asset_type)?;
+            let subasset_name = Self::generate_subasset_name(path, asset_type)?.into_string()
+                .map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
             log::info!("Found texture {}.", subasset_name);
-            let imported_texture = Self::import_from_gltf_texture(&texture, &textures, self.color_textures.contains(&subasset_name)).expect("failed to import texture asset");
+            let imported_texture = Self::import_from_gltf_texture(&texture, &textures, self.color_textures.contains(&subasset_name))?;
             let imported_asset = Arc::from(
                 RwLock::from(Asset::new(
                     AssetMetadata::new(
@@ -60,15 +94,16 @@ impl AssetImporter for GltfImporter {
                     crate::asset::asset_types::AssetData::TextureAssetType(imported_texture)
                 ))
             );
-            context.asset_batch.write().expect("cannot acquire write lock for asset database.").insert(subasset_name, imported_asset);
+            context.asset_batch.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(subasset_name, imported_asset);
         }
 
         for scene in document.scenes() {
             let asset_type = SubAssetType::Scene(scene.index());
-            let subasset_path = Self::generate_subasset_filename(path, asset_type);
-            let subasset_name = Self::generate_subasset_name(path, asset_type).into_string().expect("asset name should contain UTF-8 chars only.");
+            let subasset_path = Self::generate_subasset_filename(path, asset_type)?;
+            let subasset_name = Self::generate_subasset_name(path, asset_type)?.into_string()
+                .map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
             log::info!("Found scene {}.", subasset_name);
-            let imported_scene = Self::import_from_gltf_scene(path, &document, &scene);
+            let imported_scene = Self::import_from_gltf_scene(path, &document, &scene)?;
             let imported_asset = Arc::from(
                 RwLock::from(Asset::new(
                     AssetMetadata::new(
@@ -78,8 +113,10 @@ impl AssetImporter for GltfImporter {
                     crate::asset::asset_types::AssetData::SceneAssetType(imported_scene)
                 ))
             );
-            context.asset_batch.write().expect("cannot acquire write lock for asset database.").insert(subasset_name, imported_asset);
+            context.asset_batch.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(subasset_name, imported_asset);
         }
+
+        Ok(())
     }
 }
 
@@ -118,13 +155,11 @@ impl GltfImporter {
         Self { color_textures: HashSet::new(), path: path.as_ref().into() }
     }
 
-    pub(crate) fn generate_subasset_filename(gltf_file: &std::path::Path, asset_type: SubAssetType) -> std::path::PathBuf {
-        gltf_file.with_file_name(Self::generate_subasset_name(gltf_file, asset_type)).with_added_extension("asset")
+    pub(crate) fn generate_subasset_filename(gltf_file: &Path, asset_type: SubAssetType) -> Result<PathBuf, GltfImportError> {
+        Ok(gltf_file.with_file_name(Self::generate_subasset_name(gltf_file, asset_type)?).with_added_extension("asset"))
     }
 
-    pub(crate) fn generate_subasset_name(gltf_file: &std::path::Path, asset_type: SubAssetType) -> OsString {
-        assert!(gltf_file.is_file());
-
+    pub(crate) fn generate_subasset_name(gltf_file: &Path, asset_type: SubAssetType) -> Result<OsString, GltfImportError> {
         let new_suffix = match asset_type {
             SubAssetType::Texture(index) => format!(".tex_{}", index),
             SubAssetType::Mesh(index) => format!(".mesh_{}", index),
@@ -132,34 +167,38 @@ impl GltfImporter {
             SubAssetType::Scene(index) => format!(".scene_{}", index),
         };
 
-        let mut new_filename = gltf_file.file_name().unwrap().to_os_string();
+        let mut new_filename = gltf_file.file_name()
+            .ok_or_else(|| GltfImportError::InvalidSubresourceName(gltf_file.to_path_buf()))?
+            .to_os_string();
         new_filename.push(new_suffix);
-        return new_filename;
+        Ok(new_filename)
     }
 
-    pub(crate) fn generate_subasset_filename_string(gltf_file: &std::path::Path, asset_type: SubAssetType) -> Option<String> {
-        Some(Self::generate_subasset_filename(gltf_file, asset_type).to_str()?.to_string())
+    pub(crate) fn generate_subasset_filename_string(gltf_file: &Path, asset_type: SubAssetType) -> Option<String> {
+        Some(Self::generate_subasset_filename(gltf_file, asset_type).ok()?.to_str()?.to_string())
     }
 
     /// Resolve the subasset name of a single glTF primitive.
     ///
     /// One mesh may contain several primitives, so both the mesh index and the
     /// primitive index are required to address a primitive uniquely.
-    pub(crate) fn primitive_subasset_name(gltf_file: &std::path::Path, mesh_index: usize, primitive_index: usize) -> String {
-        Self::generate_subasset_name(gltf_file, SubAssetType::Primitive { mesh: mesh_index, primitive: primitive_index })
-            .into_string().expect("asset name should contain UTF-8 chars only")
+    pub(crate) fn primitive_subasset_name(gltf_file: &Path, mesh_index: usize, primitive_index: usize) -> Result<String, GltfImportError> {
+        Self::generate_subasset_name(gltf_file, SubAssetType::Primitive { mesh: mesh_index, primitive: primitive_index })?
+            .into_string()
+            .map_err(|_| GltfImportError::InvalidSubresourceName(gltf_file.to_path_buf()))
     }
 
     /// Resolve the subasset name of a single glTF scene.
-    pub fn scene_subasset_name(gltf_file: &std::path::Path, scene_index: usize) -> String {
-        Self::generate_subasset_name(gltf_file, SubAssetType::Scene(scene_index))
-            .into_string().expect("asset name should contain UTF-8 chars only")
+    pub fn scene_subasset_name(gltf_file: &Path, scene_index: usize) -> Result<String, GltfImportError> {
+        Self::generate_subasset_name(gltf_file, SubAssetType::Scene(scene_index))?
+            .into_string()
+            .map_err(|_| GltfImportError::InvalidSubresourceName(gltf_file.to_path_buf()))
     }
 
     // Primitive importer
     fn construct_position_buffer (
         primitive: &gltf::Primitive,
-        buffers: &Vec<gltf::buffer::Data>
+        buffers: &[gltf::buffer::Data]
     ) -> Vec<VertexBufferPosition> {
         let mut position_buffer: Vec<VertexBufferPosition> = Vec::new();
 
@@ -175,7 +214,7 @@ impl GltfImporter {
 
     fn construct_attribute_buffer (
         primitive: &gltf::Primitive,
-        buffers: &Vec<gltf::buffer::Data>,
+        buffers: &[gltf::buffer::Data],
         vertices: usize
     ) -> (Vec<VertexBufferOthers>, bool) {
         let mut attribute_buffer = Vec::new();
@@ -223,7 +262,7 @@ impl GltfImporter {
 
     fn construct_index_buffer (
         primitive: &gltf::Primitive,
-        buffers: &Vec<gltf::buffer::Data>
+        buffers: &[gltf::buffer::Data]
     ) -> Option<Vec<u32>> {
         let mut indices = Vec::new();
 
@@ -244,10 +283,10 @@ impl GltfImporter {
     /// primitive of every encountered mesh produces one instance, so the
     /// renderer never needs to re-parse the source glTF to walk the hierarchy.
     pub(crate) fn import_from_gltf_scene(
-        gltf_file: &std::path::Path,
+        gltf_file: &Path,
         document: &gltf::Document,
         scene: &gltf::Scene
-    ) -> SceneAsset {
+    ) -> Result<SceneAsset, GltfImportError> {
         let mut instances = Vec::new();
 
         let mut transform_queue = VecDeque::<cgmath::Matrix4<f32>>::new();
@@ -257,16 +296,15 @@ impl GltfImporter {
             transform_queue.push_back(root_node.transform().matrix().into());
             node_queue.push_back(root_node.index());
 
-            while !node_queue.is_empty() {
-                let node_index = node_queue.pop_front().unwrap();
-                let current_transform = transform_queue.pop_front().unwrap();
-                let current_node = document.nodes().nth(node_index).expect("valid node index");
+            while let (Some(node_index), Some(current_transform)) = (node_queue.pop_front(), transform_queue.pop_front()) {
+                let current_node = document.nodes().nth(node_index)
+                    .ok_or(GltfImportError::IndexOutOfRange(node_index))?;
 
                 if let Some(mesh) = current_node.mesh() {
                     for primitive in mesh.primitives() {
                         instances.push(SceneMeshInstanceAsset {
                             world_matrix: *AsRef::<[f32; 16]>::as_ref(&current_transform),
-                            mesh_subasset_name: Self::primitive_subasset_name(gltf_file, mesh.index(), primitive.index()),
+                            mesh_subasset_name: Self::primitive_subasset_name(gltf_file, mesh.index(), primitive.index())?,
                         });
                     }
                 }
@@ -278,17 +316,17 @@ impl GltfImporter {
             }
         }
 
-        SceneAsset { instances }
+        Ok(SceneAsset { instances })
     }
 
     pub(crate) fn import_from_gltf_primitive(
         importer: &mut GltfImporter,
         primitive: &gltf::Primitive,
-        buffers: &Vec<gltf::buffer::Data>
-    ) -> StaticMeshAsset {
+        buffers: &[gltf::buffer::Data]
+    ) -> Result<StaticMeshAsset, GltfImportError> {
         let position_buffer = Self::construct_position_buffer(primitive, buffers);
         let (attribute_buffer, calculate_tangent) = Self::construct_attribute_buffer(primitive, buffers, position_buffer.len());
-        let index_buffer = Self::construct_index_buffer(&primitive, buffers);
+        let index_buffer = Self::construct_index_buffer(primitive, buffers);
         let vertex_draw_count = match index_buffer.as_ref() {
             Some(b) => b.len(),
             None => position_buffer.len()
@@ -313,8 +351,8 @@ impl GltfImporter {
         ret.material.diffuse_texture_name = if let Some(base_color_texture) = pbr_material.base_color_texture() {
             let texture_name = GltfImporter::generate_subasset_name(
                 &importer.path,
-                crate::asset::importer::gltf_importer::SubAssetType::Texture(base_color_texture.texture().index())
-            ).into_string().expect("diffuse texture name should contain UTF-8 chars only");
+                SubAssetType::Texture(base_color_texture.texture().index())
+            )?.into_string().map_err(|_| GltfImportError::InvalidSubresourceName(importer.path.to_path_buf()))?;
             importer.color_textures.insert(texture_name.clone());
             Some(texture_name)
         } else {
@@ -325,8 +363,8 @@ impl GltfImporter {
             Some(
                 GltfImporter::generate_subasset_name(
                     &importer.path,
-                    crate::asset::importer::gltf_importer::SubAssetType::Texture(normal_texture.texture().index())
-                ).into_string().expect("normal texture name should contain UTF-8 chars only")
+                    SubAssetType::Texture(normal_texture.texture().index())
+                )?.into_string().map_err(|_| GltfImportError::InvalidSubresourceName(importer.path.to_path_buf()))?
             )
         } else {
             None
@@ -334,17 +372,17 @@ impl GltfImporter {
 
         let should_have_mrao_texture = primitive.material().pbr_metallic_roughness().metallic_roughness_texture().is_some() || primitive.material().occlusion_texture().is_some();
         if should_have_mrao_texture {
-            todo!("MRAO texture is not implemented.")
+            todo!("Support importing metallic-roughness-occlusion textures. Currently unsupported.");
         };
         
         if calculate_tangent {
-            ret.recalculate_tangents();
+            ret.recalculate_tangents()?;
         }
 
         // Finalize vertex data (e.g. vertex color scaling) for zero-copy upload.
         ret.recondition();
 
-        return ret;
+        Ok(ret)
     }
 
     // Texture importer
@@ -392,8 +430,8 @@ impl GltfImporter {
     ///
     /// The sRGB suffix only applies to 8-bit color textures; all other formats
     /// (including normal maps) are imported as linear formats.
-    fn match_texture_format(f: gltf::image::Format, is_srgb: bool) -> TextureFormat {
-        match f {
+    fn match_texture_format(f: gltf::image::Format, is_srgb: bool) -> Result<TextureFormat, GltfImportError> {
+        Ok(match f {
             gltf::image::Format::R8 => TextureFormat::R8Unorm,
             gltf::image::Format::R8G8 => TextureFormat::Rg8Unorm,
             gltf::image::Format::R8G8B8A8 => if is_srgb {TextureFormat::Rgba8Srgb} else {TextureFormat::Rgba8Unorm},
@@ -401,32 +439,31 @@ impl GltfImporter {
             gltf::image::Format::R16G16 => TextureFormat::Rg16Unorm,
             gltf::image::Format::R16G16B16A16 => TextureFormat::Rgba16Unorm,
             gltf::image::Format::R32G32B32A32FLOAT => TextureFormat::Rgba32Float,
-            _ => panic!("Unsupported GLTF texture format {:?}", f)
-        }
+            _ => return Err(GltfImportError::UnsupportedTextureFormat(f))
+        })
     }
 
     pub fn import_from_gltf_texture(
         texture: &gltf::Texture,
-        images: &Vec<gltf::image::Data>,
+        images: &[gltf::image::Data],
         is_srgb: bool
-    ) -> Result<TextureAsset, ()> {
+    ) -> Result<TextureAsset, GltfImportError> {
         // The format must be read from the image the texture sources from,
         // not from the texture's own index into the image list.
-        let image = &images[texture.source().index()];
-        let converted_format = Self::match_texture_format(image.format, is_srgb);
+        let image = images.get(texture.source().index())
+            .ok_or(GltfImportError::IndexOutOfRange(texture.source().index()))?;
+        let converted_format = Self::match_texture_format(image.format, is_srgb)?;
 
-        let asset = TextureAsset {
+        Ok(TextureAsset {
             format: converted_format,
             dimension: D2,
-            width: image.width.try_into().expect("width of the texture should be at least 1"),
-            height: Some(image.height.try_into().expect("height of the texture should be at least 1")),
+            width: image.width.try_into().map_err(|_| GltfImportError::ZeroDimension)?,
+            height: Some(image.height.try_into().map_err(|_| GltfImportError::ZeroDimension)?),
             depth_or_array_slice: None,
             sampler: Self::import_from_gltf_sampler(&texture.sampler()),
             // One gltf image can correspond to multiple textures with different sampler.
             // So we must clone its data for safety.
             texels: TexelData::Plain(image.pixels.clone().into_boxed_slice()),
-        };
-
-        Ok(asset)
+        })
     }
 }

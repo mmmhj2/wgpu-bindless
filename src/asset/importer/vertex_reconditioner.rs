@@ -1,6 +1,15 @@
 use cgmath::Zero;
     use crate::asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition};
 
+/// Errors from recalculating vertex tangents.
+#[derive(Debug, thiserror::Error)]
+pub enum ReconditionerError {
+    #[error("position buffer has {0} vertices, which is not a multiple of 3")]
+    NonTriangularPositions(usize),
+    #[error("index buffer has {0} indices, which is not a multiple of 3")]
+    NonTriangularIndices(usize),
+}
+
 /// Mark that a mesh could be reconditioned
 pub trait VertexReconditionable {
     fn get_position_buffer(&self) -> &Vec<VertexBufferPosition>;
@@ -60,13 +69,13 @@ pub trait TangentRecalculator : VertexReconditionable + VertexReconditionableAtt
         (sdir, tdir)
     }
 
-    fn recalculate_tangents_unindexed(&self) -> (Vec<cgmath::Vector3<f32>>, Vec<cgmath::Vector3<f32>>){
-        assert!(self.get_index_buffer().is_none());
-
-        assert!(self.get_position_buffer().len() % 3 == 0, "Triangluar mesh is not closed");
-
+    fn recalculate_tangents_unindexed(&self) -> Result<(Vec<cgmath::Vector3<f32>>, Vec<cgmath::Vector3<f32>>), ReconditionerError>{
         let position = self.get_position_buffer();
         let attribute = self.get_attribute_buffer();
+
+        if position.len() % 3 != 0 {
+            return Err(ReconditionerError::NonTriangularPositions(position.len()));
+        }
 
         let mut tangents1 = Vec::new();
         tangents1.resize(position.len(), cgmath::Vector3::<f32>::zero());
@@ -96,13 +105,16 @@ pub trait TangentRecalculator : VertexReconditionable + VertexReconditionableAtt
             tangents2[i] = tdir;
         }
 
-        return (tangents1, tangents2);
+        return Ok((tangents1, tangents2));
     }
 
-    fn recalculate_tangents_indexed(&self)  -> (Vec<cgmath::Vector3<f32>>, Vec<cgmath::Vector3<f32>>) {
-        let index_buffer = self.get_index_buffer().unwrap();
+    fn recalculate_tangents_indexed(&self)  -> Result<(Vec<cgmath::Vector3<f32>>, Vec<cgmath::Vector3<f32>>), ReconditionerError> {
+        let index_buffer = self.get_index_buffer()
+            .ok_or(ReconditionerError::NonTriangularIndices(0))?;
 
-        assert!(index_buffer.len() % 3 == 0, "Triangluar mesh is not closed");
+        if index_buffer.len() % 3 != 0 {
+            return Err(ReconditionerError::NonTriangularIndices(index_buffer.len()));
+        }
 
         let position = self.get_position_buffer();
         let attribute = self.get_attribute_buffer();
@@ -135,7 +147,7 @@ pub trait TangentRecalculator : VertexReconditionable + VertexReconditionableAtt
             tangents2[i] += tdir;
         }
 
-        return (tangents1, tangents2);
+        return Ok((tangents1, tangents2));
     }
 
     /// Clear and recalculate tangents of all vertices.
@@ -143,12 +155,13 @@ pub trait TangentRecalculator : VertexReconditionable + VertexReconditionableAtt
     /// This method relies on correct normals and texcoords of vertices, asserting that the triangles are wound counterclockwise.
     /// Uses the algorithm presented in
     /// https://terathon.com/blog/tangent-space.html
-    fn recalculate_tangents(&mut self) -> () {
+    fn recalculate_tangents(&mut self) -> Result<(), ReconditionerError> {
         let (t1, t2) = match self.get_index_buffer() {
-            Some(_) => self.recalculate_tangents_indexed(),
-            None => self.recalculate_tangents_unindexed()
+            Some(_) => self.recalculate_tangents_indexed()?,
+            None => self.recalculate_tangents_unindexed()?
         };
         self.renormalize_and_write(t1, t2);
+        Ok(())
     }
 }
 
@@ -208,7 +221,7 @@ use crate::asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition
             vi: None
         };
 
-        d.recalculate_tangents();
+        d.recalculate_tangents().expect("tangent recalculation should succeed");
         // Floating point comparison is tricky, but for testing it is good enough.
         assert_eq!(d.va[0].tangent, [0.0, 1.0, 0.0, 1.0]);
         assert_eq!(d.va[1].tangent, [0.0, 1.0, 0.0, 1.0]);
@@ -231,7 +244,7 @@ use crate::asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition
             vi: Some(vec![0, 1, 2])
         };
 
-        d.recalculate_tangents();
+        d.recalculate_tangents().expect("tangent recalculation should succeed");
         assert_eq!(d.va[0].tangent, [0.0, 1.0, 0.0, 1.0]);
         assert_eq!(d.va[1].tangent, [0.0, 1.0, 0.0, 1.0]);
         assert_eq!(d.va[2].tangent, [0.0, 1.0, 0.0, 1.0]);
