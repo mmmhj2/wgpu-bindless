@@ -2,6 +2,8 @@ use std::{fs::File, io::Read, path::Path, time::{SystemTime, UNIX_EPOCH}};
 
 use serde::{Deserialize, Serialize};
 
+use crate::asset::error::AssetIoError;
+
 /// A content fingerprint of a single source file used to produce an asset.
 ///
 /// The file size is stored as a cheap fast-path check and the BLAKE3 hash is
@@ -16,30 +18,30 @@ pub struct SourceFingerprint {
 
 impl SourceFingerprint {
     /// Compute the fingerprint of a file on disk.
-    pub fn of(path: impl AsRef<Path>) -> Self {
+    pub fn of(path: impl AsRef<Path>) -> Result<Self, AssetIoError> {
         let path = path.as_ref();
         let metadata = std::fs::metadata(path)
-            .unwrap_or_else(|e| panic!("cannot stat source file '{}' for fingerprinting: {e}", path.display()));
+            .map_err(|source| AssetIoError::Source { path: path.to_path_buf(), source })?;
 
         let mut hasher = blake3::Hasher::new();
         let mut file = File::open(path)
-            .unwrap_or_else(|e| panic!("cannot open source file '{}' for fingerprinting: {e}", path.display()));
+            .map_err(|source| AssetIoError::Source { path: path.to_path_buf(), source })?;
 
         let mut buffer = [0u8; 64 * 1024];
         loop {
             let read = file.read(&mut buffer)
-                .unwrap_or_else(|e| panic!("failed to read source file '{}' while hashing: {e}", path.display()));
+                .map_err(|source| AssetIoError::Source { path: path.to_path_buf(), source })?;
             if read == 0 {
                 break;
             }
             hasher.update(&buffer[..read]);
         }
 
-        Self {
+        Ok(Self {
             path: path.to_path_buf(),
             size: metadata.len(),
             hash: *hasher.finalize().as_bytes(),
-        }
+        })
     }
 
     pub fn size_matches(&self) -> bool {
@@ -50,7 +52,7 @@ impl SourceFingerprint {
         if !self.size_matches() {
             return false;
         }
-        Self::of(&self.path).hash == self.hash
+        Self::of(&self.path).map(|fingerprint| fingerprint.hash == self.hash).unwrap_or(false)
     }
 }
 
@@ -83,7 +85,9 @@ impl ImportProvenance {
 }
 
 /// Fingerprint a batch of source paths.
-pub fn fingerprint_all(paths: impl IntoIterator<Item = std::path::PathBuf>) -> Vec<SourceFingerprint> {
+pub fn fingerprint_all(
+    paths: impl IntoIterator<Item = std::path::PathBuf>,
+) -> Result<Vec<SourceFingerprint>, AssetIoError> {
     paths.into_iter().map(SourceFingerprint::of).collect()
 }
 

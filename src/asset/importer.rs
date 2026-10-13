@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::{Path, PathBuf}, sync::{Arc, RwLock}};
 
-use crate::asset::asset_types::Asset;
+use crate::asset::{asset_types::Asset, error::ImportError};
 
 pub mod gltf_importer;
 pub mod image_file_importer;
@@ -26,12 +26,16 @@ impl ImporterContext {
     /// Register a source file that this import read from.
     pub fn record_source(&self, path: impl AsRef<Path>) {
         self.recorded_sources.write()
-            .expect("failed to acquire write lock for recorded sources")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(path.as_ref().to_path_buf());
     }
     /// Take the recorded source paths, leaving the context empty.
     pub fn take_sources(&mut self) -> Vec<PathBuf> {
-        std::mem::take(self.recorded_sources.write().expect("failed to acquire write lock for recorded sources").as_mut())
+        std::mem::take(
+            self.recorded_sources.write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_mut(),
+        )
     }
 }
 
@@ -51,5 +55,5 @@ pub trait AssetImporter {
     /// loader re-imports existing assets.
     const IMPORTER_VERSION: u32;
 
-    fn import(self, context: &ImporterContext);
+    fn import(self, context: &ImporterContext) -> Result<(), ImportError>;
 }

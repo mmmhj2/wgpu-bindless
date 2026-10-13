@@ -1,11 +1,7 @@
-use std::{collections::HashMap, path::{Path, PathBuf}, sync::{Arc, RwLock, RwLockReadGuard}};
+use std::{collections::HashMap, path::{Path, PathBuf}, sync::{Arc, RwLock}};
 
 use crate::asset::{
-    asset_io_error::AssetIoError,
-    asset_store::{walk_asset_files, EnsureOutcome, ImportJob, ImportManifest, LoadReport, ManifestEntry},
-    asset_types::{self, Asset, AssetMetadata},
-    importer::{gltf_importer::GltfImporter, image_file_importer::{ImageArrayImporter, ImageFileImporter}, AssetImporter, ImporterContext},
-    provenance::{fingerprint_all, now_unix_ms, ImportProvenance},
+    asset_store::{EnsureOutcome, ImportJob, ImportManifest, LoadReport, ManifestEntry, walk_asset_files}, asset_types::{self, Asset, AssetMetadata}, error::{AssetError, AssetIoError}, importer::{AssetImporter, ImporterContext, gltf_importer::GltfImporter, image_file_importer::{ImageArrayImporter, ImageFileImporter}}, provenance::{ImportProvenance, fingerprint_all, now_unix_ms},
 };
 
 pub struct AssetManager {
@@ -20,15 +16,15 @@ impl AssetManager {
     }
 
     /// Import through a concrete importer, stamp provenance, persist, register.
-    pub fn import<T: AssetImporter>(&self, importer: T) {
-        self.run_importer(importer);
+    pub fn import<T: AssetImporter>(&self, importer: T) -> Result<(), AssetError> {
+        self.run_importer(importer).map(|_| ())
     }
 
     /// Shared import path: run the importer, stamp provenance, save every
     /// produced asset to disk, and return the output paths.
-    fn run_importer<T: AssetImporter>(&self, importer: T) -> Vec<PathBuf> {
+    fn run_importer<T: AssetImporter>(&self, importer: T) -> Result<Vec<PathBuf>, AssetError> {
         let mut context = ImporterContext::new();
-        importer.import(&context);
+        importer.import(&context)?;
 
         // Stamp every produced asset with provenance built from the sources the
         // importer recorded, then persist the container so it can be reused.
@@ -36,25 +32,30 @@ impl AssetManager {
             importer_id: T::IMPORTER_ID.to_string(),
             importer_version: T::IMPORTER_VERSION,
             imported_unix_ms: now_unix_ms(),
-            sources: fingerprint_all(context.take_sources()),
+            sources: fingerprint_all(context.take_sources())?,
         };
 
-        let pending_database = context.asset_batch.into_inner().expect("Failed to consume pending asset database.");
+        let pending_database = context.asset_batch.into_inner()
+            .map_err(|_| AssetError::LockPoisoned)?;
         let mut outputs = Vec::with_capacity(pending_database.len());
         for asset in pending_database.values() {
-            let mut asset = asset.write().expect("Failed to acquire write lock for asset.");
+            let mut asset = asset.write().map_err(|_| AssetError::LockPoisoned)?;
             asset.metadata_mut().provenance = Some(provenance.clone());
-            asset.save_to_disk().expect("Failed to save imported asset to disk.");
-            outputs.push(asset.get_asset_file_path().expect("imported asset should have a file path").to_path_buf());
+            asset.save_to_disk()?;
+            outputs.push(
+                asset.get_asset_file_path()
+                    .ok_or_else(|| AssetIoError::MissingFilePath(asset.metadata().asset_name.clone()))?
+                    .to_path_buf(),
+            );
         }
 
-        let mut database = self.asset_database.write().expect("Failed to acquire write lock for asset database");
+        let mut database = self.asset_database.write().map_err(|_| AssetError::LockPoisoned)?;
         database.extend(pending_database);
-        outputs
+        Ok(outputs)
     }
 
     /// Execute an import recipe, registering and persisting all produced assets.
-    pub fn reimport_job(&self, job: ImportJob) -> Vec<PathBuf> {
+    pub fn reimport_job(&self, job: ImportJob) -> Result<Vec<PathBuf>, AssetError> {
         match job {
             ImportJob::Gltf { path } => self.run_importer(GltfImporter::new(path)),
             ImportJob::Image { source, color_space } => self.run_importer(ImageFileImporter::new(source, color_space)),
@@ -63,18 +64,11 @@ impl AssetManager {
     }
 
     /// Load one serialized asset container from disk and register it.
-    pub fn load_asset_file(&self, path: &Path) -> Arc<RwLock<Asset>> {
-        self.try_load_asset_file(path).unwrap_or_else(|e| panic!("{e}"))
-    }
-
-    /// Fallible variant of [`load_asset_file`] for tolerant bulk loading.
-    ///
-    /// [`load_asset_file`]: AssetManager::load_asset_file
-    pub fn try_load_asset_file(&self, path: &Path) -> Result<Arc<RwLock<Asset>>, AssetIoError> {
-        let asset = Asset::try_load_from_disk(path)?;
+    pub fn load_asset_file(&self, path: &Path) -> Result<Arc<RwLock<Asset>>, AssetError> {
+        let asset = Asset::load_from_disk(path)?;
         let name = asset.metadata().asset_name.clone();
         let asset = Arc::new(RwLock::new(asset));
-        self.asset_database.write().expect("Failed to acquire write lock for asset database").insert(name, asset.clone());
+        self.asset_database.write().map_err(|_| AssetError::LockPoisoned)?.insert(name, asset.clone());
         Ok(asset)
     }
 
@@ -85,7 +79,7 @@ impl AssetManager {
     pub fn load_directory(&self, root: &Path) -> LoadReport {
         let mut report = LoadReport::default();
         for path in walk_asset_files(root) {
-            match self.try_load_asset_file(&path) {
+            match self.load_asset_file(&path) {
                 Ok(_) => report.loaded += 1,
                 Err(e) => {
                     log::warn!("skipping unreadable asset '{}': {e}", path.display());
@@ -100,36 +94,36 @@ impl AssetManager {
     ///
     /// Loads the recorded outputs when their provenance matches the recipe and
     /// every source is unchanged; otherwise re-imports the whole job.
-    pub fn ensure_entry(&self, entry: &mut ManifestEntry) -> EnsureOutcome {
+    pub fn ensure_entry(&self, entry: &mut ManifestEntry) -> Result<EnsureOutcome, AssetError> {
         if !entry.outputs.is_empty() && entry.outputs.iter().all(|p| p.exists()) {
-            if let Ok(metadata) = AssetMetadata::try_peek(&entry.outputs[0]) {
+            if let Ok(metadata) = AssetMetadata::peek(&entry.outputs[0]) {
                 if let Some(provenance) = metadata.provenance.as_ref() {
                     if provenance.matches_importer(entry.job.importer_id(), entry.job.importer_version())
                         && provenance.is_fresh()
                     {
                         for path in &entry.outputs {
-                            self.load_asset_file(path);
+                            self.load_asset_file(path)?;
                         }
-                        return EnsureOutcome::Fresh;
+                        return Ok(EnsureOutcome::Fresh);
                     }
                 }
             }
         }
 
-        entry.outputs = self.reimport_job(entry.job.clone());
-        EnsureOutcome::Reimported
+        entry.outputs = self.reimport_job(entry.job.clone())?;
+        Ok(EnsureOutcome::Reimported)
     }
 
     /// Load a manifest and refresh every entry, re-importing missing/stale ones.
     ///
     /// The manifest is written back only when something was re-imported.
-    pub fn import_manifest(&self, manifest_path: &Path) -> LoadReport {
-        let mut manifest = ImportManifest::load(manifest_path);
+    pub fn import_manifest(&self, manifest_path: &Path) -> Result<LoadReport, AssetError> {
+        let mut manifest = ImportManifest::load(manifest_path)?;
         let mut report = LoadReport::default();
         let mut changed = false;
 
         for entry in manifest.entries.iter_mut() {
-            match self.ensure_entry(entry) {
+            match self.ensure_entry(entry)? {
                 EnsureOutcome::Fresh => report.loaded += entry.outputs.len(),
                 EnsureOutcome::Reimported => {
                     report.reimported += entry.outputs.len();
@@ -139,26 +133,26 @@ impl AssetManager {
         }
 
         if changed {
-            manifest.save(manifest_path);
+            manifest.save(manifest_path)?;
         }
-        report
+        Ok(report)
     }
 
-    pub fn save_to_disk(&self) -> std::result::Result<(), ()> {
-        let database = self.asset_database.read().expect("Failed to acquire read lock for asset database");
+    pub fn save_to_disk(&self) -> Result<(), AssetError> {
+        let database = self.asset_database.read().map_err(|_| AssetError::LockPoisoned)?;
         for (_k, v) in database.iter() {
-            let r = v.read().expect("Failed to acquire read lock for asset.");
-            r.save_to_disk().expect("Failed to save asset to disk.");
+            let r = v.read().map_err(|_| AssetError::LockPoisoned)?;
+            r.save_to_disk()?;
         }
         Ok(())
     }
 
     pub fn get_database(&self) -> std::sync::RwLockReadGuard<'_, HashMap<std::string::String, Arc<std::sync::RwLock<asset_types::Asset>>>> {
-        self.asset_database.read().expect("failed to acquire read lock for asset database")
+        self.asset_database.read().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Look up a single asset by its name.
     pub fn get_asset(&self, name: &str) -> Option<Arc<RwLock<Asset>>> {
-        self.asset_database.read().expect("failed to acquire read lock for asset database").get(name).cloned()
+        self.asset_database.read().unwrap_or_else(std::sync::PoisonError::into_inner).get(name).cloned()
     }
 }

@@ -46,7 +46,7 @@ mod test {
         assert_eq!(primitive.mode(), gltf::mesh::Mode::Triangles);
 
         let mut importer = GltfImporter::new("resource/test_two_cubes.glb");
-        let asset = GltfImporter::import_from_gltf_primitive(&mut importer, &primitive, &buffers);
+        let asset = GltfImporter::import_from_gltf_primitive(&mut importer, &primitive, &buffers).expect("primitive import should succeed");
 
         // Four vertices for each face.
         assert_eq!(asset.vp.len(), 4 * 6);

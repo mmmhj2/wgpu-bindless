@@ -2,10 +2,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::asset::importer::{
-    gltf_importer::GltfImporter,
-    image_file_importer::{ColorSpace, ImageArrayImporter, ImageFileImporter},
-    AssetImporter,
+use crate::asset::{
+    error::AssetIoError,
+    importer::{
+        gltf_importer::GltfImporter,
+        image_file_importer::{ColorSpace, ImageArrayImporter, ImageFileImporter},
+        AssetImporter,
+    },
 };
 
 /// A serializable import recipe: how to (re)produce one batch of assets.
@@ -58,23 +61,27 @@ impl ImportJob {
         }
     }
 
-    /// The main source file of this job.
-    pub fn primary_source(&self) -> &Path {
+    /// The main source file of this job, if it has one.
+    pub fn primary_source(&self) -> Option<&Path> {
         match self {
-            ImportJob::Gltf { path } => path,
-            ImportJob::Image { source, .. } => source,
-            ImportJob::ImageArray { sources, .. } => sources.first().expect("an image array job needs at least one source"),
+            ImportJob::Gltf { path } => Some(path),
+            ImportJob::Image { source, .. } => Some(source),
+            ImportJob::ImageArray { sources, .. } => sources.first().map(PathBuf::as_path),
         }
     }
 
     /// Directory that this job's sources live in.
     pub fn resource_root(&self) -> PathBuf {
-        self.primary_source().parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."))
+        self.primary_source()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."))
     }
 
     /// Stable identity string used to key a job (e.g. for deduplication).
     pub fn job_id(&self) -> String {
-        format!("{}:{}", self.importer_id(), self.primary_source().display())
+        let source = self.primary_source().map(Path::display).map(|d| d.to_string()).unwrap_or_default();
+        format!("{}:{}", self.importer_id(), source)
     }
 }
 
@@ -100,21 +107,22 @@ pub struct ImportManifest {
 
 impl ImportManifest {
     /// Load a manifest, returning an empty one if the file does not exist.
-    pub fn load(path: &Path) -> Self {
+    pub fn load(path: &Path) -> Result<Self, AssetIoError> {
         if !path.exists() {
-            return Self::default();
+            return Ok(Self::default());
         }
         let bytes = std::fs::read(path)
-            .unwrap_or_else(|e| panic!("cannot read import manifest '{}': {e}", path.display()));
+            .map_err(|source| AssetIoError::Read { path: path.to_path_buf(), source })?;
         flexbuffers::from_slice(&bytes)
-            .unwrap_or_else(|e| panic!("cannot deserialize import manifest '{}': {e}", path.display()))
+            .map_err(|source| AssetIoError::Deserialize { what: "import manifest", path: path.to_path_buf(), source })
     }
 
     /// Persist the manifest (including generated `outputs`).
-    pub fn save(&self, path: &Path) {
-        let bytes = flexbuffers::to_vec(self).expect("failed to serialize import manifest");
+    pub fn save(&self, path: &Path) -> Result<(), AssetIoError> {
+        let bytes = flexbuffers::to_vec(self)
+            .map_err(|source| AssetIoError::Serialize { what: "import manifest", source })?;
         std::fs::write(path, bytes)
-            .unwrap_or_else(|e| panic!("cannot write import manifest '{}': {e}", path.display()));
+            .map_err(|source| AssetIoError::Write { path: path.to_path_buf(), source })
     }
 }
 
