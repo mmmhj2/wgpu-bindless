@@ -114,6 +114,24 @@ impl AssetManager {
         Ok(EnsureOutcome::Reimported)
     }
 
+    /// Load a manifest from a manifest object.
+    /// 
+    /// The manifest object is consumed, and changes to the manifest will not be
+    /// saved to disk. Mainly used for loading one-off resources, such as when testing.
+    pub fn from_manifest(&self, mut manifest: ImportManifest) -> Result<LoadReport, AssetError> {
+        let mut report = LoadReport::default();
+
+        for entry in manifest.entries.iter_mut() {
+            match self.ensure_entry(entry)? {
+                EnsureOutcome::Fresh => report.loaded += entry.outputs.len(),
+                EnsureOutcome::Reimported => {
+                    report.reimported += entry.outputs.len();
+                }
+            }
+        }
+        Ok(report)
+    }
+
     /// Load a manifest and refresh every entry, re-importing missing/stale ones.
     ///
     /// The manifest is written back only when something was re-imported.

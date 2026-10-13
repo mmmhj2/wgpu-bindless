@@ -98,6 +98,8 @@ fn decode_image(path: &Path, color_space: ColorSpace) -> Result<DecodedImage, Im
         other => return Err(ImageImportError::UnsupportedFormat(other)),
     };
 
+    log::info!("Decoded image {} ({}x{}), format {:?}, texel size {}", path.to_string_lossy(), width, height, format, texels.len());
+
     Ok(DecodedImage {
         format,
         width: width.try_into().map_err(|_| ImageImportError::ZeroDimension(path.to_path_buf()))?,
@@ -146,7 +148,7 @@ impl ImageFileImporter {
 
 impl AssetImporter for ImageFileImporter {
     const IMPORTER_ID: &'static str = "image_file";
-    const IMPORTER_VERSION: u32 = 1;
+    const IMPORTER_VERSION: u32 = 2;
 
     fn import(self, context: &super::ImporterContext) -> Result<(), ImportError> {
         context.record_source(&self.source);
@@ -196,7 +198,7 @@ impl ImageArrayImporter {
 
 impl AssetImporter for ImageArrayImporter {
     const IMPORTER_ID: &'static str = "image_array";
-    const IMPORTER_VERSION: u32 = 1;
+    const IMPORTER_VERSION: u32 = 2;
 
     fn import(self, context: &super::ImporterContext) -> Result<(), ImportError> {
         if self.sources.is_empty() {

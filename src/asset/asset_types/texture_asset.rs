@@ -111,13 +111,21 @@ impl Into<wgpu::TextureDimension> for TextureDimension {
     }
 }
 
+/// serde_bytes does not support array of arrays of u8, this struct works around it.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MipmapLayerData {
+    #[serde(with = "serde_bytes")]
+    texels: Box<[u8]>
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub enum TexelData {
+    #[serde(with = "serde_bytes")]
     Plain(Box<[u8]>),
     /// For mipmapped textures with block compression, the data is assumed to
     /// be *correctly padded*. Which means that each mipmap level should contain
     /// at least one block of texels.
-    Mipmapped(Box<[Box<[u8]>]>)
+    Mipmapped(Box<[MipmapLayerData]>)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -227,12 +235,12 @@ impl GpuAssetType for TextureAsset {
             TexelData::Mipmapped(miplevels) => {
                 // Not tested!
                 let mut miplevel_size = wgpu_size;
-                for (index, texels) in miplevels.iter().enumerate() {
+                for (index, data) in miplevels.iter().enumerate() {
                     assert!(miplevel_size.width > 0 && miplevel_size.height > 0 && miplevel_size.depth_or_array_layers > 0);
 
                     let (bytes_per_row, rows_per_image) = Self::determine_upload_data_layout(wgpu_format, miplevel_size);
                     let expected_total_texel_size = bytes_per_row * rows_per_image * miplevel_size.depth_or_array_layers;
-                    assert_eq!(expected_total_texel_size as usize, texels.len());
+                    assert_eq!(expected_total_texel_size as usize, data.texels.len());
 
                     queue.write_texture(
                         wgpu::TexelCopyTextureInfoBase {
@@ -241,7 +249,7 @@ impl GpuAssetType for TextureAsset {
                             origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
                             aspect: wgpu::TextureAspect::All
                         },
-                        texels,
+                        &data.texels,
                         wgpu::TexelCopyBufferLayout {
                             offset: 0,
                             bytes_per_row: Some(bytes_per_row),
