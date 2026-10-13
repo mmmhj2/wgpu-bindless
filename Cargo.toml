@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+blake3 = "1.8.7"
 bytemuck = "1.25.0"
 cgmath = "0.18.0"
 env_logger = "0.11.10"
@@ -16,3 +17,4 @@ serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.20"
 wgpu = "29.0.1"
 winit = "0.30.13"
+zip = { version = "9", default-features = false }
