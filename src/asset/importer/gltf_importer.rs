@@ -1,6 +1,6 @@
 use std::{collections::HashSet, ffi::OsString, sync::{Arc, RwLock}};
 
-use crate::{asset::{asset_types::{Asset, AssetMetadata, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat}}, importer::{AssetImporter, vertex_reconditioner::TangentRecalculator}}, renderer::mesh::vertex_types::{VertexBufferOthers, VertexBufferPosition}};
+use crate::asset::{asset_types::{Asset, AssetMetadata, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat}, vertex::{VertexBufferOthers, VertexBufferPosition}}, importer::{AssetImporter, vertex_reconditioner::TangentRecalculator}};
 
 pub struct GltfImporter {
     // Guard it by mutex if we want to parallelize it.

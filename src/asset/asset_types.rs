@@ -1,5 +1,6 @@
 pub mod static_mesh_asset;
 pub mod texture_asset;
+pub mod vertex;
 
 use std::{fs::File, io::{Read, Write}};
 

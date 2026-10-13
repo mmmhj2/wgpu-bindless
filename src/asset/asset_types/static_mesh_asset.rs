@@ -2,7 +2,7 @@ use std::{fs::File, io::Write};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::{asset::{asset_types::ConcreteAssetType, importer::{ImporterContext, gltf_importer::GltfImporter, vertex_reconditioner::{TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite}}}, renderer::mesh::vertex_types::{VertexBufferOthers, VertexBufferPosition}};
+use crate::asset::{asset_types::{ConcreteAssetType, vertex::{VertexBufferOthers, VertexBufferPosition}}, importer::{ImporterContext, gltf_importer::GltfImporter, vertex_reconditioner::{TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite}}};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StaticMeshMaterial {

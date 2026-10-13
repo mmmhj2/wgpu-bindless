@@ -2,19 +2,18 @@ use bytemuck::Zeroable;
 use wgpu::{BufferDescriptor, BufferUsages};
 
 use crate::{
-    asset::importer::vertex_reconditioner::{
-        TangentRecalculator, VertexReconditionable, VertexReconditionableAttributeWrite
+    asset::{
+        asset_types::vertex::{VertexBufferOthers, VertexBufferPosition},
+        importer::vertex_reconditioner::{
+            TangentRecalculator, VertexReconditionable, VertexReconditionableAttributeWrite
+        }
     }, renderer::{
         device_interface::DeviceInterface, mesh::{
             drawable_mesh_traits::{
                 DrawableMesh,
                 ImmediateDrawableMesh
             },
-            mesh_manager::MeshManager,
-            vertex_types::{
-                VertexBufferOthers,
-                VertexBufferPosition
-            }
+            mesh_manager::MeshManager
         }, pipeline::{
             bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription
         }

@@ -5,6 +5,7 @@ use crate::{
             AssetData,
             GpuAssetType,
             static_mesh_asset::StaticMeshAsset,
+            vertex::{VertexBufferOthers, VertexBufferPosition},
         },
         importer::vertex_reconditioner::{
             TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite
@@ -12,13 +13,7 @@ use crate::{
     },
     renderer::{
     device_interface::DeviceInterface,
-    mesh::{
-        Mesh,
-        vertex_types::{
-            VertexBufferOthers,
-            VertexBufferPosition
-        }
-    },
+    mesh::Mesh,
     pipeline::{
         bindless_resource_manager::BindlessResourceManager,
         pbr_material::PBRMaterial,
