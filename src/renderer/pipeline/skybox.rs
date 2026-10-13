@@ -1,4 +1,4 @@
-use crate::renderer::{device_interface::DeviceInterface, pipeline::{camera::CameraManager, rasterizer_pipeline::RasterizerPipelineDescriptor, sampler::SamplerDescription, texture::Texture}};
+use crate::renderer::{device_interface::DeviceInterface, pipeline::{camera::CameraManager, rasterizer_pipeline::RasterizerPipelineDescriptor, sampler::SamplerDescription}};
 
 
 pub struct SkyboxManager {
@@ -88,8 +88,7 @@ impl SkyboxManager {
         }
     }
 
-    pub fn set_texture(&mut self, texture: Texture) {
-        let texture: wgpu::Texture = texture.into();
+    pub fn set_texture(&mut self, texture: wgpu::Texture) {
         assert_eq!(texture.depth_or_array_layers(), 6);
         self.skybox_textures = Some(texture.create_view(&wgpu::TextureViewDescriptor{
             dimension: Some(wgpu::TextureViewDimension::Cube),

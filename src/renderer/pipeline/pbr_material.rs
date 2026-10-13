@@ -5,6 +5,7 @@ use crate::{
     util::resource_allocator::LinearResourceAllocatorError
 };
 
+#[derive(Clone, Debug)]
 pub struct PBRMaterial {
     diffuse_tx  : usize,
     normal_tx   : usize,

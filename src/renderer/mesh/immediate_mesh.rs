@@ -1,7 +1,24 @@
 use bytemuck::Zeroable;
 use wgpu::{BufferDescriptor, BufferUsages};
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::{drawable_mesh_traits::{DrawableMesh, ImmediateContext, ImmediateDrawableMesh}, mesh_manager::MeshManager, vertex_reconditioner::{TangentRecalculator, VertexReconditionable, VertexReconditionableAttributeWrite}, vertex_types::{VertexBufferOthers, VertexBufferPosition}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial}};
+use crate::{
+    asset::{
+        asset_types::vertex::{VertexBufferOthers, VertexBufferPosition},
+        importer::vertex_reconditioner::{
+            TangentRecalculator, VertexReconditionable, VertexReconditionableAttributeWrite
+        }
+    }, renderer::{
+        device_interface::DeviceInterface, mesh::{
+            drawable_mesh_traits::{
+                DrawableMesh,
+                ImmediateDrawableMesh
+            },
+            mesh_manager::MeshManager
+        }, pipeline::{
+            bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription
+        }
+    }
+};
 
 pub struct ImmediateMeshBuilder {
     state       : VertexBufferOthers,
@@ -24,15 +41,18 @@ impl ImmediateMesh {
 }
 
 impl ImmediateMeshBuilder {
-    pub fn new(di: &DeviceInterface, mgr: &mut BindlessResourceManager) -> Self {
-        let material = PBRMaterial::create_from_views(
-            di.get_device(),
-            mgr,
-            None,
-            None,
-            None
-        ).expect("Failed to create material for immediate mesh");
-
+    pub fn new(di: &DeviceInterface, mgr: &mut BindlessResourceManager, material: Option<PBRMaterial>) -> Self {
+        let material = if let Some(m) = material {
+            m
+        } else {
+            PBRMaterial::create_from_views(
+                di.get_device(),
+                mgr,
+                None,
+                None,
+                None
+            ).expect("Failed to create material for immediate mesh")
+        };
         Self {
             state: VertexBufferOthers::zeroed(),
             position: Vec::new(),
@@ -121,6 +141,7 @@ impl super::Mesh for ImmediateMesh {
 impl DrawableMesh for ImmediateMesh {
     fn get_model_matrix_bind_group(&self) -> &wgpu::BindGroup { &self.bind_group }
     fn get_material(&self) -> &PBRMaterial { &self.material }
+    fn get_instance_range(&self) -> std::ops::Range<u32> { 0..1 }
 }
 
 impl ImmediateDrawableMesh for ImmediateMeshBuilder {

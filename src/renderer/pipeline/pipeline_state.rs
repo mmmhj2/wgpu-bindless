@@ -1,7 +1,7 @@
 use std::{collections::HashMap, num::NonZero, borrow::Cow};
 use wgpu::{ColorTargetState, ColorWrites, DepthBiasState, PipelineLayoutDescriptor};
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::{mesh_manager::{self, MeshManager}, vertex_types::VertexType}, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, CameraPerspective, HasViewProjectionMatrix}, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor}}};
+use crate::renderer::{asset_registry::GpuAssetRegistry, device_interface::DeviceInterface, mesh::{mesh_manager::MeshManager, vertex_types::VertexType}, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, CameraPerspective, HasViewProjectionMatrix}, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor}}};
 
 macro_rules! include_bindless_wgsl {
     ($($token:tt)*) => {
@@ -20,7 +20,7 @@ macro_rules! include_bindless_wgsl {
 }
 
 pub struct PipelineStates {
-    bindless_resources: BindlessResourceManager,
+    asset_registry: GpuAssetRegistry,
     cameras: CameraManager,
     mesh_manager: MeshManager,
     rasterizer_pipeline_layouts: HashMap<String, wgpu::PipelineLayout>,
@@ -30,7 +30,7 @@ pub struct PipelineStates {
 impl PipelineStates {
     pub fn prepare_default_pipelines (di: & DeviceInterface, format: wgpu::TextureFormat) -> Self {
 
-        let bindless_resources = BindlessResourceManager::new(di);
+        let asset_registry = GpuAssetRegistry::new(di);
         let cameras = CameraManager::new(di);
         let mesh_manager = MeshManager::new(di);
         let mut rasterizer_pipeline_layouts: HashMap<String, wgpu::PipelineLayout> = HashMap::new();
@@ -43,7 +43,7 @@ impl PipelineStates {
             &PipelineLayoutDescriptor{
                 label: None,
                 bind_group_layouts: &[
-                        Some(bindless_resources.get_bind_group_layout()),
+                        Some(asset_registry.get_bindless_resource_manager().get_bind_group_layout()),
                         Some(cameras.get_bind_group_layout()),
                         Some(mesh_manager.get_bind_group_layout())
                     ],
@@ -107,7 +107,7 @@ impl PipelineStates {
         rasterizer_pipeline_layouts.insert(String::from("default"), default_rasterizer_pipeline_layout);
 
         return Self{
-            bindless_resources,
+            asset_registry,
             cameras,
             mesh_manager,
             rasterizer_pipeline_layouts,
@@ -120,7 +120,7 @@ impl PipelineStates {
     /// It first sets the bindless bind groups to the render pass.
     /// Then it pushes the camera matrix of the current active camera to GPU and bind its uniform buffer.
     pub fn prepare_render_pass(&self, di: &DeviceInterface, rp: &mut wgpu::RenderPass) -> () {
-        let bindless_bind_group = self.bindless_resources.get_bind_group(di.get_device());
+        let bindless_bind_group = self.asset_registry.get_bindless_resource_manager().get_bind_group(di.get_device());
 
         let camera_buffer_size = std::mem::size_of::<[[f32; 4]; 4]>() as u64 * 3;
         let camera_buffer = di.get_device().create_buffer(&wgpu::wgt::BufferDescriptor {
@@ -186,6 +186,7 @@ impl PipelineStates {
         self.rasterizer_pipeline_layouts.get(name)
     }
 
-    pub fn get_bindless_resource_manager(&self) -> &BindlessResourceManager { &self.bindless_resources }
-    pub fn get_bindless_resource_manager_mut(&mut self) -> &mut BindlessResourceManager { &mut self.bindless_resources }
+    pub fn get_bindless_resource_manager(&self) -> &BindlessResourceManager { self.asset_registry.get_bindless_resource_manager() }
+    pub fn get_bindless_resource_manager_mut(&mut self) -> &mut BindlessResourceManager { self.asset_registry.get_bindless_resource_manager_mut() }
+    pub fn get_asset_registry_mut(&mut self) -> &mut GpuAssetRegistry { &mut self.asset_registry }
 }

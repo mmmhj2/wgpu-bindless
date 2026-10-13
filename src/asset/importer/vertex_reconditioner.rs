@@ -1,5 +1,5 @@
 use cgmath::Zero;
-use crate::renderer::mesh::vertex_types::{VertexBufferOthers, VertexBufferPosition};
+    use crate::asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition};
 
 /// Mark that a mesh could be reconditioned
 pub trait VertexReconditionable {
@@ -164,7 +164,7 @@ pub trait VertexColorApplyScale : VertexReconditionable + VertexReconditionableA
 
 #[cfg(test)]
 mod test {
-    use crate::renderer::mesh::vertex_types::{VertexBufferOthers, VertexBufferPosition};
+use crate::asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition};
     use super::*;
 
     struct Dummy {

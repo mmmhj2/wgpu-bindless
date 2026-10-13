@@ -1,34 +1,21 @@
+use crate::asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition};
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct VertexBufferPosition {
-    pub position: [f32; 3]
+#[derive(Clone, Copy, Debug)]
+pub enum VertexType {
+    PositionOnly,
+    Basic
 }
 
-impl VertexBufferPosition {
-    const BINDINGS : [wgpu::VertexAttribute; 1] = [wgpu::VertexAttribute{
+impl VertexType {
+
+    const POSITION_ATTRIBUTES : [wgpu::VertexAttribute; 1] = [wgpu::VertexAttribute{
         format: wgpu::VertexFormat::Float32x3,
         offset: 0,
         shader_location: 0
     }];
-}
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct VertexBufferOthers {
-    /// Vertex color in RGBA
-    pub color: [f32; 4],
-    /// Object space normal in 3D
-    pub normal: [f32; 3],
-    /// Object space tangent vector, with the w component indicating handiness.
-    pub tangent: [f32; 4],
-    /// Texture coordinate channel 0
-    pub uv0: [f32; 2]
-}
-
-impl VertexBufferOthers {
     /// TODO: try `wgpu::vertex_attr_array!()` macro
-    const BINDINGS : [wgpu::VertexAttribute; 4] = [
+    const OTHERS_ATTRIBUTES : [wgpu::VertexAttribute; 4] = [
         wgpu::VertexAttribute{
             format: wgpu::VertexFormat::Float32x4,
             offset: 0,
@@ -50,21 +37,12 @@ impl VertexBufferOthers {
             shader_location: 4
         }
     ];
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum VertexType {
-    PositionOnly,
-    Basic
-}
-
-impl VertexType {
 
     const VBL_POSITION_ONLY : [wgpu::VertexBufferLayout<'static>; 1] = [
         wgpu::VertexBufferLayout{
             array_stride: std::mem::size_of::<VertexBufferPosition>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &VertexBufferPosition::BINDINGS
+            attributes: &Self::POSITION_ATTRIBUTES
         }
     ];
 
@@ -72,12 +50,12 @@ impl VertexType {
         wgpu::VertexBufferLayout{
             array_stride: std::mem::size_of::<VertexBufferPosition>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &VertexBufferPosition::BINDINGS
+            attributes: &Self::POSITION_ATTRIBUTES
         },
         wgpu::VertexBufferLayout{
             array_stride: std::mem::size_of::<VertexBufferOthers>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &VertexBufferOthers::BINDINGS
+            attributes: &Self::OTHERS_ATTRIBUTES
         }
     ];
 
