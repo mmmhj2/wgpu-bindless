@@ -10,8 +10,12 @@ pub struct GltfImporter {
 }
 
 impl AssetImporter for GltfImporter {
+    const IMPORTER_ID: &'static str = "gltf";
+    const IMPORTER_VERSION: u32 = 1;
+
     fn import(mut self, context: &super::ImporterContext) {
         assert!(self.path.is_file());
+        context.record_source(&self.path);
 
         // Clone the path so borrowing it does not conflict with `&mut self` passed below.
         let source_path = self.path.clone();
@@ -28,10 +32,10 @@ impl AssetImporter for GltfImporter {
                 let imported_mesh = Self::import_from_gltf_primitive(&mut self, &primitive, &buffers);
                 let imported_asset = Arc::from(
                     RwLock::from(Asset::new(
-                        AssetMetadata{
-                            asset_file_path: Some(subasset_path.into_boxed_path()),
-                            asset_name: subasset_name.clone()
-                        },
+                        AssetMetadata::new(
+                            subasset_name.clone(),
+                            Some(subasset_path.into_boxed_path())
+                        ),
                         crate::asset::asset_types::AssetData::StaticMeshAssetType(imported_mesh)
                     ))
                 );
@@ -49,10 +53,10 @@ impl AssetImporter for GltfImporter {
             let imported_texture = Self::import_from_gltf_texture(&texture, &textures, self.color_textures.contains(&subasset_name)).expect("failed to import texture asset");
             let imported_asset = Arc::from(
                 RwLock::from(Asset::new(
-                    AssetMetadata {
-                        asset_file_path: Some(subasset_path.into_boxed_path()),
-                        asset_name: subasset_name.clone()
-                    },
+                    AssetMetadata::new(
+                        subasset_name.clone(),
+                        Some(subasset_path.into_boxed_path())
+                    ),
                     crate::asset::asset_types::AssetData::TextureAssetType(imported_texture)
                 ))
             );
@@ -67,10 +71,10 @@ impl AssetImporter for GltfImporter {
             let imported_scene = Self::import_from_gltf_scene(path, &document, &scene);
             let imported_asset = Arc::from(
                 RwLock::from(Asset::new(
-                    AssetMetadata {
-                        asset_file_path: Some(subasset_path.into_boxed_path()),
-                        asset_name: subasset_name.clone()
-                    },
+                    AssetMetadata::new(
+                        subasset_name.clone(),
+                        Some(subasset_path.into_boxed_path())
+                    ),
                     crate::asset::asset_types::AssetData::SceneAssetType(imported_scene)
                 ))
             );

@@ -91,7 +91,7 @@ fn insert_texture_asset(
     texture: TextureAsset,
 ) {
     let asset = Arc::new(Asset::new(
-        AssetMetadata { asset_name: asset_name.clone(), asset_file_path: Some(asset_file_path) },
+        AssetMetadata::new(asset_name.clone(), Some(asset_file_path)),
         TextureAssetType(texture),
     ).into());
     context.asset_batch.write().expect("failed to acquire write lock for asset database").insert(asset_name, asset);
@@ -110,7 +110,11 @@ impl ImageFileImporter {
 }
 
 impl AssetImporter for ImageFileImporter {
+    const IMPORTER_ID: &'static str = "image_file";
+    const IMPORTER_VERSION: u32 = 1;
+
     fn import(self, context: &super::ImporterContext) {
+        context.record_source(&self.source);
         let image = decode_image(&self.source, self.color_space);
         let asset_name = asset_name_from_path(&self.source);
         let asset_file_path = self.source.with_added_extension("asset").into_boxed_path();
@@ -154,8 +158,15 @@ impl ImageArrayImporter {
 }
 
 impl AssetImporter for ImageArrayImporter {
+    const IMPORTER_ID: &'static str = "image_array";
+    const IMPORTER_VERSION: u32 = 1;
+
     fn import(self, context: &super::ImporterContext) {
         assert!(!self.sources.is_empty(), "an image array importer requires at least one source.");
+
+        for source in &self.sources {
+            context.record_source(source);
+        }
 
         let decoded: Vec<DecodedImage> = self.sources.iter()
             .map(|source| decode_image(source, self.color_space))
