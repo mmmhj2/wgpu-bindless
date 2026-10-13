@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::asset::asset_types::{ConcreteAssetType, GpuAssetType};
 
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextureFormat {
     Rgba8Unorm,
     Rgba8Srgb,
