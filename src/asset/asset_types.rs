@@ -8,7 +8,7 @@ use std::{fs::File, io::{Read, Write}};
 use image::EncodableLayout;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::asset::{asset_types::{scene_asset::SceneAsset, static_mesh_asset::StaticMeshAsset, texture_asset::TextureAsset}, provenance::ImportProvenance};
+use crate::asset::{asset_io_error::AssetIoError, asset_types::{scene_asset::SceneAsset, static_mesh_asset::StaticMeshAsset, texture_asset::TextureAsset}, provenance::ImportProvenance};
 
 /// Name of the ZIP entry holding the serialized [`AssetMetadata`].
 const METADATA_ENTRY: &str = "metadata";
@@ -35,10 +35,15 @@ impl AssetMetadata {
     /// The payload entry is never opened, so this stays cheap regardless of how
     /// large the asset is.
     pub fn peek(path: &std::path::Path) -> Self {
+        Self::try_peek(path).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// Fallible variant of [`peek`] for callers that tolerate corrupt or legacy files.
+    pub fn try_peek(path: &std::path::Path) -> Result<Self, AssetIoError> {
         let file = File::open(path)
-            .unwrap_or_else(|e| panic!("cannot open asset file '{}': {e}", path.display()));
+            .map_err(|e| AssetIoError(format!("cannot open asset file '{}': {e}", path.display())))?;
         let mut archive = zip::ZipArchive::new(file)
-            .unwrap_or_else(|e| panic!("asset file '{}' is not a valid archive: {e}", path.display()));
+            .map_err(|e| AssetIoError(format!("asset file '{}' is not a valid archive: {e}", path.display())))?;
         read_asset_entry(&mut archive, METADATA_ENTRY)
     }
 }
@@ -92,8 +97,14 @@ impl Asset {
         Ok(())
     }
 
-    pub fn load_from_disk(path: &std::path::Path) -> Result<Self, ()> {
-        Ok(read_asset_container(path))
+    pub fn load_from_disk(path: &std::path::Path) -> Self {
+        read_asset_container(path).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// Fallible load for callers that must tolerate corrupt or legacy files
+    /// (e.g. directory scans).
+    pub fn try_load_from_disk(path: &std::path::Path) -> Result<Self, AssetIoError> {
+        read_asset_container(path)
     }
 }
 
@@ -117,21 +128,23 @@ fn write_asset_container(path: &std::path::Path, asset: &Asset) {
 }
 
 /// Read and deserialize a single named entry from an asset container.
-fn read_asset_entry<T: DeserializeOwned>(archive: &mut zip::ZipArchive<File>, name: &str) -> T {
+fn read_asset_entry<T: DeserializeOwned>(archive: &mut zip::ZipArchive<File>, name: &str) -> Result<T, AssetIoError> {
     let mut entry = archive.by_name(name)
-        .unwrap_or_else(|e| panic!("asset container is missing a required entry '{name}': {e}"));
+        .map_err(|e| AssetIoError(format!("asset container is missing a required entry '{name}': {e}")))?;
     let mut buffer = Vec::new();
-    entry.read_to_end(&mut buffer).expect("failed to read asset entry");
-    flexbuffers::from_slice(buffer.as_slice()).expect("failed to deserialize asset entry")
+    entry.read_to_end(&mut buffer)
+        .map_err(|e| AssetIoError(format!("failed to read asset entry '{name}': {e}")))?;
+    flexbuffers::from_slice(buffer.as_slice())
+        .map_err(|e| AssetIoError(format!("failed to deserialize asset entry '{name}': {e}")))
 }
 
 /// Load a full asset from its on-disk ZIP container.
-fn read_asset_container(path: &std::path::Path) -> Asset {
+fn read_asset_container(path: &std::path::Path) -> Result<Asset, AssetIoError> {
     let file = File::open(path)
-        .unwrap_or_else(|e| panic!("cannot open asset file '{}': {e}", path.display()));
+        .map_err(|e| AssetIoError(format!("cannot open asset file '{}': {e}", path.display())))?;
     let mut archive = zip::ZipArchive::new(file)
-        .unwrap_or_else(|e| panic!("asset file '{}' is not a valid archive: {e}", path.display()));
-    let metadata: AssetMetadata = read_asset_entry(&mut archive, METADATA_ENTRY);
-    let data: AssetData = read_asset_entry(&mut archive, PAYLOAD_ENTRY);
-    Asset::new(metadata, data)
+        .map_err(|e| AssetIoError(format!("asset file '{}' is not a valid archive: {e}", path.display())))?;
+    let metadata: AssetMetadata = read_asset_entry(&mut archive, METADATA_ENTRY)?;
+    let data: AssetData = read_asset_entry(&mut archive, PAYLOAD_ENTRY)?;
+    Ok(Asset::new(metadata, data))
 }
