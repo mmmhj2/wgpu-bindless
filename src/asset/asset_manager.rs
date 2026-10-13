@@ -13,8 +13,8 @@ impl AssetManager {
         }
     }
 
-    pub fn import<T: AssetImporter>(&self, path: &std::path::Path, importer: T) {
-        let context = ImporterContext::new(path);
+    pub fn import<T: AssetImporter>(&self, importer: T) {
+        let context = ImporterContext::new();
         importer.import(&context);
         
         let mut database = self.asset_database.write().expect("Failed to acquire write lock for asset database");
