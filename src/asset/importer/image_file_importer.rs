@@ -136,16 +136,20 @@ impl AssetImporter for ImageFileImporter {
 ///
 /// All slices must share the same dimensions and texel format.
 pub struct ImageArrayImporter {
+    /// Optional name of the resulting texture asset.
+    /// If `None`, the name is derived from the first source path.
+    name: Option<String>,
     sources: Vec<Box<Path>>,
     color_space: ColorSpace,
 }
 
 impl ImageArrayImporter {
     pub fn new<P: AsRef<Path>>(
+        name: Option<String>,
         sources: impl IntoIterator<Item = P>,
         color_space: ColorSpace,
     ) -> Self {
-        Self { sources: sources.into_iter().map(|source| source.as_ref().into()).collect(), color_space }
+        Self { name, sources: sources.into_iter().map(|source| source.as_ref().into()).collect(), color_space }
     }
 }
 
@@ -172,9 +176,8 @@ impl AssetImporter for ImageArrayImporter {
             texels.extend_from_slice(&image.texels);
         }
 
-        let base = &self.sources[0];
-        let asset_name = format!("{}.array", asset_name_from_path(base));
-        let asset_file_path = base.with_added_extension("array").with_added_extension("asset").into_boxed_path();
+        let asset_name = self.name.unwrap_or_else(|| format!("{}.array", asset_name_from_path(&self.sources[0])));
+        let asset_file_path = self.sources[0].with_file_name(&asset_name).with_added_extension("asset").into_boxed_path();
 
         insert_texture_asset(
             context,

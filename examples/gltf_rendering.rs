@@ -34,6 +34,7 @@ impl RendererState for State {
         let asset_manager = AssetManager::new();
         asset_manager.import(GltfImporter::new(GLTF_PATH));
         asset_manager.import(ImageArrayImporter::new(
+            Some(String::from("skybox")),
             [
                 "resource/skybox/right.jpg",
                 "resource/skybox/left.jpg",
@@ -57,7 +58,7 @@ impl RendererState for State {
         };
 
         let skybox_texture = {
-            let asset = asset_manager.get_asset("right.array").expect("skybox array asset should be present");
+            let asset = asset_manager.get_asset("skybox").expect("skybox array asset should be present");
             let asset = asset.read().expect("failed to read skybox asset");
             if let TextureAssetType(texture) = asset.get_data() {
                 texture.upload("skybox", device.get_device(), device.get_queue())
