@@ -2,7 +2,7 @@
 mod test {
     use std::path::PathBuf;
 
-use rust_renderer::asset::{asset_manager::AssetManager, asset_types::{Asset, texture_asset::{TexelData, TextureDimension, TextureFormat}}, importer::{gltf_importer::GltfImporter, image_file_importer::{ColorSpace, ImageFileImporter}}};
+use rust_renderer::asset::{asset_manager::AssetManager, asset_types::{Asset, AssetData, texture_asset::{TexelData, TextureDimension, TextureFormat}}, importer::{gltf_importer::GltfImporter, image_file_importer::{ColorSpace, ImageFileImporter}}};
 
     #[test]
     fn import_gltf_test() {
@@ -19,6 +19,27 @@ use rust_renderer::asset::{asset_manager::AssetManager, asset_types::{Asset, tex
         }
 
         Asset::load_from_disk(&test_filename).unwrap();
+    }
+
+    #[test]
+    fn import_gltf_scene_test() {
+        let gltf_path = std::path::Path::new("resource/test_two_cubes.glb");
+        let asset_manager = AssetManager::new();
+        asset_manager.import(GltfImporter::new(gltf_path));
+
+        let scene_name = GltfImporter::scene_subasset_name(gltf_path, 0);
+        let asset = asset_manager.get_asset(&scene_name).expect("scene asset should be present");
+        let asset = asset.read().unwrap();
+        match asset.get_data() {
+            AssetData::SceneAssetType(scene) => {
+                // Both cubes of the test scene must be baked as mesh instances.
+                assert!(!scene.instances.is_empty(), "scene asset should contain at least one mesh instance.");
+                for instance in &scene.instances {
+                    assert!(!instance.mesh_subasset_name.is_empty(), "mesh instance must reference a mesh subasset.");
+                }
+            }
+            _ => panic!("expected a scene asset, got another asset kind."),
+        }
     }
 
     #[test]

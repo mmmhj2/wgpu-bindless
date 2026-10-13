@@ -1,6 +1,6 @@
-use std::{collections::VecDeque, num::NonZero, sync::Arc};
+use std::{num::NonZero, sync::Arc};
 use crate::{
-    asset::{asset_manager::AssetManager, asset_types::AssetData, importer::gltf_importer::GltfImporter},
+    asset::{asset_manager::AssetManager, asset_types::{AssetData, scene_asset::SceneAsset}},
     renderer::{device_interface::DeviceInterface, mesh::{Mesh, drawable_mesh_traits::DrawableMesh, mesh_manager::MeshManager, static_mesh::StaticMesh}, pipeline::{pbr_material::PBRMaterial, pipeline_state::PipelineStates}}
 };
 
@@ -29,69 +29,32 @@ impl StaticMeshInstance {
         })
     }
 
-    /// Create instances from a GLTF scene.
-    /// 
-    /// Only nodes that contains meshes are processed.
-    /// Transforms of the nodes will be preserved in the model matrices of the
-    /// instances produced.
+    /// Create instances from an imported scene asset.
     ///
-    /// Mesh and texture data are resolved from the assets previously imported
-    /// by a `GltfImporter` reading from `gltf_path`.
-    pub fn create_from_gltf_scene(
+    /// The scene asset is typically imported via the asset importer, and
+    /// contains a list of mesh instances with their world matrices.
+    /// 
+    /// The model matrix buffers for each instance will be created and uploaded to the GPU.
+    /// If the asset has not been uploaded to the GPU, it will be uploaded via
+    /// [`static_mesh_from_asset()`] during this process.
+    pub fn create_from_scene_asset(
         di: &DeviceInterface,
         pipeline_states: &mut PipelineStates,
-        gltf_path: &std::path::Path,
-        scene: &gltf::Scene,
+        scene: &SceneAsset,
         assets: &AssetManager
     ) -> Vec<Self> {
         let mut ret = Vec::new();
 
-        // Do a BFS to collect all meshes.
-        // DFS, recursion and trees in Rust are simply PITA.
-        let mut transform_queue = VecDeque::<cgmath::Matrix4<f32>>::new();
-        let mut node_queue = VecDeque::<usize>::new();
+        for instance in &scene.instances {
+            let name = instance.mesh_subasset_name.as_str();
 
-        for root_node in scene.nodes() {
-            transform_queue.push_back(root_node.transform().matrix().into());
-            node_queue.push_back(root_node.index());
+            let asset = assets.get_asset(name).unwrap_or_else(|| panic!("static mesh asset '{name}' not found."));
+            let asset = asset.read().expect("failed to acquire read lock for static mesh asset.");
+            let mesh_asset = match asset.get_data() {
+                AssetData::StaticMeshAssetType(m) => m,
+                _ => panic!("asset '{name}' is not a static mesh asset."),
+            };
 
-            while !node_queue.is_empty() {
-                let current_node = scene.nodes().nth(node_queue.pop_front().unwrap()).expect("valid node index");
-                let current_transform = transform_queue.pop_front().unwrap();
-                if let Some(m) = current_node.mesh() {
-                    let instances = Self::create_from_gltf_mesh(di, pipeline_states, gltf_path, &m, assets);
-                    for inst in &instances {
-                        di.get_queue().write_buffer(&inst.model_matrix, 0, bytemuck::cast_slice(AsRef::<[f32; 16]>::as_ref(&current_transform)));
-                    }
-                    ret.extend(instances);
-                }
-
-                for ch in current_node.children() {
-                    transform_queue.push_back(current_transform * cgmath::Matrix4::from(ch.transform().matrix()));
-                    node_queue.push_back(ch.index());
-                }
-            }
-        }
-
-        return ret;
-    }
-
-    /// Create instances from a GLTF mesh.
-    /// 
-    /// All primitives will be processed, each one corresponding to an new instance.
-    /// Model matrix of the mesh will contain undefined contents.
-    /// 
-    /// TODO: Remove it entirely and use asset registry to resolve and upload the mesh.
-    pub fn create_from_gltf_mesh(
-        di: &DeviceInterface,
-        pipeline_states: &mut PipelineStates,
-        gltf_path: &std::path::Path,
-        mesh: &gltf::Mesh,
-        assets: &AssetManager
-    ) -> Vec<Self> {
-        let mut ret = Vec::new();
-
-        for primitive in mesh.primitives() {
             let buffer = di.get_device().create_buffer(&wgpu::BufferDescriptor{
                 label: Some("model matrix buffer"),
                 size: (std::mem::size_of::<f32>() * 16) as u64,
@@ -99,23 +62,17 @@ impl StaticMeshInstance {
                 mapped_at_creation: false,
             });
             let bg = Self::generate_bind_group(di, pipeline_states.get_mesh_manager(), &buffer);
-
-            let name = GltfImporter::primitive_subasset_name(gltf_path, mesh.index(), primitive.index());
-            let asset = assets.get_asset(&name).unwrap_or_else(|| panic!("static mesh asset '{name}' not found."));
-            let asset = asset.read().expect("failed to acquire read lock for static mesh asset.");
-            let mesh_asset = match asset.get_data() {
-                AssetData::StaticMeshAssetType(m) => m,
-                _ => panic!("asset '{name}' is not a static mesh asset."),
-            };
+            di.get_queue().write_buffer(&buffer, 0, bytemuck::cast_slice(&instance.world_matrix));
 
             ret.push(
                 Self{
-                    mesh: pipeline_states.get_asset_registry_mut().static_mesh_from_asset(di, assets, &name, mesh_asset),
+                    mesh: pipeline_states.get_asset_registry_mut().static_mesh_from_asset(di, assets, name, mesh_asset),
                     model_matrix: buffer,
                     model_matrix_bg: bg
                 }
-            )
+            );
         }
+
         return ret;
     }
 }

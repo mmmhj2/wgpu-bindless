@@ -2,7 +2,7 @@
 #[cfg(target_os = "windows")]
 mod test {
     use std::sync::Arc;
-    use rust_renderer::{app::DefaultAppHandler, asset::{asset_manager::AssetManager, importer::gltf_importer::GltfImporter}, renderer::{device_interface::DeviceInterface, mesh::static_mesh_instance::StaticMeshInstance, pipeline::pipeline_state::PipelineStates, window::RendererState}};
+    use rust_renderer::{app::DefaultAppHandler, asset::{asset_manager::AssetManager, asset_types::AssetData, importer::gltf_importer::GltfImporter}, renderer::{device_interface::DeviceInterface, mesh::static_mesh_instance::StaticMeshInstance, pipeline::pipeline_state::PipelineStates, window::RendererState}};
     use winit::{event_loop::EventLoop, window::Window};
 
     pub struct State {
@@ -20,21 +20,18 @@ mod test {
             let asset_manager = AssetManager::new();
             asset_manager.import(GltfImporter::new("resource/test_two_cubes.glb"));
 
-            // TODO: currently gltf files are imported twice, once to recondition the asset and once to get the model info.
-            // We should figure out some way to avoid this duplication, maybe by removing the `create_from_gltf_mesh` call
-            // and enforce creation from asset instead of using gltf directly.
-            let (document, _buffers, _images) = gltf::import("resource/test_two_cubes.glb").expect("Cannot open glb file.");
-            
-            let mut gltf_models = Vec::new();
-            for mesh in document.meshes() {
-                let instances = StaticMeshInstance::create_from_gltf_mesh(
-                    &device,
-                    &mut pipeline,
-                    std::path::Path::new("resource/test_two_cubes.glb"),
-                    &mesh,
-                    &asset_manager);
-                gltf_models.extend(instances);
-            }
+            // The scene graph is baked into a `SceneAsset` at import time, so
+            // the glTF file is parsed exactly once.
+            let gltf_models = {
+                let scene_name = GltfImporter::scene_subasset_name(std::path::Path::new("resource/test_two_cubes.glb"), 0);
+                let asset = asset_manager.get_asset(&scene_name).expect("gltf scene asset should be present");
+                let asset = asset.read().expect("failed to read gltf scene asset");
+                if let AssetData::SceneAssetType(scene) = asset.get_data() {
+                    StaticMeshInstance::create_from_scene_asset(&device, &mut pipeline, scene, &asset_manager)
+                } else {
+                    panic!("asset '{scene_name}' is not a scene asset");
+                }
+            };
 
             println!("Read {} models in total.", gltf_models.len());
 

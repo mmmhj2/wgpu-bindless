@@ -4,7 +4,7 @@ use rust_renderer::{
     app::DefaultAppHandler,
     asset::{
         asset_manager::AssetManager,
-        asset_types::{AssetData::TextureAssetType, GpuAssetType},
+        asset_types::{AssetData::{SceneAssetType, TextureAssetType}, GpuAssetType},
         importer::{gltf_importer::GltfImporter, image_file_importer::{ColorSpace, ImageArrayImporter}},
     },
     renderer::{device_interface::DeviceInterface, mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance}, pipeline::{camera::CameraPerspectiveBuilder, framebuffers::Framebuffers, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager}, window::RendererState}
@@ -45,14 +45,16 @@ impl RendererState for State {
             ColorSpace::Srgb
         ));
 
-        let (document, _buffers, _images) = gltf::import(GLTF_PATH).expect("Cannot open glb file.");
-
-        let gltf_models = StaticMeshInstance::create_from_gltf_scene(
-            &device,
-            &mut pipeline,
-            Path::new(GLTF_PATH),
-            &document.scenes().next().expect("Document should contain at least one scene"),
-            &asset_manager);
+        let gltf_models = {
+            let scene_name = GltfImporter::scene_subasset_name(Path::new(GLTF_PATH), 0);
+            let asset = asset_manager.get_asset(&scene_name).expect("gltf scene asset should be present");
+            let asset = asset.read().expect("failed to read gltf scene asset");
+            if let SceneAssetType(scene) = asset.get_data() {
+                StaticMeshInstance::create_from_scene_asset(&device, &mut pipeline, scene, &asset_manager)
+            } else {
+                panic!("asset '{scene_name}' is not a scene asset");
+            }
+        };
 
         let skybox_texture = {
             let asset = asset_manager.get_asset("right.array").expect("skybox array asset should be present");

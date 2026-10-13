@@ -86,7 +86,9 @@ pub(crate) enum SubAssetType {
     /// 
     /// Differences between meshes and primitives:
     /// - A mesh is a collection of primitives, and a primitive is a single draw call (therefore a single material).
-    /// - A mesh can be instanced in a scene to have model matrices, and a primitive cannot be instanced.
+    /// - A mesh can be instanced in a scene to have model matrices, and a primitive does not have model matrices.
+    /// - Two layers of instancing are therefore possible: a mesh can be instanced in a scene (on CPU),
+    /// and a primitive can be instanced in a mesh (on GPU, with instanced drawing).
     /// 
     /// Currently unused, but we may want to support importing a mesh as a single subasset in the future, if we have submeshes set up.
     Mesh(usize),
