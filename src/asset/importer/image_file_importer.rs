@@ -9,7 +9,7 @@ use crate::asset::{
 };
 
 /// How the texel data of an imported image should be interpreted by the GPU.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub enum ColorSpace {
     Linear,
     /// Gamma-corrected sRGB color space.
