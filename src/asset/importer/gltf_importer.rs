@@ -1,6 +1,6 @@
-use std::{collections::HashSet, ffi::OsString, sync::{Arc, RwLock}};
+use std::{collections::{HashSet, VecDeque}, ffi::OsString, sync::{Arc, RwLock}};
 
-use crate::asset::{asset_types::{Asset, AssetMetadata, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat}, vertex::{VertexBufferOthers, VertexBufferPosition}}, importer::{AssetImporter, vertex_reconditioner::TangentRecalculator}};
+use crate::asset::{asset_types::{Asset, AssetMetadata, scene_asset::{SceneAsset, SceneMeshInstanceAsset}, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat}, vertex::{VertexBufferOthers, VertexBufferPosition}}, importer::{AssetImporter, vertex_reconditioner::TangentRecalculator}};
 
 pub struct GltfImporter {
     // Guard it by mutex if we want to parallelize it.
@@ -58,16 +58,43 @@ impl AssetImporter for GltfImporter {
             );
             context.asset_batch.write().expect("cannot acquire write lock for asset database.").insert(subasset_name, imported_asset);
         }
+
+        for scene in document.scenes() {
+            let asset_type = SubAssetType::Scene(scene.index());
+            let subasset_path = Self::generate_subasset_filename(path, asset_type);
+            let subasset_name = Self::generate_subasset_name(path, asset_type).into_string().expect("asset name should contain UTF-8 chars only.");
+            log::info!("Found scene {}.", subasset_name);
+            let imported_scene = Self::import_from_gltf_scene(path, &document, &scene);
+            let imported_asset = Arc::from(
+                RwLock::from(Asset::new(
+                    AssetMetadata {
+                        asset_file_path: Some(subasset_path.into_boxed_path()),
+                        asset_name: subasset_name.clone()
+                    },
+                    crate::asset::asset_types::AssetData::SceneAssetType(imported_scene)
+                ))
+            );
+            context.asset_batch.write().expect("cannot acquire write lock for asset database.").insert(subasset_name, imported_asset);
+        }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum SubAssetType {
     Texture(usize),
-    // Note: GLTF mesh corresponds to mesh instances, which is a part of a scene.
+    /// A GLTF mesh, which consists of several primitives, and is placed in a scene.
+    /// 
+    /// Differences between meshes and primitives:
+    /// - A mesh is a collection of primitives, and a primitive is a single draw call (therefore a single material).
+    /// - A mesh can be instanced in a scene to have model matrices, and a primitive cannot be instanced.
+    /// 
+    /// Currently unused, but we may want to support importing a mesh as a single subasset in the future, if we have submeshes set up.
     Mesh(usize),
-    // GLTF primitive, which corresponds to mesh. One mesh may contain several primitives.
-    Primitive { mesh: usize, primitive: usize }
+    /// GLTF primitive, which corresponds to mesh for our renderer.
+    /// TODO: support multiple primitives per mesh. Maybe we should use `submesh` and map primitives to submeshes.
+    Primitive { mesh: usize, primitive: usize },
+    /// A GLTF scene, flattened into a list of mesh instances with baked transforms.
+    Scene(usize)
 }
 
 impl Into<AddressMode> for gltf::texture::WrappingMode {
@@ -96,6 +123,7 @@ impl GltfImporter {
             SubAssetType::Texture(index) => format!(".tex_{}", index),
             SubAssetType::Mesh(index) => format!(".mesh_{}", index),
             SubAssetType::Primitive { mesh, primitive } => format!(".prim_{}_{}", mesh, primitive),
+            SubAssetType::Scene(index) => format!(".scene_{}", index),
         };
 
         let mut new_filename = gltf_file.file_name().unwrap().to_os_string();
@@ -113,6 +141,12 @@ impl GltfImporter {
     /// primitive index are required to address a primitive uniquely.
     pub(crate) fn primitive_subasset_name(gltf_file: &std::path::Path, mesh_index: usize, primitive_index: usize) -> String {
         Self::generate_subasset_name(gltf_file, SubAssetType::Primitive { mesh: mesh_index, primitive: primitive_index })
+            .into_string().expect("asset name should contain UTF-8 chars only")
+    }
+
+    /// Resolve the subasset name of a single glTF scene.
+    pub fn scene_subasset_name(gltf_file: &std::path::Path, scene_index: usize) -> String {
+        Self::generate_subasset_name(gltf_file, SubAssetType::Scene(scene_index))
             .into_string().expect("asset name should contain UTF-8 chars only")
     }
 
@@ -196,6 +230,50 @@ impl GltfImporter {
         Some(indices)
     }
 
+    // Scene importer
+    /// Flatten a glTF scene into a list of mesh instances with baked world
+    /// transforms.
+    ///
+    /// The scene graph is traversed breadth-first from the scene roots. Each
+    /// primitive of every encountered mesh produces one instance, so the
+    /// renderer never needs to re-parse the source glTF to walk the hierarchy.
+    pub(crate) fn import_from_gltf_scene(
+        gltf_file: &std::path::Path,
+        document: &gltf::Document,
+        scene: &gltf::Scene
+    ) -> SceneAsset {
+        let mut instances = Vec::new();
+
+        let mut transform_queue = VecDeque::<cgmath::Matrix4<f32>>::new();
+        let mut node_queue = VecDeque::<usize>::new();
+
+        for root_node in scene.nodes() {
+            transform_queue.push_back(root_node.transform().matrix().into());
+            node_queue.push_back(root_node.index());
+
+            while !node_queue.is_empty() {
+                let node_index = node_queue.pop_front().unwrap();
+                let current_transform = transform_queue.pop_front().unwrap();
+                let current_node = document.nodes().nth(node_index).expect("valid node index");
+
+                if let Some(mesh) = current_node.mesh() {
+                    for primitive in mesh.primitives() {
+                        instances.push(SceneMeshInstanceAsset {
+                            world_matrix: *AsRef::<[f32; 16]>::as_ref(&current_transform),
+                            mesh_subasset_name: Self::primitive_subasset_name(gltf_file, mesh.index(), primitive.index()),
+                        });
+                    }
+                }
+
+                for child in current_node.children() {
+                    transform_queue.push_back(current_transform * cgmath::Matrix4::from(child.transform().matrix()));
+                    node_queue.push_back(child.index());
+                }
+            }
+        }
+
+        SceneAsset { instances }
+    }
 
     pub(crate) fn import_from_gltf_primitive(
         importer: &mut GltfImporter,

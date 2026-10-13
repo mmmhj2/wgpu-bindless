@@ -1,3 +1,4 @@
+pub mod scene_asset;
 pub mod static_mesh_asset;
 pub mod texture_asset;
 pub mod vertex;
@@ -7,7 +8,7 @@ use std::{fs::File, io::{Read, Write}};
 use image::EncodableLayout;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::asset::{asset_types::{static_mesh_asset::StaticMeshAsset, texture_asset::TextureAsset}, importer::ImporterContext};
+use crate::asset::asset_types::{scene_asset::SceneAsset, static_mesh_asset::StaticMeshAsset, texture_asset::TextureAsset};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AssetMetadata {
@@ -18,7 +19,8 @@ pub struct AssetMetadata {
 #[derive(Serialize, Deserialize, Debug)]
 pub enum AssetData {
     StaticMeshAssetType(StaticMeshAsset),
-    TextureAssetType(TextureAsset)
+    TextureAssetType(TextureAsset),
+    SceneAssetType(SceneAsset)
 }
 
 pub trait ConcreteAssetType: Serialize + DeserializeOwned {
