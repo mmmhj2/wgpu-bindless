@@ -35,7 +35,7 @@ impl RendererState for State {
         // imported and persisted; later runs load the cached containers unless a
         // source file or the importer changed.
         let asset_manager = AssetManager::new();
-        let manifest_path = Path::new("resource/import_manifest.ff");
+        let manifest_path = Path::new("resource/import_gltf_manifest.ff");
         let mut manifest = ImportManifest::load(manifest_path);
         if manifest.entries.is_empty() {
             manifest.entries = vec![
