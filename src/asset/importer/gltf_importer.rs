@@ -22,8 +22,9 @@ impl AssetImporter for GltfImporter {
             log::info!("Found mesh {} with {} primitives, importing...", mesh.index(), mesh.primitives().len());
 
             for primitive in mesh.primitives() {
-                let subasset_path = Self::generate_subasset_filename(path, mesh.index(), SubAssetType::Primitive);
-                let subasset_name = Self::generate_subasset_name(path, mesh.index(), SubAssetType::Primitive).into_string().expect("asset name should contain UTF-8 chars only.");
+                let asset_type = SubAssetType::Primitive { mesh: mesh.index(), primitive: primitive.index() };
+                let subasset_path = Self::generate_subasset_filename(path, asset_type);
+                let subasset_name = Self::generate_subasset_name(path, asset_type).into_string().expect("asset name should contain UTF-8 chars only.");
                 let imported_mesh = Self::import_from_gltf_primitive(&mut self, &primitive, &buffers);
                 let imported_asset = Arc::from(
                     RwLock::from(Asset::new(
@@ -41,8 +42,9 @@ impl AssetImporter for GltfImporter {
         log::info!("Following textures are marked as color texture: {:?}", self.color_textures);
 
         for texture in document.textures() {
-            let subasset_path = Self::generate_subasset_filename(path, texture.index(), SubAssetType::Texture);
-            let subasset_name = Self::generate_subasset_name(path, texture.index(), SubAssetType::Texture).into_string().expect("asset name should contain UTF-8 chars only.");
+            let asset_type = SubAssetType::Texture(texture.index());
+            let subasset_path = Self::generate_subasset_filename(path, asset_type);
+            let subasset_name = Self::generate_subasset_name(path, asset_type).into_string().expect("asset name should contain UTF-8 chars only.");
             log::info!("Found texture {}.", subasset_name);
             let imported_texture = Self::import_from_gltf_texture(&texture, &textures, self.color_textures.contains(&subasset_name)).expect("failed to import texture asset");
             let imported_asset = Arc::from(
@@ -59,13 +61,13 @@ impl AssetImporter for GltfImporter {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum SubAssetType {
-    Texture,
+    Texture(usize),
     // Note: GLTF mesh corresponds to mesh instances, which is a part of a scene.
-    Mesh,
-    // GLTF primitive, which corresponds to mesh.
-    Primitive
+    Mesh(usize),
+    // GLTF primitive, which corresponds to mesh. One mesh may contain several primitives.
+    Primitive { mesh: usize, primitive: usize }
 }
 
 impl Into<AddressMode> for gltf::texture::WrappingMode {
@@ -83,17 +85,17 @@ impl GltfImporter {
         Self { color_textures: HashSet::new(), path: path.as_ref().into() }
     }
 
-    pub(crate) fn generate_subasset_filename(gltf_file: &std::path::Path, index: usize, asset_type: SubAssetType) -> std::path::PathBuf {
-        gltf_file.with_file_name(Self::generate_subasset_name(gltf_file, index, asset_type)).with_added_extension("asset")
+    pub(crate) fn generate_subasset_filename(gltf_file: &std::path::Path, asset_type: SubAssetType) -> std::path::PathBuf {
+        gltf_file.with_file_name(Self::generate_subasset_name(gltf_file, asset_type)).with_added_extension("asset")
     }
 
-    pub(crate) fn generate_subasset_name(gltf_file: &std::path::Path, index: usize, asset_type: SubAssetType) -> OsString {
+    pub(crate) fn generate_subasset_name(gltf_file: &std::path::Path, asset_type: SubAssetType) -> OsString {
         assert!(gltf_file.is_file());
 
         let new_suffix = match asset_type {
-            SubAssetType::Texture => format!(".tex_{}", index),
-            SubAssetType::Mesh => todo!("Mesh import is not supported yet."),
-            SubAssetType::Primitive => format!(".prim_{}", index),
+            SubAssetType::Texture(index) => format!(".tex_{}", index),
+            SubAssetType::Mesh(index) => format!(".mesh_{}", index),
+            SubAssetType::Primitive { mesh, primitive } => format!(".prim_{}_{}", mesh, primitive),
         };
 
         let mut new_filename = gltf_file.file_name().unwrap().to_os_string();
@@ -101,8 +103,17 @@ impl GltfImporter {
         return new_filename;
     }
 
-    pub(crate) fn generate_subasset_filename_string(gltf_file: &std::path::Path, index: usize, asset_type: SubAssetType) -> Option<String> {
-        Some(Self::generate_subasset_filename(gltf_file, index, asset_type).to_str()?.to_string())
+    pub(crate) fn generate_subasset_filename_string(gltf_file: &std::path::Path, asset_type: SubAssetType) -> Option<String> {
+        Some(Self::generate_subasset_filename(gltf_file, asset_type).to_str()?.to_string())
+    }
+
+    /// Resolve the subasset name of a single glTF primitive.
+    ///
+    /// One mesh may contain several primitives, so both the mesh index and the
+    /// primitive index are required to address a primitive uniquely.
+    pub(crate) fn primitive_subasset_name(gltf_file: &std::path::Path, mesh_index: usize, primitive_index: usize) -> String {
+        Self::generate_subasset_name(gltf_file, SubAssetType::Primitive { mesh: mesh_index, primitive: primitive_index })
+            .into_string().expect("asset name should contain UTF-8 chars only")
     }
 
     // Primitive importer
@@ -218,8 +229,7 @@ impl GltfImporter {
         ret.material.diffuse_texture_name = if let Some(base_color_texture) = pbr_material.base_color_texture() {
             let texture_name = GltfImporter::generate_subasset_name(
                 &importer.path,
-                base_color_texture.texture().index(),
-                crate::asset::importer::gltf_importer::SubAssetType::Texture
+                crate::asset::importer::gltf_importer::SubAssetType::Texture(base_color_texture.texture().index())
             ).into_string().expect("diffuse texture name should contain UTF-8 chars only");
             importer.color_textures.insert(texture_name.clone());
             Some(texture_name)
@@ -231,8 +241,7 @@ impl GltfImporter {
             Some(
                 GltfImporter::generate_subasset_name(
                     &importer.path,
-                    normal_texture.texture().index(),
-                    crate::asset::importer::gltf_importer::SubAssetType::Texture
+                    crate::asset::importer::gltf_importer::SubAssetType::Texture(normal_texture.texture().index())
                 ).into_string().expect("normal texture name should contain UTF-8 chars only")
             )
         } else {
