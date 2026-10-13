@@ -292,12 +292,20 @@ impl GltfImporter {
         }
     }
 
+    /// Map a glTF texel format onto an asset texture format.
+    ///
+    /// The sRGB suffix only applies to 8-bit color textures; all other formats
+    /// (including normal maps) are imported as linear formats.
     fn match_texture_format(f: gltf::image::Format, is_srgb: bool) -> TextureFormat {
         match f {
+            gltf::image::Format::R8 => TextureFormat::R8Unorm,
+            gltf::image::Format::R8G8 => TextureFormat::Rg8Unorm,
             gltf::image::Format::R8G8B8A8 => if is_srgb {TextureFormat::Rgba8Srgb} else {TextureFormat::Rgba8Unorm},
+            gltf::image::Format::R16 => TextureFormat::R16Unorm,
+            gltf::image::Format::R16G16 => TextureFormat::Rg16Unorm,
             gltf::image::Format::R16G16B16A16 => TextureFormat::Rgba16Unorm,
             gltf::image::Format::R32G32B32A32FLOAT => TextureFormat::Rgba32Float,
-            _ => panic!("Unsupported GLTF texture format")
+            _ => panic!("Unsupported GLTF texture format {:?}", f)
         }
     }
 
@@ -306,10 +314,10 @@ impl GltfImporter {
         images: &Vec<gltf::image::Data>,
         is_srgb: bool
     ) -> Result<TextureAsset, ()> {
-        let image = &images[texture.index()];
-
-        let converted_format = Self::match_texture_format(image.format, is_srgb);
+        // The format must be read from the image the texture sources from,
+        // not from the texture's own index into the image list.
         let image = &images[texture.source().index()];
+        let converted_format = Self::match_texture_format(image.format, is_srgb);
 
         let asset = TextureAsset {
             format: converted_format,
