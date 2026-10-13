@@ -1,5 +1,8 @@
 use std::{collections::VecDeque, num::NonZero, sync::Arc};
-use crate::renderer::{device_interface::DeviceInterface, mesh::{Mesh, drawable_mesh_traits::DrawableMesh, mesh_manager::MeshManager, static_mesh::{StaticMesh, StaticMeshBuilder}}, pipeline::{bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, pipeline_state::PipelineStates}};
+use crate::{
+    asset::{asset_manager::AssetManager, asset_types::AssetData, importer::gltf_importer::GltfImporter},
+    renderer::{device_interface::DeviceInterface, mesh::{Mesh, drawable_mesh_traits::DrawableMesh, mesh_manager::MeshManager, static_mesh::{StaticMesh, StaticMeshBuilder}}, pipeline::{pbr_material::PBRMaterial, pipeline_state::PipelineStates}}
+};
 
 /// Instances of instanced mesh.
 /// Holds unique data for each instance such as model matrix, and a reference to the underlying mesh.
@@ -31,12 +34,15 @@ impl StaticMeshInstance {
     /// Only nodes that contains meshes are processed.
     /// Transforms of the nodes will be preserved in the model matrices of the
     /// instances produced.
+    ///
+    /// Mesh and texture data are resolved from the assets previously imported
+    /// by a `GltfImporter` reading from `gltf_path`.
     pub fn create_from_gltf_scene(
         di: &DeviceInterface,
         pipeline_states: &mut PipelineStates,
+        gltf_path: &std::path::Path,
         scene: &gltf::Scene,
-        buffers: &Vec<gltf::buffer::Data>,
-        images: &Vec<gltf::image::Data>
+        assets: &AssetManager
     ) -> Vec<Self> {
         let mut ret = Vec::new();
 
@@ -53,7 +59,7 @@ impl StaticMeshInstance {
                 let current_node = scene.nodes().nth(node_queue.pop_front().unwrap()).expect("valid node index");
                 let current_transform = transform_queue.pop_front().unwrap();
                 if let Some(m) = current_node.mesh() {
-                    let instances = Self::create_from_gltf_mesh(di, pipeline_states, &m, buffers, images);
+                    let instances = Self::create_from_gltf_mesh(di, pipeline_states, gltf_path, &m, assets);
                     for inst in &instances {
                         di.get_queue().write_buffer(&inst.model_matrix, 0, bytemuck::cast_slice(AsRef::<[f32; 16]>::as_ref(&current_transform)));
                     }
@@ -77,9 +83,9 @@ impl StaticMeshInstance {
     pub fn create_from_gltf_mesh(
         di: &DeviceInterface,
         pipeline_states: &mut PipelineStates,
+        gltf_path: &std::path::Path,
         mesh: &gltf::Mesh,
-        buffers: &Vec<gltf::buffer::Data>,
-        images: &Vec<gltf::image::Data>
+        assets: &AssetManager
     ) -> Vec<Self> {
         let mut ret = Vec::new();
 
@@ -91,9 +97,18 @@ impl StaticMeshInstance {
                 mapped_at_creation: false,
             });
             let bg = Self::generate_bind_group(di, pipeline_states.get_mesh_manager(), &buffer);
+
+            let name = GltfImporter::primitive_subasset_name(gltf_path, mesh.index(), primitive.index());
+            let asset = assets.get_asset(&name).unwrap_or_else(|| panic!("static mesh asset '{name}' not found."));
+            let asset = asset.read().expect("failed to acquire read lock for static mesh asset.");
+            let mesh_asset = match asset.get_data() {
+                AssetData::StaticMeshAssetType(m) => m,
+                _ => panic!("asset '{name}' is not a static mesh asset."),
+            };
+
             ret.push(
                 Self{
-                    mesh: StaticMeshBuilder::new(di, pipeline_states.get_bindless_resource_manager_mut(), &primitive, buffers, images).recondition_and_commit(di).into(),
+                    mesh: StaticMeshBuilder::new(di, pipeline_states.get_bindless_resource_manager_mut(), mesh_asset, assets).recondition_and_commit(di).into(),
                     model_matrix: buffer,
                     model_matrix_bg: bg
                 }

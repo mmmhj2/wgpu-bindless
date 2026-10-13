@@ -1,14 +1,19 @@
-use std::{collections::VecDeque, sync::Arc};
-
 use crate::{
-    asset::importer::vertex_reconditioner::{
-        TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite
+    asset::{
+        asset_manager::AssetManager,
+        asset_types::{
+            AssetData,
+            GpuAssetType,
+            static_mesh_asset::StaticMeshAsset,
+        },
+        importer::vertex_reconditioner::{
+            TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite
+        },
     },
     renderer::{
     device_interface::DeviceInterface,
     mesh::{
         Mesh,
-        drawable_mesh_traits::DrawableMesh,
         vertex_types::{
             VertexBufferOthers,
             VertexBufferPosition
@@ -17,10 +22,6 @@ use crate::{
     pipeline::{
         bindless_resource_manager::BindlessResourceManager,
         pbr_material::PBRMaterial,
-        sampler::SamplerDescription,
-        texture::{
-            Texture, TextureType
-        }
     }
 }};
 
@@ -41,6 +42,34 @@ impl Mesh for StaticMesh {
     fn get_vertex_type(&self) -> super::vertex_types::VertexType { super::vertex_types::VertexType::Basic }
 }
 
+/// Upload a texture asset referenced by name and register it with the bindless manager.
+///
+/// Returns the (texture, sampler) bindless indices.
+/// 
+/// **TODO:** Manipulating asset within renderer seems to be a bad design for
+/// coupling. We should consider a better design in the future, maybe by having
+/// a separate asset upload stage before the renderer is initialized.
+fn push_texture_asset(
+    di: &DeviceInterface,
+    bindless_manager: &mut BindlessResourceManager,
+    assets: &AssetManager,
+    name: &str
+) -> (usize, usize) {
+    let asset = assets.get_asset(name).unwrap_or_else(|| panic!("texture asset '{name}' not found."));
+    let asset = asset.read().expect("failed to acquire read lock for texture asset.");
+    let texture = match asset.get_data() {
+        AssetData::TextureAssetType(t) => t,
+        _ => panic!("asset '{name}' is not a texture asset."),
+    };
+
+    let uploaded = texture.upload(name, di.get_device(), di.get_queue());
+    let tx = bindless_manager.push_texture(uploaded.create_view(&Default::default()))
+        .expect("failed to push texture to bindless manager.");
+    let sp = bindless_manager.push_sampler(di.get_device(), texture.sampler.clone().into())
+        .expect("failed to push sampler to bindless manager.");
+    (tx, sp)
+}
+
 /// Builder for instanced mesh.
 /// It contains all data of an instanced mesh, but is stored on CPU for further reconditioning.
 /// It must be committed to GPU before using. 
@@ -55,164 +84,53 @@ pub struct StaticMeshBuilder {
 }
 
 impl StaticMeshBuilder {
-    fn construct_position_buffer (
-        primitive: &gltf::Primitive,
-        buffers: &Vec<gltf::buffer::Data>
-    ) -> Vec<VertexBufferPosition> {
-        let mut position_buffer: Vec<VertexBufferPosition> = Vec::new();
-
-        let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
-        if let Some(iter) = reader.read_positions() {
-           for vertex_position in iter {
-               position_buffer.push(VertexBufferPosition { position: vertex_position });
-           }
-       }
-
-        position_buffer
-    }
-
-    fn construct_attribute_buffer (
-        primitive: &gltf::Primitive,
-        buffers: &Vec<gltf::buffer::Data>,
-        vertices: usize
-    ) -> (Vec<VertexBufferOthers>, bool) {
-        let mut attribute_buffer = Vec::new();
-        attribute_buffer.resize(
-            vertices,
-            VertexBufferOthers { color: [1.0, 1.0, 1.0, 1.0], normal: [0.0, 0.0, 0.0], tangent: [0.0, 0.0, 0.0, 1.0], uv0: [0.0, 0.0] }
-        );
-
-        let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
-        if let Some(iter) = reader.read_colors(0) {
-            for (i, c) in iter.into_rgba_f32().enumerate() {
-                attribute_buffer[i].color = c;
-            }
-        } else {
-            log::warn!("Imported mesh does not have vertex color, or the vertex color is not located at set 0.")
-        }
-
-        if let Some(iter) = reader.read_normals() {
-            for (i, n) in iter.enumerate() {
-                attribute_buffer[i].normal = n;
-            }
-        } else {
-            log::warn!("Imported mesh does not vertex have normal.")
-        }
-
-        if let Some(iter) = reader.read_tex_coords(0) {
-            for (i, uv) in iter.into_f32().enumerate() {
-                attribute_buffer[i].uv0 = uv;
-            }
-        } else {
-            log::warn!("Imported mesh does not have texture coordinate, or the texcoord is not located at set 0.")
-        }
-
-        if let Some(iter) = reader.read_tangents() {
-            for (i, n) in iter.enumerate() {
-                attribute_buffer[i].tangent = n;
-            }
-
-            (attribute_buffer, false)
-        } else {
-            log::info!("Imported mesh does not vertex have tangent. It will be automatically calculated on upload.");
-            (attribute_buffer, true)
-        }
-    }
-
-    fn construct_index_buffer (
-        primitive: &gltf::Primitive,
-        buffers: &Vec<gltf::buffer::Data>
-    ) -> Option<Vec<u32>> {
-        let mut indices = Vec::new();
-
-        let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
-        let iter = reader.read_indices()?;
-        for i in iter.into_u32() {
-            indices.push(i);
-        }
-
-        Some(indices)
-    }
-
+    /// Build a mesh builder from an imported static mesh asset.
+    ///
+    /// Textures are resolved by name through `assets`; missing slots fall back
+    /// to the bindless manager's default textures.
+    /// 
+    /// **Note**: The builder copies whole vertex buffer of the mesh on CPU. Some
+    /// optimization may be needed in the future to avoid this.
     pub(crate) fn new(
         di: &DeviceInterface,
         bindless_manager: &mut BindlessResourceManager,
-        primitive: &gltf::Primitive,
-        buffers: &Vec<gltf::buffer::Data>,
-        images: &Vec<gltf::image::Data>
+        mesh: &StaticMeshAsset,
+        assets: &AssetManager
     ) -> Self {
-        let vp = Self::construct_position_buffer(
-            &primitive,
-            buffers
-        );
-        let (va, need_tangent) = Self::construct_attribute_buffer(&primitive, buffers, vp.len());
-        let vi = Self::construct_index_buffer(&primitive, buffers);
-        let vertex_draw_count = match vi.as_ref() {
-            Some(b) => b.len(),
-            None => vp.len()
-        } as u32;
-
-        // Construct textures for the primitive.
-        let pbr_material = primitive.material().pbr_metallic_roughness();
-
-        let diffuse_id = if let Some(base_color_texture) = pbr_material.base_color_texture() {
-            let tx: wgpu::Texture = Texture::create_from_gltf(
-                di,
-                TextureType::ColorSrgb,
-                &base_color_texture.texture(),
-                images,
-                None
-            ).expect("Failed to import diffuse texture").into();
-            
-            let txv = tx.create_view(&Default::default());
-            let tx = bindless_manager.push_texture(txv).expect("Failed to push diffuse texture.");
-
-            let spd = SamplerDescription::from(&base_color_texture.texture().sampler());
-            let sp = bindless_manager.push_sampler(di.get_device(), spd).expect("");
-
-            (tx, sp)
-        } else {
-            (bindless_manager.get_white_texture(), bindless_manager.get_default_sampler())
+        let diffuse = match &mesh.material.diffuse_texture_name {
+            Some(name) => push_texture_asset(di, bindless_manager, assets, name),
+            None => (bindless_manager.get_white_texture(), bindless_manager.get_default_sampler()),
         };
 
-        let normal_id = if let Some(normal_texture) = primitive.material().normal_texture() {
-            let tx: wgpu::Texture = Texture::create_from_gltf(
-                di,
-                TextureType::Normal,
-                &normal_texture.texture(),
-                images,
-                None
-            ).expect("Failed to import normal texture").into();
-            
-            let txv = tx.create_view(&Default::default());
-            let tx = bindless_manager.push_texture(txv).expect("Failed to push normal texture.");
-
-            let spd = SamplerDescription::from(&normal_texture.texture().sampler());
-            let sp = bindless_manager.push_sampler(di.get_device(), spd).expect("");
-
-            (tx, sp)
-        } else {
-            (bindless_manager.get_default_bump_texture(), bindless_manager.get_default_sampler())
+        let normal = match &mesh.material.normal_texture_name {
+            Some(name) => push_texture_asset(di, bindless_manager, assets, name),
+            None => (bindless_manager.get_default_bump_texture(), bindless_manager.get_default_sampler()),
         };
 
-        let should_have_mrao_texture = primitive.material().pbr_metallic_roughness().metallic_roughness_texture().is_some() || primitive.material().occlusion_texture().is_some();
-
-        let mrao_id = if should_have_mrao_texture {
-            panic!("")
-        } else {
-            (bindless_manager.get_default_mrao_texture(), bindless_manager.get_default_sampler())
+        let mrao = match &mesh.material.mrao_texture_name {
+            Some(name) => push_texture_asset(di, bindless_manager, assets, name),
+            None => (bindless_manager.get_default_mrao_texture(), bindless_manager.get_default_sampler()),
         };
 
         let material = PBRMaterial::new(
-            diffuse_id.0,
-            normal_id.0,
-            mrao_id.0,
-            diffuse_id.1,
-            normal_id.1,
-            mrao_id.1
+            diffuse.0,
+            normal.0,
+            mrao.0,
+            diffuse.1,
+            normal.1,
+            mrao.1
         );
 
-        Self { vp, va, vi, vertex_draw_count, need_tangent, material, vertex_color_scale: pbr_material.base_color_factor() }
+        Self {
+            vp: mesh.vp.clone(),
+            va: mesh.va.clone(),
+            vi: mesh.vi.clone(),
+            material,
+            vertex_draw_count: mesh.vertex_draw_count,
+            vertex_color_scale: mesh.vertex_color_scale,
+            // The importer has already recalculated tangents where they were missing.
+            need_tangent: false,
+        }
     }
 
     fn push_buffers(
@@ -284,7 +202,7 @@ impl VertexColorApplyScale for StaticMeshBuilder {}
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use crate::asset::importer::gltf_importer::GltfImporter;
 
     #[test]
     fn test_buffer_import() {
@@ -297,17 +215,16 @@ mod test {
         let primitive = mesh.primitives().next().expect("cube_textured has not primitives.");
         assert_eq!(primitive.mode(), gltf::mesh::Mode::Triangles);
 
-        let vp = StaticMeshBuilder::construct_position_buffer(&primitive, &buffers);
-        let va = StaticMeshBuilder::construct_attribute_buffer(&primitive, &buffers, vp.len());
-        let vi = StaticMeshBuilder::construct_index_buffer(&primitive, &buffers).expect("Cannot find index buffer.");
+        let mut importer = GltfImporter::new("resource/test_two_cubes.glb");
+        let asset = GltfImporter::import_from_gltf_primitive(&mut importer, &primitive, &buffers);
 
         // Four vertices for each face.
-        assert_eq!(vp.len(), 4 * 6);
-        assert_eq!(vp.len(), va.0.len());
+        assert_eq!(asset.vp.len(), 4 * 6);
+        assert_eq!(asset.vp.len(), asset.va.len());
         // Every face has two triangles and therefore six vertices.
-        assert_eq!(vi.len(), 2 * 6 * 3);
-        println!("Vertex positions: {:?}", &vp);
-        println!("Vertex attributes: {:?}", &va);
-        println!("Indices: {:?}", &vi);
+        assert_eq!(asset.vi.as_ref().expect("Cannot find index buffer.").len(), 2 * 6 * 3);
+        println!("Vertex positions: {:?}", &asset.vp);
+        println!("Vertex attributes: {:?}", &asset.va);
+        println!("Indices: {:?}", &asset.vi);
     }
 }

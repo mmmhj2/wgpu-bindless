@@ -1,7 +1,17 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
-use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance}, pipeline::{camera::CameraPerspectiveBuilder, framebuffers::Framebuffers, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager, texture::{Texture, TextureType}}, window::RendererState}};
+use rust_renderer::{
+    app::DefaultAppHandler,
+    asset::{
+        asset_manager::AssetManager,
+        asset_types::{AssetData::TextureAssetType, GpuAssetType},
+        importer::{gltf_importer::GltfImporter, image_file_importer::{ColorSpace, ImageArrayImporter}},
+    },
+    renderer::{device_interface::DeviceInterface, mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance}, pipeline::{camera::CameraPerspectiveBuilder, framebuffers::Framebuffers, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager}, window::RendererState}
+};
 use winit::{event_loop::EventLoop, window::Window};
+
+const GLTF_PATH: &str = "resource/test_two_cubes.glb";
 
 pub struct State {
     window: Arc<Window>,
@@ -9,7 +19,8 @@ pub struct State {
     pipeline: PipelineStates,
     skybox: SkyboxManager,
     fb: Framebuffers,
-    gltf_models: Vec<StaticMeshInstance>
+    gltf_models: Vec<StaticMeshInstance>,
+    _asset_manager: AssetManager
 }
 
 impl RendererState for State {
@@ -19,18 +30,11 @@ impl RendererState for State {
         let mut skybox = SkyboxManager::new(&device, pipeline.get_camera_manager(), wgpu::TextureFormat::Rgba16Float, wgpu::TextureFormat::Depth32Float);
         let fb = Framebuffers::new(&device, wgpu::TextureFormat::Rgba16Float);
 
-        let (document, buffers, images) = gltf::import("resource/test_two_cubes.glb").expect("Cannot open glb file.");
-        
-        let gltf_models = StaticMeshInstance::create_from_gltf_scene(
-            &device,
-            &mut pipeline,
-            &document.scenes().next().expect("Document should contain at least one scene"),
-            &buffers,
-            &images);
-
-        let skybox_texture = Texture::create_from_file_array_rgba8(
-            &device,
-            &[
+        // Import both the model and the skybox cube map into the asset database.
+        let asset_manager = AssetManager::new();
+        asset_manager.import(GltfImporter::new(GLTF_PATH));
+        asset_manager.import(ImageArrayImporter::new(
+            [
                 "resource/skybox/right.jpg",
                 "resource/skybox/left.jpg",
                 "resource/skybox/top.jpg",
@@ -38,8 +42,27 @@ impl RendererState for State {
                 "resource/skybox/front.jpg",
                 "resource/skybox/back.jpg"
             ],
-            TextureType::ColorSrgb
-        ).expect("cannot load skybox textures");
+            ColorSpace::Srgb
+        ));
+
+        let (document, _buffers, _images) = gltf::import(GLTF_PATH).expect("Cannot open glb file.");
+
+        let gltf_models = StaticMeshInstance::create_from_gltf_scene(
+            &device,
+            &mut pipeline,
+            Path::new(GLTF_PATH),
+            &document.scenes().next().expect("Document should contain at least one scene"),
+            &asset_manager);
+
+        let skybox_texture = {
+            let asset = asset_manager.get_asset("right.array").expect("skybox array asset should be present");
+            let asset = asset.read().expect("failed to read skybox asset");
+            if let TextureAssetType(texture) = asset.get_data() {
+                texture.upload("skybox", device.get_device(), device.get_queue())
+            } else {
+                panic!("skybox asset is not a texture asset");
+            }
+        };
         skybox.set_texture(skybox_texture);
 
         Self {
@@ -48,7 +71,8 @@ impl RendererState for State {
             pipeline,
             skybox,
             fb,
-            gltf_models
+            gltf_models,
+            _asset_manager: asset_manager
         }
     }
 

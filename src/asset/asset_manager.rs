@@ -34,4 +34,9 @@ impl AssetManager {
     pub fn get_database(&self) -> std::sync::RwLockReadGuard<'_, HashMap<std::string::String, Arc<std::sync::RwLock<asset_types::Asset>>>> {
         self.asset_database.read().expect("failed to acquire read lock for asset database")
     }
+
+    /// Look up a single asset by its name.
+    pub fn get_asset(&self, name: &str) -> Option<Arc<RwLock<Asset>>> {
+        self.asset_database.read().expect("failed to acquire read lock for asset database").get(name).cloned()
+    }
 }
