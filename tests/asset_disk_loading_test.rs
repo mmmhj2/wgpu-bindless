@@ -51,7 +51,7 @@ mod test {
         assert!(peeked.provenance.is_some(), "peeked metadata should carry provenance");
 
         // The full container round-trips.
-        let loaded = Asset::load_from_disk(&path).expect("asset should load from its container");
+        let loaded = Asset::try_load_from_disk(&path).expect("asset should load from its container");
         assert_eq!(loaded.metadata().asset_name, name);
     }
 

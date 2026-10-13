@@ -18,7 +18,7 @@ use rust_renderer::asset::{asset_manager::AssetManager, asset_types::{Asset, Ass
             }
         }
 
-        Asset::load_from_disk(&test_filename).unwrap();
+        Asset::try_load_from_disk(&test_filename).unwrap();
     }
 
     #[test]
@@ -56,7 +56,7 @@ use rust_renderer::asset::{asset_manager::AssetManager, asset_types::{Asset, Ass
             }
         }
 
-        Asset::load_from_disk(&test_filename).unwrap();
+        Asset::try_load_from_disk(&test_filename).unwrap();
     }
 
     #[test]
@@ -84,7 +84,7 @@ use rust_renderer::asset::{asset_manager::AssetManager, asset_types::{Asset, Ass
             }
         }
 
-        Asset::load_from_disk(&test_filename).unwrap();
+        Asset::try_load_from_disk(&test_filename).unwrap();
     }
 
     #[test]
