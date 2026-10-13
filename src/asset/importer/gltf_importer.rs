@@ -257,6 +257,9 @@ impl GltfImporter {
             ret.recalculate_tangents();
         }
 
+        // Finalize vertex data (e.g. vertex color scaling) for zero-copy upload.
+        ret.recondition();
+
         return ret;
     }
 
