@@ -1,6 +1,6 @@
-use std::{collections::HashMap, fs::File, sync::{Arc, RwLock, RwLockReadGuard}};
+use std::{collections::HashMap, sync::{Arc, RwLock, RwLockReadGuard}};
 
-use crate::asset::{asset_types::{self, Asset}, importer::{AssetImporter, ImporterContext}};
+use crate::asset::{asset_types::{self, Asset}, importer::{AssetImporter, ImporterContext}, provenance::{fingerprint_all, now_unix_ms, ImportProvenance}};
 
 pub struct AssetManager {
     asset_database : RwLock<HashMap<String, Arc<RwLock<Asset>>>>
@@ -14,11 +14,26 @@ impl AssetManager {
     }
 
     pub fn import<T: AssetImporter>(&self, importer: T) {
-        let context = ImporterContext::new();
+        let mut context = ImporterContext::new();
         importer.import(&context);
-        
-        let mut database = self.asset_database.write().expect("Failed to acquire write lock for asset database");
+
+        // Stamp every produced asset with provenance built from the sources the
+        // importer recorded, then persist the container so it can be reused.
+        let provenance = ImportProvenance {
+            importer_id: T::IMPORTER_ID.to_string(),
+            importer_version: T::IMPORTER_VERSION,
+            imported_unix_ms: now_unix_ms(),
+            sources: fingerprint_all(context.take_sources()),
+        };
+
         let pending_database = context.asset_batch.into_inner().expect("Failed to consume pending asset database.");
+        for asset in pending_database.values() {
+            let mut asset = asset.write().expect("Failed to acquire write lock for asset.");
+            asset.metadata_mut().provenance = Some(provenance.clone());
+            asset.save_to_disk().expect("Failed to save imported asset to disk.");
+        }
+
+        let mut database = self.asset_database.write().expect("Failed to acquire write lock for asset database");
         database.extend(pending_database);
     }
 

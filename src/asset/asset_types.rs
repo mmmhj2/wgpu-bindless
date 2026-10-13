@@ -8,12 +8,39 @@ use std::{fs::File, io::{Read, Write}};
 use image::EncodableLayout;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::asset::asset_types::{scene_asset::SceneAsset, static_mesh_asset::StaticMeshAsset, texture_asset::TextureAsset};
+use crate::asset::{asset_types::{scene_asset::SceneAsset, static_mesh_asset::StaticMeshAsset, texture_asset::TextureAsset}, provenance::ImportProvenance};
+
+/// Name of the ZIP entry holding the serialized [`AssetMetadata`].
+const METADATA_ENTRY: &str = "metadata";
+/// Name of the ZIP entry holding the serialized [`AssetData`].
+const PAYLOAD_ENTRY: &str = "payload";
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AssetMetadata {
     pub asset_name: String,
-    pub asset_file_path: Option<Box<std::path::Path>>
+    pub asset_file_path: Option<Box<std::path::Path>>,
+    /// How this asset was produced. `None` for legacy or hand-built assets,
+    /// which the loader always treats as stale.
+    #[serde(default)]
+    pub provenance: Option<ImportProvenance>
+}
+
+impl AssetMetadata {
+    pub fn new(asset_name: String, asset_file_path: Option<Box<std::path::Path>>) -> Self {
+        Self { asset_name, asset_file_path, provenance: None }
+    }
+
+    /// Read only the metadata entry of an on-disk asset container.
+    ///
+    /// The payload entry is never opened, so this stays cheap regardless of how
+    /// large the asset is.
+    pub fn peek(path: &std::path::Path) -> Self {
+        let file = File::open(path)
+            .unwrap_or_else(|e| panic!("cannot open asset file '{}': {e}", path.display()));
+        let mut archive = zip::ZipArchive::new(file)
+            .unwrap_or_else(|e| panic!("asset file '{}' is not a valid archive: {e}", path.display()));
+        read_asset_entry(&mut archive, METADATA_ENTRY)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -41,7 +68,10 @@ impl Asset {
     pub fn new(metadata: AssetMetadata, data: AssetData) -> Self {
         Self { metadata, data }
     }
-    
+
+    pub fn metadata(&self) -> &AssetMetadata { &self.metadata }
+    pub fn metadata_mut(&mut self) -> &mut AssetMetadata { &mut self.metadata }
+
     pub fn get_asset_file_path(&self) -> Option<&std::path::Path> { 
         match &self.metadata.asset_file_path {
             Some(p) => Some(p.as_ref()),
@@ -52,16 +82,56 @@ impl Asset {
     pub fn get_data(&self) -> &AssetData { &self.data }
     pub fn get_data_mut(&mut self) -> &mut AssetData { &mut self.data }
     
+    /// Serialize the asset into its on-disk ZIP container.
+    ///
+    /// Metadata and payload are stored as two separate, uncompressed entries so
+    /// that metadata can later be read without touching the payload.
     pub fn save_to_disk(&self) -> Result<(), ()> {
-        let disk_path = self.metadata.asset_file_path.as_ref().expect("This asset cannot be saved to disk.");
-        let b = flexbuffers::to_vec(self).unwrap();
-        File::create(disk_path).unwrap().write_all(b.as_bytes()).unwrap();
+        let disk_path = self.metadata.asset_file_path.as_ref().expect("This asset cannot be saved to disk.").as_ref();
+        write_asset_container(disk_path, self);
         Ok(())
     }
 
     pub fn load_from_disk(path: &std::path::Path) -> Result<Self, ()> {
-        let mut buf = Vec::new();
-        File::open(path).expect("cannot open asset file").read_to_end(&mut buf).unwrap();
-        Ok(flexbuffers::from_buffer(&buf.as_slice()).unwrap())
+        Ok(read_asset_container(path))
     }
+}
+
+/// Write an asset to `path` as a ZIP container with `metadata` / `payload` entries.
+fn write_asset_container(path: &std::path::Path, asset: &Asset) {
+    let file = File::create(path)
+        .unwrap_or_else(|e| panic!("cannot create asset file '{}': {e}", path.display()));
+    let mut archive = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Stored);
+
+    let metadata = flexbuffers::to_vec(&asset.metadata).expect("failed to serialize asset metadata");
+    archive.start_file(METADATA_ENTRY, options).expect("failed to start asset metadata entry");
+    archive.write_all(&metadata).expect("failed to write asset metadata");
+
+    let payload = flexbuffers::to_vec(&asset.data).expect("failed to serialize asset payload");
+    archive.start_file(PAYLOAD_ENTRY, options).expect("failed to start asset payload entry");
+    archive.write_all(&payload).expect("failed to write asset payload");
+
+    archive.finish().expect("failed to finalize asset container");
+}
+
+/// Read and deserialize a single named entry from an asset container.
+fn read_asset_entry<T: DeserializeOwned>(archive: &mut zip::ZipArchive<File>, name: &str) -> T {
+    let mut entry = archive.by_name(name)
+        .unwrap_or_else(|e| panic!("asset container is missing a required entry '{name}': {e}"));
+    let mut buffer = Vec::new();
+    entry.read_to_end(&mut buffer).expect("failed to read asset entry");
+    flexbuffers::from_slice(buffer.as_slice()).expect("failed to deserialize asset entry")
+}
+
+/// Load a full asset from its on-disk ZIP container.
+fn read_asset_container(path: &std::path::Path) -> Asset {
+    let file = File::open(path)
+        .unwrap_or_else(|e| panic!("cannot open asset file '{}': {e}", path.display()));
+    let mut archive = zip::ZipArchive::new(file)
+        .unwrap_or_else(|e| panic!("asset file '{}' is not a valid archive: {e}", path.display()));
+    let metadata: AssetMetadata = read_asset_entry(&mut archive, METADATA_ENTRY);
+    let data: AssetData = read_asset_entry(&mut archive, PAYLOAD_ENTRY);
+    Asset::new(metadata, data)
 }
