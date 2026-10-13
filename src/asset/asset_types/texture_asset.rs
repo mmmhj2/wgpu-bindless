@@ -2,7 +2,7 @@ use std::num::NonZero;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{asset::asset_types::{ConcreteAssetType, GpuAssetType}, renderer::pipeline::texture::Texture};
+use crate::asset::asset_types::{ConcreteAssetType, GpuAssetType};
 
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -10,7 +10,11 @@ pub enum TextureFormat {
     Rgba8Unorm,
     Rgba8Srgb,
     Rgba16Unorm,
-    Rgba32Float
+    Rgba32Float,
+    R8Unorm,
+    Rg8Unorm,
+    R16Unorm,
+    Rg16Unorm
 }
 
 impl Into<wgpu::TextureFormat> for TextureFormat {
@@ -20,6 +24,10 @@ impl Into<wgpu::TextureFormat> for TextureFormat {
             TextureFormat::Rgba8Srgb => wgpu::TextureFormat::Rgba8UnormSrgb,
             TextureFormat::Rgba16Unorm => wgpu::TextureFormat::Rgba16Unorm,
             TextureFormat::Rgba32Float => wgpu::TextureFormat::Rgba32Float,
+            TextureFormat::R8Unorm => wgpu::TextureFormat::R8Unorm,
+            TextureFormat::Rg8Unorm => wgpu::TextureFormat::Rg8Unorm,
+            TextureFormat::R16Unorm => wgpu::TextureFormat::R16Unorm,
+            TextureFormat::Rg16Unorm => wgpu::TextureFormat::Rg16Unorm,
         }
     }
 }
@@ -132,13 +140,41 @@ impl TextureAsset {
         let rows_per_image = size.height.div_ceil(block_dimensions.1);
         return (bytes_per_row, rows_per_image)
     }
+
+    /// Build a texture asset that holds a single texel.
+    ///
+    /// This is useful for providing default fallback textures (white, flat normal, etc.).
+    /// The sampler defaults to `Sampler::default()`.
+    pub fn from_single_color_texel(
+        texel: impl Into<Box<[u8]>>,
+        format: TextureFormat,
+        dimension: TextureDimension
+    ) -> Self {
+        let one = NonZero::new(1u32).unwrap();
+        let (height, depth_or_array_slice) = match dimension {
+            TextureDimension::D1 => (None, None),
+            TextureDimension::D2 => (Some(one), None),
+            TextureDimension::D2Array => (Some(one), Some(one)),
+            TextureDimension::D3 => (Some(one), Some(one)),
+        };
+
+        Self {
+            format,
+            dimension,
+            width: one,
+            height,
+            depth_or_array_slice,
+            sampler: Sampler::default(),
+            texels: TexelData::Plain(texel.into()),
+        }
+    }
 }
 
 impl ConcreteAssetType for TextureAsset {
 }
 
 impl GpuAssetType for TextureAsset {
-    type GpuObjectType = Texture;
+    type GpuObjectType = wgpu::Texture;
 
     /// Upload the texture asset onto GPU device.
     fn upload(&self, name: &str, device: &wgpu::Device, queue: &wgpu::Queue) -> Self::GpuObjectType {
@@ -224,6 +260,6 @@ impl GpuAssetType for TextureAsset {
             },
         }
 
-        return Texture::new(texture);
+        return texture;
     }
 }

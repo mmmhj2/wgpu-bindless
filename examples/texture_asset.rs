@@ -26,8 +26,7 @@ impl RendererState for State {
             let texture_asset = asset_db.iter().next().expect("at least one asset should be imported successfully");
             if let TextureAssetType(asset) = texture_asset.1.read().unwrap().get_data() {
                 let texture = asset.upload(texture_asset.0, device.get_device(), device.get_queue());
-                let wgpu_texture: wgpu::Texture = texture.into();
-                texture_view = wgpu_texture.create_view(&wgpu::TextureViewDescriptor::default());
+                texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
                 sampler = asset.sampler.clone().into();
             } else {
                 panic!("unexpected asset type");
