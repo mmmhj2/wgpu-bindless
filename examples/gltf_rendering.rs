@@ -1,14 +1,18 @@
 use std::{path::Path, sync::Arc};
 
 use rust_renderer::{
-    app::DefaultAppHandler,
-    asset::{
+    app::DefaultAppHandler, asset::{
         asset_manager::AssetManager,
         asset_store::{ImportJob, ImportManifest, ManifestEntry},
         asset_types::{AssetData::{SceneAssetType, TextureAssetType}, GpuAssetType},
         importer::{gltf_importer::GltfImporter, image_file_importer::ColorSpace},
-    },
-    renderer::{device_interface::DeviceInterface, mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance}, pipeline::{camera::CameraPerspectiveBuilder, framebuffers::Framebuffers, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager}, window::RendererState}
+    }, renderer::{
+        device_interface::DeviceInterface,
+        mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance},
+        pipeline::{camera::CameraPerspectiveBuilder, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager},
+        postfx::framebuffers::Framebuffers,
+        window::RendererState
+    }
 };
 use winit::{event_loop::EventLoop, window::Window};
 
