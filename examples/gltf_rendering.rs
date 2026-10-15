@@ -10,7 +10,7 @@ use rust_renderer::{
         device_interface::DeviceInterface,
         mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance},
         pipeline::{camera::CameraPerspectiveBuilder, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager},
-        postfx::{bloom::BloomPass, postfx_stack::{PostFxInput, PostFxInputs, PostFxStack}, tonemap::TonemapPass},
+        postfx::{bloom::BloomPass, postfx_stack::{PostFxInput, PostFxExtraInputs, PostFxStack}, tonemap::AcesTonemapPass},
         window::RendererState
     }
 };
@@ -35,7 +35,7 @@ impl RendererState for State {
         let mut skybox = SkyboxManager::new(&device, pipeline.get_camera_manager(), wgpu::TextureFormat::Rgba16Float, wgpu::TextureFormat::Depth32Float);
         let mut postfx = PostFxStack::new(&device, wgpu::TextureFormat::Rgba16Float);
         postfx.push_pass(Box::new(BloomPass::new(&device, wgpu::TextureFormat::Rgba16Float)));
-        postfx.push_pass(Box::new(TonemapPass::new(&device, wgpu::TextureFormat::Rgba16Float, device.get_default_texture_format())));
+        postfx.push_pass(Box::new(AcesTonemapPass::new(&device, wgpu::TextureFormat::Rgba16Float, device.get_default_texture_format())));
 
         // Load through the import manifest: on the first run the jobs are
         // imported and persisted; later runs load the cached containers unless a
@@ -178,7 +178,7 @@ impl RendererState for State {
 
         let final_view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let inputs = PostFxInputs::new()
+        let inputs = PostFxExtraInputs::new()
             .with(PostFxInput::Depth, self.device.get_depth_texture_view().expect("depth view should be ready"));
 
         self.postfx.run(

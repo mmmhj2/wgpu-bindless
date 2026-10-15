@@ -1,9 +1,7 @@
 use std::num::NonZero;
 
 use crate::renderer::{
-    device_interface::DeviceInterface,
-    pipeline::sampler::SamplerDescription,
-    postfx::{framebuffers::FramebufferMipChain, postfx_stack::{PostFxContext, PostFxPass}},
+    device_interface::DeviceInterface, pipeline::sampler::SamplerDescription, postfx::{framebuffers::FramebufferMipChain, postfx_stack::{PostFxContext, PostFxPass, PostFxResourceCache}},
 };
 
 /// Screen space bloom pass.
@@ -11,6 +9,9 @@ use crate::renderer::{
 /// The pass operates in place on the HDR target: it downsamples the input into
 /// its private half-resolution mip chain and then upsamples it back additively
 /// onto the output.
+/// 
+/// Creates the transient resource `BloomMipchainHighest`, representing the
+/// highest level (smallest, typically only 1x1) of the color mipchain.
 pub struct BloomPass {
     bgl_bloom: wgpu::BindGroupLayout,
     ppl_bloom_down: wgpu::RenderPipeline,
@@ -23,6 +24,7 @@ pub struct BloomPass {
 impl BloomPass {
     const BLOOM_RADIUS: f32 = 0.5;
     const BLOOM_STRENGTH: f64 = 0.5;
+    pub const BLOOM_MIPCHAIN_HIGHEST_NAME: &str = "BloomMipchainHighest";
 
     const DBGL_BLOOM: wgpu::BindGroupLayoutDescriptor<'static> = wgpu::BindGroupLayoutDescriptor {
         label: Some("Bloom descriptor set layout"),
@@ -159,7 +161,7 @@ impl PostFxPass for BloomPass {
         self.mip_chain.create_textures(di, width, height);
     }
 
-    fn apply(&mut self, ctx: &mut PostFxContext<'_>) {
+    fn apply(&mut self, ctx: &mut PostFxContext<'_>, cache: &mut PostFxResourceCache) {
         let di = ctx.device;
         let input = ctx.input;
         let output = ctx.output;
@@ -238,6 +240,8 @@ impl PostFxPass for BloomPass {
             rp.set_bind_group(0, &bg, &[]);
             rp.draw(0..3, 0..1);
         }
+
+        cache.publish(Self::BLOOM_MIPCHAIN_HIGHEST_NAME, mipchain.last().unwrap().clone());
 
         for mip in (1..mipchain.len()).rev() {
             let mut rp = ce.begin_render_pass(&wgpu::RenderPassDescriptor{

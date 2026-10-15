@@ -1,5 +1,7 @@
 @group(0) @binding(0)
 var hdr_input: texture_2d<f32>;
+// Average luminance of the scene, typically a 1x1 texture.
+// Unused for ACES tonemapping.
 @group(0) @binding(1)
 var luminance_tx: texture_2d<f32>;
 @group(0) @binding(2)
@@ -32,7 +34,7 @@ fn vs_main(
 }
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_aces(in: VertexOutput) -> @location(0) vec4<f32> {
     var out = textureSample(hdr_input, hdr_input_sp, in.uv);
     return (out * (A * out + B)) / (out * (C * out + D) + E); 
 }
