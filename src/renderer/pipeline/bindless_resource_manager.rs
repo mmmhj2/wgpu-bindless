@@ -68,7 +68,7 @@ impl BindlessResourceManager {
             default_mrao_txv_idx: 0
         };
 
-        ret.default_sampler_idx = ret.push_sampler(d.get_device(), Default::default()).expect("Failed to create default sampler.");
+        ret.default_sampler_idx = ret.push_sampler(d.get_device(), Default::default()).expect("Failed to create default sampler.").0;
 
         let white_texture = TextureAsset::from_single_color_texel(
             vec![255u8, 255, 255, 255],
@@ -132,16 +132,16 @@ impl BindlessResourceManager {
     /// Descriptions are hashed and stored into a Hash Map.
     /// Samplers with the same description will therefore be reused and shares
     /// the same index.
-    pub fn push_sampler(&mut self, d: &wgpu::Device, desc: SamplerDescription) -> Result<usize, LinearResourceAllocatorError> {
+    pub fn push_sampler(&mut self, d: &wgpu::Device, desc: SamplerDescription) -> Result<(usize, &wgpu::Sampler), LinearResourceAllocatorError> {
         match self.hashed_samplers.entry(desc) {
             Entry::Occupied(s) => {
-                Ok(*s.get())
+                Ok((*s.get(), self.sampler_allocator.get(*s.get()).expect("Allocated sampler disappeared.")))
             },
             Entry::Vacant(s) => {
                 let sampler = d.create_sampler(&wgpu::SamplerDescriptor::from(&desc));
                 let idx = self.sampler_allocator.push_back(sampler)?;
                 s.insert(idx);
-                Ok(idx)
+                Ok((idx, self.sampler_allocator.get(idx).expect("Allocated sampler disappeared.")))
             }
         }
     }

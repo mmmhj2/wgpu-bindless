@@ -64,7 +64,7 @@ impl GpuAssetRegistry {
         let tx = self.bindless.push_texture(uploaded.create_view(&Default::default()))
             .expect("failed to push texture to bindless manager.");
         let sp = self.bindless.push_sampler(di.get_device(), texture.sampler.clone().into())
-            .expect("failed to push sampler to bindless manager.");
+            .expect("failed to push sampler to bindless manager.").0;
 
         let binding = (tx, sp);
         self.texture_bindings.insert(name.to_string(), binding);
