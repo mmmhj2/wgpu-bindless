@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::{Path, PathBuf}, sync::{Arc, RwLock}};
 
 use crate::asset::{
-    asset_store::{EnsureOutcome, ImportJob, ImportManifest, LoadReport, ManifestEntry, walk_asset_files}, asset_types::{self, Asset, AssetMetadata}, error::{AssetError, AssetIoError}, importer::{AssetImporter, ImporterContext, gltf_importer::GltfImporter, image_file_importer::{ImageArrayImporter, ImageFileImporter}}, provenance::{ImportProvenance, fingerprint_all, now_unix_ms},
+    asset_store::{EnsureOutcome, ImportJob, ImportManifest, LoadReport, ManifestEntry, walk_asset_files}, asset_types::{self, Asset, AssetKind, AssetMetadata}, error::{AssetError, AssetIoError}, importer::{AssetImporter, ImporterContext, gltf_importer::GltfImporter, image_file_importer::{ImageArrayImporter, ImageFileImporter}}, provenance::{AssetTypeStamp, ImportProvenance, fingerprint_all, now_unix_ms},
 };
 
 pub struct AssetManager {
@@ -26,17 +26,34 @@ impl AssetManager {
         let mut context = ImporterContext::new();
         importer.import(&context)?;
 
-        // Stamp every produced asset with provenance built from the sources the
-        // importer recorded, then persist the container so it can be reused.
+        let sources = fingerprint_all(context.take_sources())?;
+        let pending_database = context.asset_batch.into_inner()
+            .map_err(|_| AssetError::LockPoisoned)?;
+
+        // Record every concrete asset kind this import produced. A schema change
+        // to any of those kinds invalidates the whole batch, even when a
+        // different importer produced them (e.g. TextureAsset is shared).
+        let mut kinds: Vec<AssetKind> = Vec::new();
+        for asset in pending_database.values() {
+            let kind = asset.read().map_err(|_| AssetError::LockPoisoned)?.get_data().kind();
+            if !kinds.contains(&kind) {
+                kinds.push(kind);
+            }
+        }
+        kinds.sort_by_key(|kind| *kind as u32);
+        let asset_types = kinds.into_iter()
+            .map(|kind| AssetTypeStamp { kind, version: kind.current_schema_version() })
+            .collect();
+
+        // Stamp every produced asset with provenance built from the sources and
+        // asset kinds above, then persist the container so it can be reused.
         let provenance = ImportProvenance {
             importer_id: T::IMPORTER_ID.to_string(),
             importer_version: T::IMPORTER_VERSION,
             imported_unix_ms: now_unix_ms(),
-            sources: fingerprint_all(context.take_sources())?,
+            sources,
+            asset_types,
         };
-
-        let pending_database = context.asset_batch.into_inner()
-            .map_err(|_| AssetError::LockPoisoned)?;
         let mut outputs = Vec::with_capacity(pending_database.len());
         for asset in pending_database.values() {
             let mut asset = asset.write().map_err(|_| AssetError::LockPoisoned)?;
@@ -72,6 +89,14 @@ impl AssetManager {
         Ok(asset)
     }
 
+    /// Load every asset of a batch, failing on the first error.
+    fn load_outputs(&self, outputs: &[PathBuf]) -> Result<(), AssetError> {
+        for path in outputs {
+            self.load_asset_file(path)?;
+        }
+        Ok(())
+    }
+
     /// Recursively load every `*.asset` under `root` without importing.
     ///
     /// Files that cannot be read (corrupt or pre-container legacy assets) are
@@ -101,10 +126,13 @@ impl AssetManager {
                     if provenance.matches_importer(entry.job.importer_id(), entry.job.importer_version())
                         && provenance.is_fresh()
                     {
-                        for path in &entry.outputs {
-                            self.load_asset_file(path)?;
+                        match self.load_outputs(&entry.outputs) {
+                            Ok(()) => return Ok(EnsureOutcome::Fresh),
+                            Err(e) => log::warn!(
+                                "re-importing '{}': a cached asset could not be loaded: {e}",
+                                entry.job.job_id()
+                            ),
                         }
-                        return Ok(EnsureOutcome::Fresh);
                     }
                 }
             }

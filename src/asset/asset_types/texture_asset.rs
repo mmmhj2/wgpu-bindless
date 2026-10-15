@@ -179,6 +179,7 @@ impl TextureAsset {
 }
 
 impl ConcreteAssetType for TextureAsset {
+    const SCHEMA_VERSION: u32 = 1;
 }
 
 impl GpuAssetType for TextureAsset {

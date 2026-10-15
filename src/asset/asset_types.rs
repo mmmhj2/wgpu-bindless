@@ -50,7 +50,44 @@ pub enum AssetData {
     SceneAssetType(SceneAsset)
 }
 
+impl AssetData {
+    /// The concrete kind of asset this payload holds.
+    pub fn kind(&self) -> AssetKind {
+        match self {
+            AssetData::StaticMeshAssetType(_) => AssetKind::StaticMesh,
+            AssetData::TextureAssetType(_) => AssetKind::Texture,
+            AssetData::SceneAssetType(_) => AssetKind::Scene,
+        }
+    }
+}
+
+/// Discriminates the concrete asset type held by an [`AssetData`].
+///
+/// Needed to stamp provenance and detect schema changes.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AssetKind {
+    StaticMesh,
+    Texture,
+    Scene,
+}
+
+impl AssetKind {
+    /// The schema version currently compiled for this asset kind.
+    pub fn current_schema_version(self) -> u32 {
+        match self {
+            AssetKind::StaticMesh => <StaticMeshAsset as ConcreteAssetType>::SCHEMA_VERSION,
+            AssetKind::Texture => <TextureAsset as ConcreteAssetType>::SCHEMA_VERSION,
+            AssetKind::Scene => <SceneAsset as ConcreteAssetType>::SCHEMA_VERSION,
+        }
+    }
+}
+
 pub trait ConcreteAssetType: Serialize + DeserializeOwned {
+    /// Version of this asset type's serialized layout and semantics.
+    ///
+    /// Bump whenever the layout or meaning of the type changes; every serialized
+    /// asset of this kind then becomes stale and is re-imported.
+    const SCHEMA_VERSION: u32;
 }
 
 pub trait GpuAssetType: ConcreteAssetType {
