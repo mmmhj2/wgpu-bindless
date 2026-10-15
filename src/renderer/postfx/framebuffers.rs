@@ -1,4 +1,4 @@
-use std::{cmp::max, num::NonZero};
+use std::{cmp::max, num::NonZero, rc::Rc};
 
 use crate::renderer::device_interface::DeviceInterface;
 
@@ -7,7 +7,7 @@ use crate::renderer::device_interface::DeviceInterface;
 pub struct Framebuffer {
     format: wgpu::TextureFormat,
     label: &'static str,
-    texture: Option<wgpu::TextureView>
+    texture: Option<Rc<wgpu::TextureView>>
 }
 
 impl Framebuffer {
@@ -19,10 +19,10 @@ impl Framebuffer {
     }
 
     pub fn get_format(&self) -> wgpu::TextureFormat { self.format }
-    pub fn get_texture(&self) -> Option<&wgpu::TextureView> { self.texture.as_ref() }
+    pub fn get_texture(&self) -> Option<&Rc<wgpu::TextureView>> { self.texture.as_ref() }
 
     pub fn create_texture(&mut self, di: &DeviceInterface, width: NonZero<u32>, height: NonZero<u32>) {
-        self.texture = Some(di.get_device().create_texture(&wgpu::TextureDescriptor{
+        let texture = di.get_device().create_texture(&wgpu::TextureDescriptor{
             label: Some(self.label),
             size: wgpu::Extent3d { width: width.get(), height: height.get(), depth_or_array_layers: 1 },
             mip_level_count: 1,
@@ -31,14 +31,15 @@ impl Framebuffer {
             format: self.format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[]
-        }).create_view(&Default::default()));
+        }).create_view(&Default::default());
+        self.texture = Some(texture.into());
     }
 }
 
 /// A half-resolution mip chain used for screen space effects.
 pub struct FramebufferMipChain {
     format: wgpu::TextureFormat,
-    texture: Vec<wgpu::TextureView>
+    texture: Vec<Rc<wgpu::TextureView>>
 }
 
 impl FramebufferMipChain {
@@ -50,7 +51,7 @@ impl FramebufferMipChain {
     }
 
     pub fn get_format(&self) -> wgpu::TextureFormat { self.format }
-    pub fn get_textures(&self) -> &Vec<wgpu::TextureView> { self.texture.as_ref() }
+    pub fn get_textures(&self) -> &Vec<Rc<wgpu::TextureView>> { self.texture.as_ref() }
     pub fn get_mipchain_length(&self) -> Option<NonZero<usize>> { NonZero::new(self.texture.len()) }
     
     /// Create a mipchain from the framebuffer size.
@@ -76,7 +77,10 @@ impl FramebufferMipChain {
         );
 
         for i in 0..miplevels {
-            self.texture.push(texture.create_view(&wgpu::TextureViewDescriptor{ base_mip_level: i, mip_level_count: Some(1), ..Default::default() }))
+            let view = texture.create_view(
+                &wgpu::TextureViewDescriptor{ base_mip_level: i, mip_level_count: Some(1), ..Default::default() }
+            );
+            self.texture.push(view.into())
         }
     }
 }

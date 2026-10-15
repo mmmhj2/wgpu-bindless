@@ -1,4 +1,4 @@
-use std::num::NonZero;
+use std::{cell::RefCell, collections::HashMap, num::NonZero, rc::Rc};
 
 use crate::renderer::{
     device_interface::DeviceInterface,
@@ -20,11 +20,11 @@ pub enum PostFxInput {
 /// Extra optional inputs the renderer supplies to the post-processing stack for
 /// current frame. `SceneColor` is provided by the stack itself.
 #[derive(Default)]
-pub struct PostFxInputs<'a> {
+pub struct PostFxExtraInputs<'a> {
     depth: Option<&'a wgpu::TextureView>,
 }
 
-impl<'a> PostFxInputs<'a> {
+impl<'a> PostFxExtraInputs<'a> {
     pub fn new() -> Self { Self::default() }
 
     /// Register one external input. Panics if `SceneColor` is passed, since it
@@ -80,6 +80,46 @@ impl PostFxContext<'_> {
     }
 }
 
+/// Temporary resources for the PostFx stack.
+/// 
+/// Used to pass around resources shared by different passes. Transient ones of
+/// resources cannot persist across frames, and the references are cleaned up
+/// once the PostFx stack finishes execution. Persistent ones can, but are
+/// currently unimplemented.
+/// 
+/// *TODO:* Covers texture only resource for now. Maybe we need more compatibility
+/// to cover storage buffers, etc.
+#[derive(Debug)]
+pub struct PostFxResourceCache {
+    transient: HashMap<String, Rc<wgpu::TextureView>>,
+    /// Persisent resource cache is currently stub code only.
+    persistent: HashMap<String, Rc<wgpu::TextureView>>
+}
+
+impl PostFxResourceCache {
+    pub fn new() -> Self { Self { transient: HashMap::new(), persistent: HashMap::new() } }
+
+    pub fn invalidate_transient(&mut self) {
+        self.transient.clear();
+    }
+
+    pub fn invalidate_persistent(&mut self) {
+        self.persistent.clear();
+    }
+
+    pub fn publish(&mut self, name: &str, resource: Rc<wgpu::TextureView>) {
+        self.transient.insert(name.into(), resource);
+    }
+
+    pub fn get(&self, name: &str) -> &Rc<wgpu::TextureView> {
+        self.try_get(name).unwrap()
+    }
+
+    pub fn try_get(&self, name: &str) -> Option<&Rc<wgpu::TextureView>> {
+        self.transient.get(name)
+    }
+}
+
 /// A single post-processing pass.
 ///
 /// Passes are executed in registration order. A pass reads [`PostFxContext::input`]
@@ -90,9 +130,20 @@ pub trait PostFxPass {
     fn name(&self) -> &'static str;
 
     /// Format this pass expects for its input texture.
+    /// 
+    /// As of now, input format of every pass should be identical to the color 
+    /// attachment format of render pass (`hdr_format` argument in
+    /// [`PostFxStack`] constructor).
     fn input_format(&self) -> wgpu::TextureFormat;
 
     /// Format this pass writes to its output texture.
+    /// 
+    /// As of now, output format of every pass (except the last pass) should be
+    /// identical to the color attachment format, while the last one must be
+    /// identical to the swap chain image format acquired from
+    /// [`get_default_texture_format`].
+    /// 
+    /// [`get_default_texture_format`]: DeviceInterface::get_default_texture_format()
     fn output_format(&self) -> wgpu::TextureFormat;
 
     /// External inputs this pass reads, validated by the stack before execution.
@@ -111,7 +162,7 @@ pub trait PostFxPass {
     fn resize(&mut self, _di: &DeviceInterface, _width: NonZero<u32>, _height: NonZero<u32>) {}
 
     /// Record this pass into the encoder using `ctx`.
-    fn apply(&mut self, ctx: &mut PostFxContext<'_>);
+    fn apply(&mut self, ctx: &mut PostFxContext<'_>, resource: &mut PostFxResourceCache);
 }
 
 /// Owns the HDR working target, two scratch targets for out-of-place passes, and
@@ -122,6 +173,7 @@ pub trait PostFxPass {
 pub struct PostFxStack {
     hdr_format      : wgpu::TextureFormat,
     output_format   : wgpu::TextureFormat,
+    cache           : PostFxResourceCache,
     size            : Option<(NonZero<u32>, NonZero<u32>)>,
     hdr_target      : Framebuffer,
     // Currently the stack only has two identical scratch targets, which are used in a ping-pong fashion for out-of-place passes.
@@ -133,10 +185,17 @@ pub struct PostFxStack {
 impl PostFxStack {
     /// Create a stack rendering through an HDR target of `hdr_format` and
     /// presenting in the surface's default format.
+    /// 
+    /// A non-HDR enabled format can be specified, but some passes such as
+    /// tonemapping may yield weird results.
+    /// 
+    /// **Note:** since the HDR target should be rendered to, it must be
+    /// identical to the color render target format of the main render pass.
     pub fn new(di: &DeviceInterface, hdr_format: wgpu::TextureFormat) -> Self {
         Self {
             hdr_format,
             output_format: di.get_default_texture_format(),
+            cache: PostFxResourceCache::new(),
             size: None,
             hdr_target: Framebuffer::new(hdr_format, "PostFx HDR target"),
             scratch: [
@@ -155,7 +214,7 @@ impl PostFxStack {
     pub fn get_hdr_format(&self) -> wgpu::TextureFormat { self.hdr_format }
 
     /// The HDR texture the scene must be rendered into before [`PostFxStack::run`].
-    pub fn scene_target(&self) -> &wgpu::TextureView {
+    pub fn scene_target(&self) -> &Rc<wgpu::TextureView> {
         self.hdr_target.get_texture().expect("call configure_with_surface first")
     }
 
@@ -178,6 +237,8 @@ impl PostFxStack {
                 pass.resize(di, width, height);
             }
             self.size = Some((width, height));
+
+            self.cache.invalidate_persistent();
         }
     }
 
@@ -194,7 +255,7 @@ impl PostFxStack {
         samplers: &mut SamplerManager,
         ce: &mut wgpu::CommandEncoder,
         final_view: &wgpu::TextureView,
-        inputs: &PostFxInputs<'_>
+        inputs: &PostFxExtraInputs<'_>
     ) {
         let count = self.passes.len();
         assert!(count > 0, "PostFxStack has no passes to run.");
@@ -205,7 +266,7 @@ impl PostFxStack {
         let size = (width.get(), height.get());
 
         let scene = self.hdr_target.get_texture().expect("call configure_with_surface before run.");
-        let mut current: &wgpu::TextureView = scene;
+        let mut current: &wgpu::TextureView = scene.as_ref();
         let mut scratch_idx = 0usize;
 
         for i in 0..count {
@@ -232,10 +293,12 @@ impl PostFxStack {
             }
 
             let separate = pass.separate_output() && !is_last;
+            let scratch_rc = self.scratch[scratch_idx].get_texture().expect("scratch target should be ready");
+
             let output: &wgpu::TextureView = if is_last {
                 final_view
             } else if separate {
-                self.scratch[scratch_idx].get_texture().expect("scratch target should be ready")
+                scratch_rc.as_ref()
             } else {
                 current
             };
@@ -247,15 +310,17 @@ impl PostFxStack {
                 size,
                 input: current,
                 output,
-                scene_color: scene,
+                scene_color: scene.as_ref(),
                 depth: inputs.get(PostFxInput::Depth),
             };
-            pass.apply(&mut ctx);
+            pass.apply(&mut ctx, &mut self.cache);
 
             if separate {
-                current = self.scratch[scratch_idx].get_texture().expect("scratch target should be ready");
-                scratch_idx ^= 1;
+                current = scratch_rc.as_ref();
+                scratch_idx = (scratch_idx + 1) % self.scratch.len();
             }
         }
+
+        self.cache.invalidate_transient();
     }
 }
