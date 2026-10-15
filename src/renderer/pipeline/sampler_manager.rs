@@ -32,8 +32,18 @@ impl SamplerManager {
         ret
     }
 
-    /// Acquire the index of the default sampler.
-    pub fn get_default_sampler(&self) -> usize { self.default_sampler_idx }
+    pub fn get_default_sampler_id(&self) -> usize { self.default_sampler_idx }
+
+    /// Get the default sampler along with its index.
+    /// 
+    /// Panic
+    /// ---
+    /// Default sampler is assumed to be always present. If it is not, the
+    /// invariant is broken and the program will panic.
+    pub fn get_default_sampler(&self) -> (usize, &wgpu::Sampler) {
+        let idx = self.default_sampler_idx;
+        (idx, self.get_sampler(idx).expect("default sampler should always present"))
+    }
 
     /// Get the sampler stored at the given index.
     pub fn get_sampler(&self, idx: usize) -> Result<&wgpu::Sampler, LinearResourceAllocatorError> {
@@ -43,7 +53,7 @@ impl SamplerManager {
     /// Number of samplers currently registered.
     pub fn count(&self) -> usize { self.sampler_allocator.count() }
 
-    /// Push a sampler into the manager, returning its index.
+    /// Push a sampler into the manager, returning its index and the sampler itself.
     ///
     /// Descriptions are hashed and stored into a Hash Map.
     /// Samplers with the same description will therefore be reused and share

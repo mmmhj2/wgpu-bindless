@@ -83,17 +83,17 @@ impl GpuAssetRegistry {
     ) -> PBRMaterial {
         let (diffuse_tx, diffuse_sp) = match &material.diffuse_texture_name {
             Some(name) => self.texture_binding(di, assets, name),
-            None => (self.bindless.get_white_texture(), self.bindless.get_samplers().get_default_sampler()),
+            None => (self.bindless.get_white_texture(), self.bindless.get_samplers().get_default_sampler_id()),
         };
 
         let (normal_tx, normal_sp) = match &material.normal_texture_name {
             Some(name) => self.texture_binding(di, assets, name),
-            None => (self.bindless.get_default_bump_texture(), self.bindless.get_samplers().get_default_sampler()),
+            None => (self.bindless.get_default_bump_texture(), self.bindless.get_samplers().get_default_sampler_id()),
         };
 
         let (mrao_tx, mrao_sp) = match &material.mrao_texture_name {
             Some(name) => self.texture_binding(di, assets, name),
-            None => (self.bindless.get_default_mrao_texture(), self.bindless.get_samplers().get_default_sampler()),
+            None => (self.bindless.get_default_mrao_texture(), self.bindless.get_samplers().get_default_sampler_id()),
         };
 
         PBRMaterial::new(diffuse_tx, normal_tx, mrao_tx, diffuse_sp, normal_sp, mrao_sp)
