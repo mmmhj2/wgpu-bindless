@@ -49,7 +49,7 @@ const DBGL_TONEMAP: wgpu::BindGroupLayoutDescriptor<'static> = wgpu::BindGroupLa
 };
 
 fn build_pipeline(di: &DeviceInterface, layout: &wgpu::PipelineLayout, output_format: wgpu::TextureFormat, fs_name: &str) -> wgpu::RenderPipeline {
-    let module = di.get_device().create_shader_module(wgpu::include_wgsl!("./shaders/aces_tonemap.wgsl"));
+    let module = di.get_device().create_shader_module(wgpu::include_wgsl!("./shaders/tonemap.wgsl"));
     di.get_device().create_render_pipeline(
         &wgpu::RenderPipelineDescriptor {
             label: Some("Tonemapping"),
@@ -117,18 +117,36 @@ pub struct AcesTonemapPass {
 impl AcesTonemapPass {
     pub fn new(di: &DeviceInterface, input_format: wgpu::TextureFormat, output_format: wgpu::TextureFormat) -> Self {
         let bgl_tonemap = di.get_device().create_bind_group_layout(&DBGL_TONEMAP);
-
         let layout = di.get_device().create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(&bgl_tonemap)], immediate_size: 0 });
-
         Self { bgl_tonemap, ppl: build_pipeline(di, &layout, output_format, "fs_aces"), input_format, output_format }
     }
 }
 
-impl PostFxPass for AcesTonemapPass {
-    fn name(&self) -> &'static str { "tonemap" }
+trait TonemapPass: PostFxPass {
+    fn name(&self) -> &'static str;
+    fn input_format(&self) -> wgpu::TextureFormat;
+    fn output_format(&self) -> wgpu::TextureFormat;
 
-    fn input_format(&self) -> wgpu::TextureFormat { self.input_format }
-    fn output_format(&self) -> wgpu::TextureFormat { self.output_format }
+    fn requires_average_luminance() -> bool { false }
+    fn get_tonemap_bind_group_layout(&self) -> &wgpu::BindGroupLayout;
+    fn get_tonemap_pipeline(&self) -> &wgpu::RenderPipeline;
+}
+
+impl<T: TonemapPass> PostFxPass for T {
+    fn name(&self) -> &'static str { TonemapPass::name(self) }
+    fn input_format(&self) -> wgpu::TextureFormat { TonemapPass::input_format(self) }
+    fn output_format(&self) -> wgpu::TextureFormat {
+        let format = TonemapPass::output_format(self);
+
+        // We are using Vulkan backend, which means even if we use Unorm format,
+        // the presentation engine will interpret texels as if they are in sRGB
+        // color space. This is definitely not what we want.
+        // See https://stackoverflow.com/questions/66401081/vulkan-swapchain-format-unorm-vs-srgb
+        if !format.is_srgb() {
+            log::warn!("Output format for tonemapping is not in sRGB space. Gamma correction may be off.")
+        }
+        format
+    }
 
     fn apply(&mut self, ctx: &mut PostFxContext<'_>, cache: &mut PostFxResourceCache) {
         let di = ctx.device;
@@ -143,12 +161,16 @@ impl PostFxPass for AcesTonemapPass {
             },
         };
         
-        let avg_lum = cache.try_get(BloomPass::BLOOM_MIPCHAIN_HIGHEST_NAME);
-        let lum = match avg_lum {
-            Some(view) => view.as_ref(),
-            None => input,
+        let lum = if Self::requires_average_luminance() {
+            let avg_lum = cache.try_get(BloomPass::BLOOM_MIPCHAIN_HIGHEST_NAME);
+            match avg_lum {
+                Some(view) => view.as_ref(),
+                None => panic!("Average luminance texture is not available!")
+            }
+        } else {
+            input
         };
-        let bind_group = generate_bind_group(di, &self.bgl_tonemap, input, lum, sampler);
+        let bind_group = generate_bind_group(di, self.get_tonemap_bind_group_layout(), input, lum, sampler);
 
         let mut rp = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor{
             label: Some("Tonemap"),
@@ -167,7 +189,21 @@ impl PostFxPass for AcesTonemapPass {
             multiview_mask: None
         });
         rp.set_bind_group(0, &bind_group, &[]);
-        rp.set_pipeline(&self.ppl);
+        rp.set_pipeline(&self.get_tonemap_pipeline());
         rp.draw(0..3, 0..1);
+    }
+}
+
+impl TonemapPass for AcesTonemapPass {
+    fn name(&self) -> &'static str { "tonemap" }
+
+    fn input_format(&self) -> wgpu::TextureFormat { self.input_format }
+    fn output_format(&self) -> wgpu::TextureFormat { self.output_format }
+    
+    fn get_tonemap_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.bgl_tonemap
+    }
+    fn get_tonemap_pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.ppl
     }
 }
