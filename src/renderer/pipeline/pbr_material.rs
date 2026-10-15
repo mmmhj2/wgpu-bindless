@@ -38,23 +38,23 @@ impl PBRMaterial {
             diffuse_tx: manager.get_white_texture(),
             normal_tx: manager.get_default_bump_texture(),
             mrao_tx: manager.get_default_mrao_texture(),
-            diffuse_sp: manager.get_default_sampler(),
-            normal_sp: manager.get_default_sampler(),
-            mrao_sp: manager.get_default_sampler()
+            diffuse_sp: manager.get_samplers().get_default_sampler(),
+            normal_sp: manager.get_samplers().get_default_sampler(),
+            mrao_sp: manager.get_samplers().get_default_sampler()
         };
 
         if let Some(df) = diffuse {
             ret.diffuse_tx = manager.push_texture(df.0)?;
-            if let Some(s) = df.1 { ret.diffuse_sp = manager.push_sampler(d, s)?.0 }
+            if let Some(s) = df.1 { ret.diffuse_sp = manager.get_samplers_mut().push_sampler(d, s)?.0 }
         }
 
         if let Some(n) = normal {
             ret.normal_tx = manager.push_texture(n.0)?;
-            if let Some(s) = n.1 { ret.normal_sp = manager.push_sampler(d, s)?.0 }
+            if let Some(s) = n.1 { ret.normal_sp = manager.get_samplers_mut().push_sampler(d, s)?.0 }
         }
         if let Some(m) = mrao {
             ret.mrao_tx = manager.push_texture(m.0)?;
-            if let Some(s) = m.1 { ret.mrao_sp = manager.push_sampler(d, s)?.0 }
+            if let Some(s) = m.1 { ret.mrao_sp = manager.get_samplers_mut().push_sampler(d, s)?.0 }
         }
 
         Ok(ret)

@@ -63,7 +63,7 @@ impl GpuAssetRegistry {
         let uploaded = texture.upload(name, di.get_device(), di.get_queue());
         let tx = self.bindless.push_texture(uploaded.create_view(&Default::default()))
             .expect("failed to push texture to bindless manager.");
-        let sp = self.bindless.push_sampler(di.get_device(), texture.sampler.clone().into())
+        let sp = self.bindless.get_samplers_mut().push_sampler(di.get_device(), texture.sampler.clone().into())
             .expect("failed to push sampler to bindless manager.").0;
 
         let binding = (tx, sp);
@@ -83,17 +83,17 @@ impl GpuAssetRegistry {
     ) -> PBRMaterial {
         let (diffuse_tx, diffuse_sp) = match &material.diffuse_texture_name {
             Some(name) => self.texture_binding(di, assets, name),
-            None => (self.bindless.get_white_texture(), self.bindless.get_default_sampler()),
+            None => (self.bindless.get_white_texture(), self.bindless.get_samplers().get_default_sampler()),
         };
 
         let (normal_tx, normal_sp) = match &material.normal_texture_name {
             Some(name) => self.texture_binding(di, assets, name),
-            None => (self.bindless.get_default_bump_texture(), self.bindless.get_default_sampler()),
+            None => (self.bindless.get_default_bump_texture(), self.bindless.get_samplers().get_default_sampler()),
         };
 
         let (mrao_tx, mrao_sp) = match &material.mrao_texture_name {
             Some(name) => self.texture_binding(di, assets, name),
-            None => (self.bindless.get_default_mrao_texture(), self.bindless.get_default_sampler()),
+            None => (self.bindless.get_default_mrao_texture(), self.bindless.get_samplers().get_default_sampler()),
         };
 
         PBRMaterial::new(diffuse_tx, normal_tx, mrao_tx, diffuse_sp, normal_sp, mrao_sp)
