@@ -2,7 +2,7 @@ use std::{fs::File, io::Read, path::Path, time::{SystemTime, UNIX_EPOCH}};
 
 use serde::{Deserialize, Serialize};
 
-use crate::asset::error::AssetIoError;
+use crate::asset::{asset_types::AssetKind, error::AssetIoError};
 
 /// A content fingerprint of a single source file used to produce an asset.
 ///
@@ -56,10 +56,28 @@ impl SourceFingerprint {
     }
 }
 
+/// The schema version a batch was written with for one concrete asset kind.
+///
+/// A single import may produce several kinds (e.g. glTF emits meshes, textures
+/// and scenes), so the version is tracked per kind rather than per importer.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct AssetTypeStamp {
+    pub kind: AssetKind,
+    pub version: u32,
+}
+
+impl AssetTypeStamp {
+    /// Whether the recorded version still matches the compiled schema version.
+    pub fn is_current(&self) -> bool {
+        self.kind.current_schema_version() == self.version
+    }
+}
+
 /// How an asset was produced, recorded inside the asset file itself.
 ///
 /// This lets the loader decide whether a serialized asset can be reused or must
-/// be re-imported because its sources or the importer changed.
+/// be re-imported because its sources, the importer, or a shared asset type
+/// changed.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ImportProvenance {
     /// Stable identifier of the importer kind, e.g. `"gltf"`.
@@ -70,6 +88,10 @@ pub struct ImportProvenance {
     pub imported_unix_ms: i64,
     /// The source files this asset was derived from.
     pub sources: Vec<SourceFingerprint>,
+    /// The concrete asset kinds this batch produced and the schema version each
+    /// was written with. A schema change to any of them invalidates the batch.
+    #[serde(default)]
+    pub asset_types: Vec<AssetTypeStamp>,
 }
 
 impl ImportProvenance {
@@ -78,9 +100,16 @@ impl ImportProvenance {
         self.importer_id == importer_id && self.importer_version == importer_version
     }
 
-    /// Freshness check: every recorded source is unchanged.
+    /// Freshness check: importer identity is compared separately; here every
+    /// recorded source is unchanged *and* every produced asset kind still has a
+    /// matching schema version.
+    ///
+    /// Provenance with no sources or no type stamps is treated as stale.
     pub fn is_fresh(&self) -> bool {
-        !self.sources.is_empty() && self.sources.iter().all(SourceFingerprint::matches)
+        !self.sources.is_empty()
+            && !self.asset_types.is_empty()
+            && self.asset_types.iter().all(AssetTypeStamp::is_current)
+            && self.sources.iter().all(SourceFingerprint::matches)
     }
 }
 
