@@ -10,7 +10,7 @@ use rust_renderer::{
         device_interface::DeviceInterface,
         mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance},
         pipeline::{camera::CameraPerspectiveBuilder, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager},
-        postfx::framebuffers::Framebuffers,
+        postfx::{bloom::BloomPass, postfx_stack::PostFxStack, tonemap::TonemapPass},
         window::RendererState
     }
 };
@@ -23,7 +23,7 @@ pub struct State {
     device: DeviceInterface,
     pipeline: PipelineStates,
     skybox: SkyboxManager,
-    fb: Framebuffers,
+    postfx: PostFxStack,
     gltf_models: Vec<StaticMeshInstance>,
     _asset_manager: AssetManager
 }
@@ -33,7 +33,9 @@ impl RendererState for State {
         let device = DeviceInterface::new(window.clone(), true).await.unwrap();
         let mut pipeline = PipelineStates::prepare_default_pipelines(&device, wgpu::TextureFormat::Rgba16Float);
         let mut skybox = SkyboxManager::new(&device, pipeline.get_camera_manager(), wgpu::TextureFormat::Rgba16Float, wgpu::TextureFormat::Depth32Float);
-        let fb = Framebuffers::new(&device, wgpu::TextureFormat::Rgba16Float);
+        let mut postfx = PostFxStack::new(&device, wgpu::TextureFormat::Rgba16Float);
+        postfx.push_pass(Box::new(BloomPass::new(&device, wgpu::TextureFormat::Rgba16Float)));
+        postfx.push_pass(Box::new(TonemapPass::new(&device, wgpu::TextureFormat::Rgba16Float, device.get_default_texture_format())));
 
         // Load through the import manifest: on the first run the jobs are
         // imported and persisted; later runs load the cached containers unless a
@@ -91,7 +93,7 @@ impl RendererState for State {
             device,
             pipeline,
             skybox,
-            fb,
+            postfx,
             gltf_models,
             _asset_manager: asset_manager
         }
@@ -126,7 +128,7 @@ impl RendererState for State {
             }
         };
 
-        self.fb.configure_with_surface(&self.device);
+        self.postfx.configure_with_surface(&self.device);
 
         let mut encoder = self.device.get_device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
@@ -136,7 +138,7 @@ impl RendererState for State {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: self.fb.get_hdr_framebuffer().expect("hdr framebuffer should be ready"),
+                    view: self.postfx.get_scene_framebuffer().expect("hdr framebuffer should be ready"),
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
@@ -174,10 +176,13 @@ impl RendererState for State {
             self.skybox.draw_skybox(&self.device, &mut rp);
         }
 
-        self.fb.bloom(&self.device, &mut encoder, 0.003, 0.05);
-
         let final_view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.fb.tonemap_to(&self.device, &mut encoder, &final_view);
+        self.postfx.run(
+            &self.device,
+            self.pipeline.get_bindless_resource_manager_mut().get_samplers_mut(),
+            &mut encoder,
+            &final_view
+        );
 
         self.device.get_queue().submit(std::iter::once(encoder.finish()));
         output.present();
