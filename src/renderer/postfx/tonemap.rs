@@ -1,7 +1,6 @@
 use crate::renderer::{
     device_interface::DeviceInterface,
-    pipeline::sampler_manager::SamplerManager,
-    postfx::postfx_stack::PostFxPass,
+    postfx::postfx_stack::{PostFxContext, PostFxPass},
 };
 
 /// ACES tonemapping pass.
@@ -110,7 +109,11 @@ impl PostFxPass for TonemapPass {
     fn input_format(&self) -> wgpu::TextureFormat { self.input_format }
     fn output_format(&self) -> wgpu::TextureFormat { self.output_format }
 
-    fn apply(&mut self, di: &DeviceInterface, _samplers: &mut SamplerManager, ce: &mut wgpu::CommandEncoder, input: &wgpu::TextureView, output: &wgpu::TextureView) {
+    fn apply(&mut self, ctx: &mut PostFxContext<'_>) {
+        let di = ctx.device;
+        let input = ctx.input;
+        let output = ctx.output;
+
         // The luminance slot is currently unused by the shader; bind the input
         // there so the descriptor set stays complete.
         let bind_group = di.get_device().create_bind_group(&wgpu::BindGroupDescriptor {
@@ -132,7 +135,7 @@ impl PostFxPass for TonemapPass {
             ]
         });
 
-        let mut rp = ce.begin_render_pass(&wgpu::RenderPassDescriptor{
+        let mut rp = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor{
             label: Some("Tonemap"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment{
                 view: output,

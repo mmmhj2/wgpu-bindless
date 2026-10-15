@@ -6,43 +6,127 @@ use crate::renderer::{
     postfx::framebuffers::Framebuffer,
 };
 
+/// A named resource produced by the  rendering passes and
+/// consumed by post-processing passes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PostFxInput {
+    /// The HDR colour the scene was rendered into. Owned and injected by the
+    /// stack itself.
+    SceneColor,
+    /// Scene depth.
+    Depth,
+}
+
+/// Extra optional inputs the renderer supplies to the post-processing stack for
+/// current frame. `SceneColor` is provided by the stack itself.
+#[derive(Default)]
+pub struct PostFxInputs<'a> {
+    depth: Option<&'a wgpu::TextureView>,
+}
+
+impl<'a> PostFxInputs<'a> {
+    pub fn new() -> Self { Self::default() }
+
+    /// Register one external input. Panics if `SceneColor` is passed, since it
+    /// is owned by the stack.
+    pub fn with(mut self, input: PostFxInput, view: &'a wgpu::TextureView) -> Self {
+        match input {
+            PostFxInput::SceneColor => log::warn!("SceneColor is provided by the stack, not the renderer. This request is ignored."),
+            PostFxInput::Depth => self.depth = Some(view),
+        }
+        self
+    }
+
+    pub fn get(&self, input: PostFxInput) -> Option<&'a wgpu::TextureView> {
+        match input {
+            PostFxInput::SceneColor => {
+                log::warn!("SceneColor is provided by the stack, not the renderer. This request is ignored.");
+                None
+            },
+            PostFxInput::Depth => self.depth,
+        }
+    }
+}
+
+/// Execution context handed to a single post-processing pass.
+pub struct PostFxContext<'a> {
+    pub device: &'a DeviceInterface,
+    pub encoder: &'a mut wgpu::CommandEncoder,
+    pub samplers: &'a mut SamplerManager,
+    pub size: (u32, u32),
+
+    /// The chain's current input: the scene color for the first pass, and the
+    /// previous pass's output afterwards.
+    pub input: &'a wgpu::TextureView,
+    /// The target this pass must write to: an internal scratch buffer, or the
+    /// swapchain view for the final pass.
+    pub output: &'a wgpu::TextureView,
+
+    scene_color: &'a wgpu::TextureView,
+    depth: Option<&'a wgpu::TextureView>,
+}
+
+impl PostFxContext<'_> {
+    /// Fetch a required input, panicking with the offending name if absent.
+    pub fn get(&self, input: PostFxInput) -> &wgpu::TextureView {
+        self.try_get(input).unwrap_or_else(|| panic!("post-fx input {:?} was not provided", input))
+    }
+
+    pub fn try_get(&self, input: PostFxInput) -> Option<&wgpu::TextureView> {
+        match input {
+            PostFxInput::SceneColor => Some(self.scene_color),
+            PostFxInput::Depth => self.depth
+        }
+    }
+}
+
 /// A single post-processing pass.
 ///
-/// Passes operate in place on the stack's shared HDR target: for every pass but
-/// the final one, `input` and `output` are the same HDR view. The final pass
-/// writes to the swapchain image instead.
+/// Passes are executed in registration order. A pass reads [`PostFxContext::input`]
+/// and writes [`PostFxContext::output`]; by default these are the same HDR target
+/// (in place), unless [`PostFxPass::separate_output`] requests a distinct buffer.
 pub trait PostFxPass {
     /// Human-readable name, used in diagnostics.
     fn name(&self) -> &'static str;
+
     /// Format this pass expects for its input texture.
     fn input_format(&self) -> wgpu::TextureFormat;
+
     /// Format this pass writes to its output texture.
     fn output_format(&self) -> wgpu::TextureFormat;
+
+    /// External inputs this pass reads, validated by the stack before execution.
+    fn requires(&self) -> &'static [PostFxInput] { &[] }
+
+    /// Whether the pass needs an output buffer distinct from its input.
+    ///
+    /// `false` (default) means the pass operates in place on the shared HDR
+    /// target, so `input` and `output` alias.
+    fn separate_output(&self) -> bool { false }
+
     /// Called whenever the render target size changes.
     ///
     /// Passes allocate size-dependent resources here instead of polling the
     /// surface configuration every frame.
     fn resize(&mut self, _di: &DeviceInterface, _width: NonZero<u32>, _height: NonZero<u32>) {}
-    /// Record this pass into `ce`, reading `input` and writing `output`.
-    fn apply(
-        &mut self,
-        di: &DeviceInterface,
-        samplers: &mut SamplerManager,
-        ce: &mut wgpu::CommandEncoder,
-        input: &wgpu::TextureView,
-        output: &wgpu::TextureView
-    );
+
+    /// Record this pass into the encoder using `ctx`.
+    fn apply(&mut self, ctx: &mut PostFxContext<'_>);
 }
 
-/// Owns the HDR working target and an ordered chain of post-processing passes.
+/// Owns the HDR working target, two scratch targets for out-of-place passes, and
+/// an ordered chain of post-processing passes.
 ///
-/// The scene is rendered into [`PostFxStack::get_scene_framebuffer`]; the passes
-/// are then applied in insertion order by [`PostFxStack::run`].
+/// The scene is expected to be rendered into [`PostFxStack::scene_target`].
+/// The passes are then applied in insertion order by [`PostFxStack::run`].
 pub struct PostFxStack {
     hdr_format      : wgpu::TextureFormat,
     output_format   : wgpu::TextureFormat,
     size            : Option<(NonZero<u32>, NonZero<u32>)>,
     hdr_target      : Framebuffer,
+    // Currently the stack only has two identical scratch targets, which are used in a ping-pong fashion for out-of-place passes.
+    // We need to think about how to handle more complex cases, e.g. a pass that needs two inputs and one output, or halfres passes, etc.
+    scratch         : [Framebuffer; 2],
     passes          : Vec<Box<dyn PostFxPass>>
 }
 
@@ -55,6 +139,10 @@ impl PostFxStack {
             output_format: di.get_default_texture_format(),
             size: None,
             hdr_target: Framebuffer::new(hdr_format, "PostFx HDR target"),
+            scratch: [
+                Framebuffer::new(hdr_format, "PostFx scratch A"),
+                Framebuffer::new(hdr_format, "PostFx scratch B"),
+            ],
             passes: Vec::new(),
         }
     }
@@ -67,12 +155,12 @@ impl PostFxStack {
     pub fn get_hdr_format(&self) -> wgpu::TextureFormat { self.hdr_format }
 
     /// The HDR texture the scene must be rendered into before [`PostFxStack::run`].
-    pub fn get_scene_framebuffer(&self) -> Option<&wgpu::TextureView> {
-        self.hdr_target.get_texture()
+    pub fn scene_target(&self) -> &wgpu::TextureView {
+        self.hdr_target.get_texture().expect("call configure_with_surface first")
     }
 
-    /// Rebuild the HDR target and notify the passes when the surface size
-    /// changes.
+    /// Rebuild the HDR and scratch targets and notify the passes when the
+    /// surface size changes.
     pub fn configure_with_surface(&mut self, di: &DeviceInterface) {
         let width = NonZero::<u32>::new(di.get_current_surface_configuration().width)
             .expect("framebuffer width should be larger than zero.");
@@ -83,6 +171,9 @@ impl PostFxStack {
         if need_rebuild {
             log::info!("Rebuilding post-processing stack with size {}x{}", width, height);
             self.hdr_target.create_texture(di, width, height);
+            for fb in &mut self.scratch {
+                fb.create_texture(di, width, height);
+            }
             for pass in &mut self.passes {
                 pass.resize(di, width, height);
             }
@@ -95,38 +186,76 @@ impl PostFxStack {
     /// Panic
     /// ---
     /// Panics if the stack has no passes, if `configure_with_surface` has not
-    /// been called, or if a pass declares a format incompatible with the chain.
+    /// been called, if a pass requires an input that was not provided, or if a
+    /// pass declares a format incompatible with the chain.
     pub fn run(
         &mut self,
         di: &DeviceInterface,
         samplers: &mut SamplerManager,
         ce: &mut wgpu::CommandEncoder,
-        final_view: &wgpu::TextureView
+        final_view: &wgpu::TextureView,
+        inputs: &PostFxInputs<'_>
     ) {
         let count = self.passes.len();
         assert!(count > 0, "PostFxStack has no passes to run.");
 
+        let hdr_format = self.hdr_format;
+        let output_format = self.output_format;
+        let (width, height) = self.size.expect("call configure_with_surface before run.");
+        let size = (width.get(), height.get());
+
+        let scene = self.hdr_target.get_texture().expect("call configure_with_surface before run.");
+        let mut current: &wgpu::TextureView = scene;
+        let mut scratch_idx = 0usize;
+
         for i in 0..count {
             let is_last = i + 1 == count;
-            let expected_out = if is_last { self.output_format } else { self.hdr_format };
-            let pass = &self.passes[i];
+            let pass = &mut self.passes[i];
+
             assert_eq!(
-                pass.input_format(), self.hdr_format,
+                pass.input_format(), hdr_format,
                 "PostFx pass '{}' expects input {:?}, but the stack HDR format is {:?}.",
-                pass.name(), pass.input_format(), self.hdr_format
+                pass.name(), pass.input_format(), hdr_format
             );
+            let expected_out = if is_last { output_format } else { hdr_format };
             assert_eq!(
                 pass.output_format(), expected_out,
                 "PostFx pass '{}' outputs {:?}, but {:?} is expected in this position.",
                 pass.name(), pass.output_format(), expected_out
             );
-        }
+            for required in pass.requires() {
+                assert!(
+                    *required == PostFxInput::SceneColor || inputs.get(*required).is_some(),
+                    "PostFx pass '{}' requires input {:?}, but it was not provided.",
+                    pass.name(), required
+                );
+            }
 
-        let hdr = self.hdr_target.get_texture().expect("call configure_with_surface before run.");
-        for i in 0..count {
-            let is_last = i + 1 == count;
-            let output = if is_last { final_view } else { hdr };
-            self.passes[i].apply(di, samplers, ce, hdr, output);
+            let separate = pass.separate_output() && !is_last;
+            let output: &wgpu::TextureView = if is_last {
+                final_view
+            } else if separate {
+                self.scratch[scratch_idx].get_texture().expect("scratch target should be ready")
+            } else {
+                current
+            };
+
+            let mut ctx = PostFxContext {
+                device: di,
+                encoder: ce,
+                samplers: samplers,
+                size,
+                input: current,
+                output,
+                scene_color: scene,
+                depth: inputs.get(PostFxInput::Depth),
+            };
+            pass.apply(&mut ctx);
+
+            if separate {
+                current = self.scratch[scratch_idx].get_texture().expect("scratch target should be ready");
+                scratch_idx ^= 1;
+            }
         }
     }
 }

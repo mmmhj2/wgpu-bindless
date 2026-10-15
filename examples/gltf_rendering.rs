@@ -10,7 +10,7 @@ use rust_renderer::{
         device_interface::DeviceInterface,
         mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance},
         pipeline::{camera::CameraPerspectiveBuilder, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager},
-        postfx::{bloom::BloomPass, postfx_stack::PostFxStack, tonemap::TonemapPass},
+        postfx::{bloom::BloomPass, postfx_stack::{PostFxInput, PostFxInputs, PostFxStack}, tonemap::TonemapPass},
         window::RendererState
     }
 };
@@ -138,7 +138,7 @@ impl RendererState for State {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: self.postfx.get_scene_framebuffer().expect("hdr framebuffer should be ready"),
+                    view: self.postfx.scene_target(),
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
@@ -177,11 +177,16 @@ impl RendererState for State {
         }
 
         let final_view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let inputs = PostFxInputs::new()
+            .with(PostFxInput::Depth, self.device.get_depth_texture_view().expect("depth view should be ready"));
+
         self.postfx.run(
             &self.device,
             self.pipeline.get_bindless_resource_manager_mut().get_samplers_mut(),
             &mut encoder,
-            &final_view
+            &final_view,
+            &inputs
         );
 
         self.device.get_queue().submit(std::iter::once(encoder.finish()));

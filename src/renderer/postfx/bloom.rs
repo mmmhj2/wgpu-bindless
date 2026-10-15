@@ -2,8 +2,8 @@ use std::num::NonZero;
 
 use crate::renderer::{
     device_interface::DeviceInterface,
-    pipeline::{sampler_manager::SamplerManager, sampler::SamplerDescription},
-    postfx::{framebuffers::FramebufferMipChain, postfx_stack::PostFxPass},
+    pipeline::sampler::SamplerDescription,
+    postfx::{framebuffers::FramebufferMipChain, postfx_stack::{PostFxContext, PostFxPass}},
 };
 
 /// Screen space bloom pass.
@@ -159,9 +159,14 @@ impl PostFxPass for BloomPass {
         self.mip_chain.create_textures(di, width, height);
     }
 
-    fn apply(&mut self, di: &DeviceInterface, samplers: &mut SamplerManager, ce: &mut wgpu::CommandEncoder, input: &wgpu::TextureView, output: &wgpu::TextureView) {
-        let sampler = samplers.push_sampler(di.get_device(), Self::INPUT_SAMPLER)
+    fn apply(&mut self, ctx: &mut PostFxContext<'_>) {
+        let di = ctx.device;
+        let input = ctx.input;
+        let output = ctx.output;
+
+        let sampler = ctx.samplers.push_sampler(di.get_device(), Self::INPUT_SAMPLER)
             .expect("Failed to push bloom input sampler.").1;
+        let ce = &mut ctx.encoder;
 
         let mipchain = self.mip_chain.get_textures();
         assert!(mipchain.len() > 0, "Bloom pass mipchain is empty; was resize called?");
