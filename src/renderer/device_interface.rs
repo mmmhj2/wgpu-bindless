@@ -2,7 +2,7 @@ use std::{error, sync::Arc};
 use gltf::Texture;
 use winit::window::Window;
 
-use crate::renderer::pipeline::bindless_resource_manager::{MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS};
+use crate::renderer::pipeline::{bindless_resource_manager::MAX_TEXTURE_SLOTS, sampler_manager::MAX_SAMPLER_SLOTS};
 
 struct SurfaceDetailInfo {
     surface     : wgpu::Surface<'static>,

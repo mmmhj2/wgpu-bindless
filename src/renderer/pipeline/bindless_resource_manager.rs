@@ -8,10 +8,7 @@ use crate::{
     },
     renderer::{
         device_interface::DeviceInterface,
-        pipeline::{
-            sampler::SamplerDescription,
-            sampler_manager::{SamplerManager, MAX_SAMPLER_SLOTS}
-        }
+        pipeline::sampler_manager::{SamplerManager, MAX_SAMPLER_SLOTS}
     },
     util::resource_allocator::{
         LinearResourceAllocator, LinearResourceAllocatorError
@@ -102,7 +99,6 @@ impl BindlessResourceManager {
     pub fn get_samplers(&self) -> &SamplerManager { &self.samplers }
     pub fn get_samplers_mut(&mut self) -> &mut SamplerManager { &mut self.samplers }
 
-    pub fn get_default_sampler(&self) -> usize { self.samplers.get_default_sampler() }
     pub fn get_white_texture(&self) -> usize { self.white_txv_idx }
 
     /// Acquire the default normal map texture.
@@ -127,15 +123,6 @@ impl BindlessResourceManager {
     /// 
     /// It therefore shares the same layout as GLTF spec.
     pub fn get_default_mrao_texture(&self) -> usize { self.default_mrao_txv_idx }
-
-    /// Push a sampler through the underlying sampler manager.
-    ///
-    /// Retained for callers that have not yet migrated to
-    /// [`BindlessResourceManager::get_samplers_mut`]; the post-processing stack
-    /// still relies on this entry point. Remove once it migrates.
-    pub fn push_sampler(&mut self, d: &wgpu::Device, desc: SamplerDescription) -> Result<(usize, &wgpu::Sampler), LinearResourceAllocatorError> {
-        self.samplers.push_sampler(d, desc)
-    }
 
     /// Push a texture into the manager, returning its index.
     pub fn push_texture(&mut self, t: wgpu::TextureView) -> Result<usize, LinearResourceAllocatorError> {
