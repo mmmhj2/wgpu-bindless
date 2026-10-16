@@ -22,4 +22,5 @@ pub struct SceneAsset {
 }
 
 impl ConcreteAssetType for SceneAsset {
+    const SCHEMA_VERSION: u32 = 1;
 }

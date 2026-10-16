@@ -4,8 +4,9 @@ use rust_renderer::{
     app::DefaultAppHandler,
     asset::{
         asset_manager::AssetManager,
+        asset_store::{ImportJob, ImportManifest, ManifestEntry},
         asset_types::{AssetData::{SceneAssetType, TextureAssetType}, GpuAssetType},
-        importer::{gltf_importer::GltfImporter, image_file_importer::{ColorSpace, ImageArrayImporter}},
+        importer::{gltf_importer::GltfImporter, image_file_importer::ColorSpace},
     },
     renderer::{device_interface::DeviceInterface, mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance}, pipeline::{camera::CameraPerspectiveBuilder, framebuffers::Framebuffers, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager}, window::RendererState}
 };
@@ -30,24 +31,37 @@ impl RendererState for State {
         let mut skybox = SkyboxManager::new(&device, pipeline.get_camera_manager(), wgpu::TextureFormat::Rgba16Float, wgpu::TextureFormat::Depth32Float);
         let fb = Framebuffers::new(&device, wgpu::TextureFormat::Rgba16Float);
 
-        // Import both the model and the skybox cube map into the asset database.
+        // Load through the import manifest: on the first run the jobs are
+        // imported and persisted; later runs load the cached containers unless a
+        // source file or the importer changed.
         let asset_manager = AssetManager::new();
-        asset_manager.import(GltfImporter::new(GLTF_PATH));
-        asset_manager.import(ImageArrayImporter::new(
-            Some(String::from("skybox")),
-            [
-                "resource/skybox/right.jpg",
-                "resource/skybox/left.jpg",
-                "resource/skybox/top.jpg",
-                "resource/skybox/bottom.jpg",
-                "resource/skybox/front.jpg",
-                "resource/skybox/back.jpg"
-            ],
-            ColorSpace::Srgb
-        ));
+        let manifest_path = Path::new("resource/import_gltf_manifest.ff");
+        let mut manifest = ImportManifest::load(manifest_path).expect("failed to load import manifest");
+        if manifest.entries.is_empty() {
+            manifest.entries = vec![
+                ManifestEntry { job: ImportJob::gltf(GLTF_PATH), outputs: Vec::new() },
+                ManifestEntry {
+                    job: ImportJob::image_array(
+                        Some(String::from("skybox")),
+                        [
+                            "resource/skybox/right.jpg",
+                            "resource/skybox/left.jpg",
+                            "resource/skybox/top.jpg",
+                            "resource/skybox/bottom.jpg",
+                            "resource/skybox/front.jpg",
+                            "resource/skybox/back.jpg"
+                        ],
+                        ColorSpace::Srgb
+                    ),
+                    outputs: Vec::new(),
+                },
+            ];
+            manifest.save(manifest_path).expect("failed to save import manifest");
+        }
+        asset_manager.import_manifest(manifest_path).expect("failed to import manifest");
 
         let gltf_models = {
-            let scene_name = GltfImporter::scene_subasset_name(Path::new(GLTF_PATH), 0);
+            let scene_name = GltfImporter::scene_subasset_name(Path::new(GLTF_PATH), 0).expect("failed to resolve scene subasset name");
             let asset = asset_manager.get_asset(&scene_name).expect("gltf scene asset should be present");
             let asset = asset.read().expect("failed to read gltf scene asset");
             if let SceneAssetType(scene) = asset.get_data() {

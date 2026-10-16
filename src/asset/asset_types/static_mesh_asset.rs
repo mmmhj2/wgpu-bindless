@@ -33,6 +33,7 @@ pub struct GpuStaticMesh {
 }
 
 impl ConcreteAssetType for StaticMeshAsset {
+    const SCHEMA_VERSION: u32 = 1;
 }
 
 impl StaticMeshAsset {

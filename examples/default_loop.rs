@@ -4,7 +4,7 @@ use winit::
 ;
 
 pub fn run() -> Result<(), winit::error::EventLoopError> {
-
+    // To enable the logger when running from Cargo, set `$env:RUST_LOG` to debug or something else.
     env_logger::init();
 
     let event_loop = EventLoop::<DefaultRendererState>::with_user_event().build()?;
