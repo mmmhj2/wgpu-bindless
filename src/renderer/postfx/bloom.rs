@@ -15,7 +15,10 @@ use crate::renderer::{
 pub struct BloomPass {
     bgl_bloom: wgpu::BindGroupLayout,
     ppl_bloom_down: wgpu::RenderPipeline,
+    // Pipeline for upsampling.
     ppl_bloom_up: wgpu::RenderPipeline,
+    // Pipeline for final composition.
+    ppl_bloom_composite: wgpu::RenderPipeline,
 
     internal_format: wgpu::TextureFormat,
     mip_chain: FramebufferMipChain
@@ -23,7 +26,7 @@ pub struct BloomPass {
 
 impl BloomPass {
     const BLOOM_RADIUS: f32 = 0.5;
-    const BLOOM_STRENGTH: f64 = 0.5;
+    const BLOOM_STRENGTH: f64 = 0.05;
     pub const BLOOM_MIPCHAIN_HIGHEST_NAME: &str = "BloomMipchainHighest";
 
     const DBGL_BLOOM: wgpu::BindGroupLayoutDescriptor<'static> = wgpu::BindGroupLayoutDescriptor {
@@ -67,76 +70,84 @@ impl BloomPass {
 
         let internal_format = hdr_format;
 
-        let ppl_bloom_down = di.get_device().create_render_pipeline(
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("Bloom Downsample Pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState { module: &module, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &[] },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState{ count: 1, mask: !0, alpha_to_coverage_enabled: false },
-                fragment: Some(wgpu::FragmentState{
-                    module: &module,
-                    entry_point: Some("fs_downsample"),
-                    compilation_options: Default::default(),
-                    targets: &[ Some(wgpu::ColorTargetState{ format: internal_format, blend: None, write_mask: wgpu::ColorWrites::ALL }) ]
-                }),
-                multiview_mask: None,
-                cache: None
-            }
-        );
+        let mut descriptor = wgpu::RenderPipelineDescriptor {
+            label: Some("Bloom Downsample Pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState { module: &module, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &[] },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState{ count: 1, mask: !0, alpha_to_coverage_enabled: false },
+            fragment: Some(wgpu::FragmentState{
+                module: &module,
+                entry_point: Some("fs_downsample"),
+                compilation_options: Default::default(),
+                targets: &[ Some(wgpu::ColorTargetState{ format: internal_format, blend: None, write_mask: wgpu::ColorWrites::ALL }) ]
+            }),
+            multiview_mask: None,
+            cache: None
+        };
 
-        let ppl_bloom_up = di.get_device().create_render_pipeline(
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("Bloom Upsample Pipeline"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState { module: &module, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &[] },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState{ count: 1, mask: !0, alpha_to_coverage_enabled: false },
-                fragment: Some(wgpu::FragmentState{
-                    module: &module,
-                    entry_point: Some("fs_upsample"),
-                    compilation_options: Default::default(),
-                    targets: &[ Some(wgpu::ColorTargetState{
-                        format: internal_format,
-                        blend: Some(wgpu::BlendState {
-                            color: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::Constant,
-                                dst_factor: wgpu::BlendFactor::OneMinusConstant,
-                                operation: wgpu::BlendOperation::Add
-                            },
-                            alpha: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::Zero,
-                                dst_factor: wgpu::BlendFactor::One,
-                                operation: wgpu::BlendOperation::Add
-                            }
-                        }),
-                        write_mask: wgpu::ColorWrites::ALL
-                    }) ]
-                }),
-                multiview_mask: None,
-                cache: None
-            }
-        );
+        let ppl_bloom_down = di.get_device().create_render_pipeline(&descriptor);
 
-        Self { bgl_bloom, ppl_bloom_down, ppl_bloom_up, internal_format, mip_chain: FramebufferMipChain::new(internal_format) }
+        descriptor.label = Some("Bloom Upsample Pipeline");
+        let binding = [ Some(wgpu::ColorTargetState{
+                format: internal_format,
+                blend: Some(wgpu::BlendState {
+                    color: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::One,
+                        operation: wgpu::BlendOperation::Add
+                    },
+                    alpha: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::One,
+                        dst_factor: wgpu::BlendFactor::One,
+                        operation: wgpu::BlendOperation::Add
+                    }
+                }),
+                write_mask: wgpu::ColorWrites::ALL
+            }) ];
+        descriptor.fragment = Some(wgpu::FragmentState{
+            module: &module,
+            entry_point: Some("fs_upsample"),
+            compilation_options: Default::default(),
+            targets: &binding
+        });
+        let ppl_bloom_up = di.get_device().create_render_pipeline(&descriptor);
+
+        descriptor.label = Some("Bloom Composite Pipeline");
+        let binding = [ Some(wgpu::ColorTargetState{
+                format: internal_format,
+                blend: Some(wgpu::BlendState {
+                    color: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::Constant,
+                        dst_factor: wgpu::BlendFactor::OneMinusConstant,
+                        operation: wgpu::BlendOperation::Add
+                    },
+                    alpha: wgpu::BlendComponent {
+                        src_factor: wgpu::BlendFactor::Zero,
+                        dst_factor: wgpu::BlendFactor::One,
+                        operation: wgpu::BlendOperation::Add
+                    }
+                }),
+                write_mask: wgpu::ColorWrites::ALL
+            }) ];
+        descriptor.fragment = Some(wgpu::FragmentState{
+            module: &module,
+            entry_point: Some("fs_composite"),
+            compilation_options: Default::default(),
+            targets: &binding
+        });
+        let ppl_bloom_composite = di.get_device().create_render_pipeline(&descriptor);
+
+        Self { bgl_bloom, ppl_bloom_down, ppl_bloom_up, ppl_bloom_composite, internal_format, mip_chain: FramebufferMipChain::new(internal_format) }
     }
 
     fn build_bind_group(&self, di: &DeviceInterface, tx: &wgpu::TextureView, sp: &wgpu::Sampler) -> wgpu::BindGroup {
@@ -270,7 +281,6 @@ impl PostFxPass for BloomPass {
 
             let bg = self.build_bind_group(di, &mipchain[mip], sampler);
             rp.set_pipeline(&self.ppl_bloom_up);
-            rp.set_blend_constant(wgpu::Color{r: 1.0, g: 1.0, b: 1.0, a: 1.0});
             rp.set_immediates(0, bytemuck::cast_slice(&[Self::BLOOM_RADIUS]));
             rp.set_bind_group(0, &bg, &[]);
             rp.draw(0..3, 0..1);
@@ -296,7 +306,7 @@ impl PostFxPass for BloomPass {
             });
 
             let bg = self.build_bind_group(di, &mipchain[0], sampler);
-            rp.set_pipeline(&self.ppl_bloom_up);
+            rp.set_pipeline(&self.ppl_bloom_composite);
             rp.set_blend_constant(wgpu::Color{r: Self::BLOOM_STRENGTH, g: Self::BLOOM_STRENGTH, b: Self::BLOOM_STRENGTH, a: 1.0});
             rp.set_immediates(0, bytemuck::cast_slice(&[Self::BLOOM_RADIUS]));
             rp.set_bind_group(0, &bg, &[]);
