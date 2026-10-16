@@ -35,6 +35,7 @@ fn fs_aces(in: VertexOutput) -> @location(0) vec4<f32> {
     const D = 0.59f;
     const E = 0.14f;
 
-    var out = textureSample(hdr_input, hdr_input_sp, in.uv);
-    return (out * (A * out + B)) / (out * (C * out + D) + E); 
+    var c = textureSample(hdr_input, hdr_input_sp, in.uv) * 0.6;
+    var out = (c * (A * c + B)) / (c * (C * c + D) + E);
+    return clamp(out, vec4<f32>(0.0), vec4<f32>(1.0)); 
 }
