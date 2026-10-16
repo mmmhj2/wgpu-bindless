@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, num::NonZero, rc::Rc};
+use std::{collections::HashMap, num::NonZero, rc::Rc};
 
 use crate::renderer::{
     device_interface::DeviceInterface,
@@ -120,11 +120,38 @@ impl PostFxResourceCache {
     }
 }
 
+/// How a post-processing pass writes its result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputMode {
+    /// The pass writes to a buffer distinct from its input (the default).
+    Separate,
+    /// The pass reads and writes the same working target, so `input` and
+    /// `output` alias.
+    ///
+    /// # Safety
+    ///
+    /// The implementation must guarantee that no single render pass both
+    /// samples and renders the same subresource. Otherwise this is a undefined
+    /// behaviour. Construct it with [`OutputMode::in_place`].
+    InPlace,
+}
+
+impl OutputMode {
+    /// Request an out-of-place output buffer (the safe default).
+    pub const fn separate() -> Self { OutputMode::Separate }
+
+    /// Request in-place output.
+    ///
+    /// # Safety
+    ///
+    /// See [`OutputMode::InPlace`].
+    pub unsafe fn in_place() -> Self { OutputMode::InPlace }
+}
+
 /// A single post-processing pass.
 ///
 /// Passes are executed in registration order. A pass reads [`PostFxContext::input`]
-/// and writes [`PostFxContext::output`]; by default these are the same HDR target
-/// (in place), unless [`PostFxPass::separate_output`] requests a distinct buffer.
+/// and writes [`PostFxContext::output`].
 pub trait PostFxPass {
     /// Human-readable name, used in diagnostics.
     fn name(&self) -> &'static str;
@@ -149,11 +176,11 @@ pub trait PostFxPass {
     /// External inputs this pass reads, validated by the stack before execution.
     fn requires(&self) -> &'static [PostFxInput] { &[] }
 
-    /// Whether the pass needs an output buffer distinct from its input.
+    /// How this pass writes its result.
     ///
-    /// `false` (default) means the pass operates in place on the shared HDR
-    /// target, so `input` and `output` alias.
-    fn separate_output(&self) -> bool { false }
+    /// Defaults to [`OutputMode::separate`].
+    /// [`OutputMode::in_place`] is unsafe and must be opted into explicitly.
+    fn output_mode(&self) -> OutputMode { OutputMode::separate() }
 
     /// Called whenever the render target size changes.
     ///
@@ -165,20 +192,20 @@ pub trait PostFxPass {
     fn apply(&mut self, ctx: &mut PostFxContext<'_>, resource: &mut PostFxResourceCache);
 }
 
-/// Owns the HDR working target, two scratch targets for out-of-place passes, and
-/// an ordered chain of post-processing passes.
+/// Owns the HDR working target, a lazily grown pool of scratch targets for
+/// out-of-place passes, and an ordered chain of post-processing passes.
 ///
-/// The scene is expected to be rendered into [`PostFxStack::scene_target`].
-/// The passes are then applied in insertion order by [`PostFxStack::run`].
+/// At most one scratch buffer is live at any time (the chain's current input),
+/// so the pool never grows beyond two entries. The scene is expected to be
+/// rendered into [`PostFxStack::scene_target`]; the passes are then applied in
+/// insertion order by [`PostFxStack::run`].
 pub struct PostFxStack {
     hdr_format      : wgpu::TextureFormat,
     output_format   : wgpu::TextureFormat,
     cache           : PostFxResourceCache,
     size            : Option<(NonZero<u32>, NonZero<u32>)>,
     hdr_target      : Framebuffer,
-    // Currently the stack only has two identical scratch targets, which are used in a ping-pong fashion for out-of-place passes.
-    // We need to think about how to handle more complex cases, e.g. a pass that needs two inputs and one output, or halfres passes, etc.
-    scratch         : [Framebuffer; 2],
+    scratch         : Vec<Framebuffer>,
     passes          : Vec<Box<dyn PostFxPass>>
 }
 
@@ -198,10 +225,7 @@ impl PostFxStack {
             cache: PostFxResourceCache::new(),
             size: None,
             hdr_target: Framebuffer::new(hdr_format, "PostFx HDR target"),
-            scratch: [
-                Framebuffer::new(hdr_format, "PostFx scratch A"),
-                Framebuffer::new(hdr_format, "PostFx scratch B"),
-            ],
+            scratch: Vec::new(),
             passes: Vec::new(),
         }
     }
@@ -242,13 +266,31 @@ impl PostFxStack {
         }
     }
 
+    /// Return a scratch buffer index that is not `exclude`, growing the pool if
+    /// every existing buffer is excluded.
+    ///
+    /// Because only the chain's current input is ever live, this returns the
+    /// first free buffer and the pool stabilises at two entries.
+    /// 
+    /// TODO: Support more varieties of scratch textures (halfres, etc.)
+    fn acquire_scratch(&mut self, exclude: Option<usize>) -> usize {
+        for i in 0..self.scratch.len() {
+            if Some(i) != exclude {
+                return i;
+            }
+        }
+        self.scratch.push(Framebuffer::new(self.hdr_format, "PostFx scratch"));
+        self.scratch.len() - 1
+    }
+
     /// Apply every pass in order, presenting the result into `final_view`.
     ///
     /// Panic
     /// ---
     /// Panics if the stack has no passes, if `configure_with_surface` has not
-    /// been called, if a pass requires an input that was not provided, or if a
-    /// pass declares a format incompatible with the chain.
+    /// been called, if a pass requires an input that was not provided, if a
+    /// pass declares a format incompatible with the chain, or if the final pass
+    /// requests in-place output.
     pub fn run(
         &mut self,
         di: &DeviceInterface,
@@ -265,13 +307,11 @@ impl PostFxStack {
         let (width, height) = self.size.expect("call configure_with_surface before run.");
         let size = (width.get(), height.get());
 
-        let scene = self.hdr_target.get_texture().expect("call configure_with_surface before run.");
-        let mut current: &wgpu::TextureView = scene.as_ref();
-        let mut scratch_idx = 0usize;
-
+        // Validate the whole chain before recording anything.
+        #[cfg(debug_assertions)]
         for i in 0..count {
             let is_last = i + 1 == count;
-            let pass = &mut self.passes[i];
+            let pass = &self.passes[i];
 
             assert_eq!(
                 pass.input_format(), hdr_format,
@@ -291,33 +331,60 @@ impl PostFxStack {
                     pass.name(), required
                 );
             }
+        }
 
-            let separate = pass.separate_output() && !is_last;
-            let scratch_rc = self.scratch[scratch_idx].get_texture().expect("scratch target should be ready");
+        let scene = self.hdr_target.get_texture().expect("call configure_with_surface before run.").clone();
 
+        // Index of the buffer holding the chain's current input; `None` = scene.
+        let mut current: Option<usize> = None;
+
+        for i in 0..count {
+            let is_last = i + 1 == count;
+            let mode = self.passes[i].output_mode();
+            assert!(
+                !(is_last && mode == OutputMode::InPlace),
+                "The final post-fx pass '{}' writes to the swapchain and cannot be in place.",
+                self.passes[i].name()
+            );
+
+            // Decide the output buffer first (this may grow the pool), so that
+            // no view borrow is held across the mutable borrow of the pool.
+            let out: Option<usize> = if is_last {
+                None
+            } else {
+                match mode {
+                    OutputMode::Separate => Some(self.acquire_scratch(current)),
+                    OutputMode::InPlace => current,
+                }
+            };
+
+            let input: &wgpu::TextureView = match current {
+                None => scene.as_ref(),
+                Some(k) => self.scratch[k].view().as_ref(),
+            };
             let output: &wgpu::TextureView = if is_last {
                 final_view
-            } else if separate {
-                scratch_rc.as_ref()
             } else {
-                current
+                match out {
+                    None => scene.as_ref(),
+                    Some(k) => self.scratch[k].view().as_ref(),
+                }
             };
 
             let mut ctx = PostFxContext {
                 device: di,
-                encoder: ce,
-                samplers: samplers,
+                encoder: &mut *ce,
+                samplers: &mut *samplers,
                 size,
-                input: current,
+                input,
                 output,
                 scene_color: scene.as_ref(),
                 depth: inputs.get(PostFxInput::Depth),
             };
-            pass.apply(&mut ctx, &mut self.cache);
+            self.passes[i].apply(&mut ctx, &mut self.cache);
 
-            if separate {
-                current = scratch_rc.as_ref();
-                scratch_idx = (scratch_idx + 1) % self.scratch.len();
+            if !is_last {
+                current = out;
             }
         }
 

@@ -1,7 +1,7 @@
 use std::num::NonZero;
 
 use crate::renderer::{
-    device_interface::DeviceInterface, pipeline::sampler::SamplerDescription, postfx::{framebuffers::FramebufferMipChain, postfx_stack::{PostFxContext, PostFxPass, PostFxResourceCache}},
+    device_interface::DeviceInterface, pipeline::sampler::SamplerDescription, postfx::{framebuffers::FramebufferMipChain, postfx_stack::{OutputMode, PostFxContext, PostFxPass, PostFxResourceCache}},
 };
 
 /// Screen space bloom pass.
@@ -156,6 +156,13 @@ impl PostFxPass for BloomPass {
 
     fn input_format(&self) -> wgpu::TextureFormat { self.internal_format }
     fn output_format(&self) -> wgpu::TextureFormat { self.internal_format }
+
+    fn output_mode(&self) -> OutputMode {
+        // SAFETY: bloom stages through its mip chain.
+        // In every render pass the sampled texture and the colour attachment are
+        // different subresources. No feedback loop can occur.
+        unsafe { OutputMode::in_place() }
+    }
 
     fn resize(&mut self, di: &DeviceInterface, width: NonZero<u32>, height: NonZero<u32>) {
         self.mip_chain.create_textures(di, width, height);

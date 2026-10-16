@@ -21,6 +21,11 @@ impl Framebuffer {
     pub fn get_format(&self) -> wgpu::TextureFormat { self.format }
     pub fn get_texture(&self) -> Option<&Rc<wgpu::TextureView>> { self.texture.as_ref() }
 
+    /// The texture view, panicking if it has not been created yet.
+    pub fn view(&self) -> &Rc<wgpu::TextureView> {
+        self.texture.as_ref().expect("framebuffer texture should be created")
+    }
+
     pub fn create_texture(&mut self, di: &DeviceInterface, width: NonZero<u32>, height: NonZero<u32>) {
         let texture = di.get_device().create_texture(&wgpu::TextureDescriptor{
             label: Some(self.label),
