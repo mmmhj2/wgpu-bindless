@@ -164,7 +164,7 @@ impl<T: TonemapPass> PostFxPass for T {
         let lum = if Self::requires_average_luminance() {
             let avg_lum = cache.try_get(BloomPass::BLOOM_MIPCHAIN_HIGHEST_NAME);
             match avg_lum {
-                Some(view) => view.as_ref(),
+                Some(view) => &view.clone(),
                 None => panic!("Average luminance texture is not available!")
             }
         } else {

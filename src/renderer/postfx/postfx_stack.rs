@@ -91,9 +91,9 @@ impl PostFxContext<'_> {
 /// to cover storage buffers, etc.
 #[derive(Debug)]
 pub struct PostFxResourceCache {
-    transient: HashMap<String, Rc<wgpu::TextureView>>,
+    transient: HashMap<String, wgpu::TextureView>,
     /// Persisent resource cache is currently stub code only.
-    persistent: HashMap<String, Rc<wgpu::TextureView>>
+    persistent: HashMap<String, wgpu::TextureView>
 }
 
 impl PostFxResourceCache {
@@ -107,15 +107,15 @@ impl PostFxResourceCache {
         self.persistent.clear();
     }
 
-    pub fn publish(&mut self, name: &str, resource: Rc<wgpu::TextureView>) {
+    pub fn publish(&mut self, name: &str, resource: wgpu::TextureView) {
         self.transient.insert(name.into(), resource);
     }
 
-    pub fn get(&self, name: &str) -> &Rc<wgpu::TextureView> {
+    pub fn get(&self, name: &str) -> &wgpu::TextureView {
         self.try_get(name).unwrap()
     }
 
-    pub fn try_get(&self, name: &str) -> Option<&Rc<wgpu::TextureView>> {
+    pub fn try_get(&self, name: &str) -> Option<&wgpu::TextureView> {
         self.transient.get(name)
     }
 }
@@ -238,7 +238,7 @@ impl PostFxStack {
     pub fn get_hdr_format(&self) -> wgpu::TextureFormat { self.hdr_format }
 
     /// The HDR texture the scene must be rendered into before [`PostFxStack::run`].
-    pub fn scene_target(&self) -> &Rc<wgpu::TextureView> {
+    pub fn scene_target(&self) -> &wgpu::TextureView {
         self.hdr_target.get_texture().expect("call configure_with_surface first")
     }
 
@@ -359,15 +359,15 @@ impl PostFxStack {
             };
 
             let input: &wgpu::TextureView = match current {
-                None => scene.as_ref(),
-                Some(k) => self.scratch[k].view().as_ref(),
+                None => &scene,
+                Some(k) => self.scratch[k].view(),
             };
             let output: &wgpu::TextureView = if is_last {
                 final_view
             } else {
                 match out {
-                    None => scene.as_ref(),
-                    Some(k) => self.scratch[k].view().as_ref(),
+                    None => &scene,
+                    Some(k) => self.scratch[k].view(),
                 }
             };
 
@@ -378,7 +378,7 @@ impl PostFxStack {
                 size,
                 input,
                 output,
-                scene_color: scene.as_ref(),
+                scene_color: &scene,
                 depth: inputs.get(PostFxInput::Depth),
             };
             self.passes[i].apply(&mut ctx, &mut self.cache);

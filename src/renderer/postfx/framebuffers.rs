@@ -7,7 +7,7 @@ use crate::renderer::device_interface::DeviceInterface;
 pub struct Framebuffer {
     format: wgpu::TextureFormat,
     label: &'static str,
-    texture: Option<Rc<wgpu::TextureView>>
+    texture: Option<wgpu::TextureView>
 }
 
 impl Framebuffer {
@@ -19,10 +19,10 @@ impl Framebuffer {
     }
 
     pub fn get_format(&self) -> wgpu::TextureFormat { self.format }
-    pub fn get_texture(&self) -> Option<&Rc<wgpu::TextureView>> { self.texture.as_ref() }
+    pub fn get_texture(&self) -> Option<&wgpu::TextureView> { self.texture.as_ref() }
 
     /// The texture view, panicking if it has not been created yet.
-    pub fn view(&self) -> &Rc<wgpu::TextureView> {
+    pub fn view(&self) -> &wgpu::TextureView {
         self.texture.as_ref().expect("framebuffer texture should be created")
     }
 
@@ -44,7 +44,7 @@ impl Framebuffer {
 /// A half-resolution mip chain used for screen space effects.
 pub struct FramebufferMipChain {
     format: wgpu::TextureFormat,
-    texture: Vec<Rc<wgpu::TextureView>>
+    texture: Vec<wgpu::TextureView>
 }
 
 impl FramebufferMipChain {
@@ -56,7 +56,7 @@ impl FramebufferMipChain {
     }
 
     pub fn get_format(&self) -> wgpu::TextureFormat { self.format }
-    pub fn get_textures(&self) -> &Vec<Rc<wgpu::TextureView>> { self.texture.as_ref() }
+    pub fn get_textures(&self) -> &Vec<wgpu::TextureView> { self.texture.as_ref() }
     pub fn get_mipchain_length(&self) -> Option<NonZero<usize>> { NonZero::new(self.texture.len()) }
     
     /// Create a mipchain from the framebuffer size.
