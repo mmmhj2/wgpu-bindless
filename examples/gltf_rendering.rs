@@ -8,7 +8,7 @@ use rust_renderer::{
         asset_types::{AssetData::{SceneAssetType, TextureAssetType}, GpuAssetType},
         importer::{gltf_importer::GltfImporter, image_file_importer::ColorSpace},
     }, renderer::{
-        device_interface::DeviceInterface, mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance}, pipeline::{camera::{Camera, CameraPerspective, CameraPerspectiveBuilder, HasViewMatrix, HasViewProjectionMatrix}, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager}, postfx::{bloom::BloomPass, postfx_stack::{PostFxExtraInputs, PostFxInput, PostFxStack}, tonemap::AcesTonemapPass}, window::RendererState
+        device_interface::DeviceInterface, mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance}, pipeline::{camera::{Camera, CameraPerspective, CameraPerspectiveBuilder, HasViewMatrix, HasViewProjectionMatrix}, lighting::Light, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager}, postfx::{bloom::BloomPass, postfx_stack::{PostFxExtraInputs, PostFxInput, PostFxStack}, tonemap::AcesTonemapPass}, window::RendererState
     },
 };
 use winit::{application::ApplicationHandler, event::{KeyEvent, WindowEvent}, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window};
@@ -23,6 +23,7 @@ struct State {
     postfx: PostFxStack,
     gltf_models: Vec<StaticMeshInstance>,
     camera: CameraPerspective,
+    light: Light,
     _asset_manager: AssetManager
 }
 
@@ -43,6 +44,13 @@ impl State {
         let vec = cgmath::vec4(rotate_axis_angle.x, rotate_axis_angle.y, rotate_axis_angle.z, 0.0);
         let vec_ws = self.camera.get_view_matrix().invert().expect("view matrix should be invertible") * vec;
         self.rotate_camera_ws(vec_ws.truncate());
+    }
+
+    /// Rotate the directional light around the world Y axis by the given degrees.
+    pub fn rotate_light_y(&mut self, degrees: f32) {
+        let (sin, cos) = cgmath::Deg(degrees).0.to_radians().sin_cos();
+        let [x, y, z] = self.light.direction;
+        self.light.direction = [cos * x + sin * z, y, -sin * x + cos * z];
     }
 }
 
@@ -108,6 +116,10 @@ impl RendererState for State {
 
         let camera = CameraPerspectiveBuilder::new().set_origin(cgmath::point3(0.0, 0.0, 3.0)).build();
 
+        // Scene lighting: a single directional light plus a faint ambient term.
+        pipeline.get_lighting_manager_mut().set_ambient([0.03, 0.03, 0.03]);
+        let light = Light::directional([0.4, -1.0, 0.6], [1.0, 0.95, 0.9], 3.0);
+
         Self {
             window: window.clone(),
             device,
@@ -116,6 +128,7 @@ impl RendererState for State {
             postfx,
             gltf_models,
             camera,
+            light,
             _asset_manager: asset_manager
         }
     }
@@ -186,6 +199,10 @@ impl RendererState for State {
             });
 
             self.pipeline.set_active_camera(self.camera.clone());
+            self.pipeline.get_lighting_manager().upload_lights(
+                self.device.get_queue(),
+                std::slice::from_ref(&self.light)
+            );
             self.pipeline.prepare_render_pass(self.get_device_interface(), &mut rp);
             rp.set_rasterizer_pipeline(self.pipeline.query_pipeline(&String::from("cook_torrance")).expect("cook torrance pipeline not found"));
             for m in &self.gltf_models {
@@ -283,6 +300,8 @@ impl ApplicationHandler<State> for MyAppState {
                 (KeyCode::KeyD, _) => state.rotate_camera_cs(cgmath::vec3(0.0,  1.0, 0.0)),
                 (KeyCode::KeyW, _) => state.rotate_camera_cs(cgmath::vec3(-1.0, 0.0, 0.0)),
                 (KeyCode::KeyS, _) => state.rotate_camera_cs(cgmath::vec3( 1.0, 0.0, 0.0)),
+                (KeyCode::KeyQ, _) => state.rotate_light_y(5.0),
+                (KeyCode::KeyE, _) => state.rotate_light_y(-5.0),
                 _ => {}
             },
             _ => {}
