@@ -2,6 +2,8 @@ use std::{collections::{HashSet, VecDeque}, ffi::OsString, path::{Path, PathBuf}
 
 use crate::asset::{asset_types::{Asset, AssetMetadata, scene_asset::{SceneAsset, SceneMeshInstanceAsset}, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat}, vertex::{VertexBufferOthers, VertexBufferPosition}}, error::ImportError, importer::{AssetImporter, vertex_reconditioner::{ReconditionerError, TangentRecalculator}}};
 
+use super::gltf_mrao::{build_mrao_texture_asset, GltfImageView, GltfMraoError};
+
 /// Errors produced while importing a glTF document.
 #[derive(Debug, thiserror::Error)]
 pub enum GltfImportError {
@@ -29,18 +31,31 @@ pub enum GltfImportError {
 
     #[error("failed to recondition vertices")]
     ReconditionFailed(#[from] ReconditionerError),
+
+    #[error("MRAO texture generation failed")]
+    BadMraoTexture(#[from] GltfMraoError),
 }
 
 pub struct GltfImporter {
     // Guard it by mutex if we want to parallelize it.
     pub color_textures: HashSet<String>,
+    /// MRAO source combinations requested by material slots.
+    mrao_requests: HashSet<MraoKey>,
+    /// Materials already warned about unsupported factor values.
+    warned_materials: HashSet<usize>,
     /// The glTF file this importer reads from.
     pub path: Box<std::path::Path>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct MraoKey {
+    mr: Option<usize>,
+    ao: Option<usize>,
+}
+
 impl AssetImporter for GltfImporter {
     const IMPORTER_ID: &'static str = "gltf";
-    const IMPORTER_VERSION: u32 = 1;
+    const IMPORTER_VERSION: u32 = 2;
 
     fn import(mut self, context: &super::ImporterContext) -> Result<(), ImportError> {
         if !self.path.is_file() {
@@ -97,6 +112,26 @@ impl AssetImporter for GltfImporter {
             context.asset_batch.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(subasset_name, imported_asset);
         }
 
+        let mrao_requests: Vec<MraoKey> = self.mrao_requests.iter().copied().collect();
+        for key in mrao_requests {
+            let asset_type = SubAssetType::MraoTexture(key);
+            let subasset_path = Self::generate_subasset_filename(path, asset_type)?;
+            let subasset_name = Self::generate_subasset_name(path, asset_type)?.into_string()
+                .map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
+            log::info!("Generating MRAO texture {}.", subasset_name);
+            let imported_texture = Self::import_from_gltf_mrao(&document, &textures, key)?;
+            let imported_asset = Arc::from(
+                RwLock::from(Asset::new(
+                    AssetMetadata::new(
+                        subasset_name.clone(),
+                        Some(subasset_path.into_boxed_path())
+                    ),
+                    crate::asset::asset_types::AssetData::TextureAssetType(imported_texture)
+                ))
+            );
+            context.asset_batch.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(subasset_name, imported_asset);
+        }
+
         for scene in document.scenes() {
             let asset_type = SubAssetType::Scene(scene.index());
             let subasset_path = Self::generate_subasset_filename(path, asset_type)?;
@@ -137,7 +172,9 @@ pub(crate) enum SubAssetType {
     /// TODO: support multiple primitives per mesh. Maybe we should use `submesh` and map primitives to submeshes.
     Primitive { mesh: usize, primitive: usize },
     /// A GLTF scene, flattened into a list of mesh instances with baked transforms.
-    Scene(usize)
+    Scene(usize),
+    /// A renderer-layout MRAO texture derived from optional MR and AO textures.
+    MraoTexture(MraoKey),
 }
 
 impl Into<AddressMode> for gltf::texture::WrappingMode {
@@ -152,7 +189,12 @@ impl Into<AddressMode> for gltf::texture::WrappingMode {
 
 impl GltfImporter {
     pub fn new(path: impl AsRef<std::path::Path>) -> Self {
-        Self { color_textures: HashSet::new(), path: path.as_ref().into() }
+        Self {
+            color_textures: HashSet::new(),
+            mrao_requests: HashSet::new(),
+            warned_materials: HashSet::new(),
+            path: path.as_ref().into(),
+        }
     }
 
     pub(crate) fn generate_subasset_filename(gltf_file: &Path, asset_type: SubAssetType) -> Result<PathBuf, GltfImportError> {
@@ -165,6 +207,19 @@ impl GltfImporter {
             SubAssetType::Mesh(index) => format!(".mesh_{}", index),
             SubAssetType::Primitive { mesh, primitive } => format!(".prim_{}_{}", mesh, primitive),
             SubAssetType::Scene(index) => format!(".scene_{}", index),
+            SubAssetType::MraoTexture(key) => {
+                fn source_label(prefix: &str, index: Option<usize>) -> String {
+                    index
+                        .map(|index| format!("{prefix}{index}"))
+                        .unwrap_or_else(|| String::from("none"))
+                }
+
+                format!(
+                    ".mrao_{}_{}",
+                    source_label("mr", key.mr),
+                    source_label("ao", key.ao)
+                )
+            }
         };
 
         let mut new_filename = gltf_file.file_name()
@@ -346,7 +401,9 @@ impl GltfImporter {
         };
 
         // Process the materials
-        let pbr_material = primitive.material().pbr_metallic_roughness();
+        let material = primitive.material();
+        Self::warn_unsupported_material_factors(importer, &material);
+        let pbr_material = material.pbr_metallic_roughness();
 
         ret.material.diffuse_texture_name = if let Some(base_color_texture) = pbr_material.base_color_texture() {
             let texture_name = GltfImporter::generate_subasset_name(
@@ -359,7 +416,7 @@ impl GltfImporter {
             None
         };
 
-        ret.material.normal_texture_name = if let Some(normal_texture) = primitive.material().normal_texture() {
+        ret.material.normal_texture_name = if let Some(normal_texture) = material.normal_texture() {
             Some(
                 GltfImporter::generate_subasset_name(
                     &importer.path,
@@ -370,11 +427,53 @@ impl GltfImporter {
             None
         };
 
-        let should_have_mrao_texture = primitive.material().pbr_metallic_roughness().metallic_roughness_texture().is_some() || primitive.material().occlusion_texture().is_some();
-        if should_have_mrao_texture {
-            todo!("Support importing metallic-roughness-occlusion textures. Currently unsupported.");
+        let mr_texture = pbr_material.metallic_roughness_texture()
+            .map(|info| (info.texture().index(), info.tex_coord()));
+        let ao_texture = material.occlusion_texture()
+            .map(|info| (info.texture().index(), info.tex_coord()));
+
+        for (label, tex_coord) in [
+            ("metallic-roughness", mr_texture.map(|(_, tex_coord)| tex_coord)),
+            ("occlusion", ao_texture.map(|(_, tex_coord)| tex_coord)),
+        ] {
+            if let Some(tex_coord) = tex_coord {
+                if tex_coord != 0 {
+                    log::warn!(
+                        "{} texture uses TEXCOORD_{}; the renderer only supports TEXCOORD_0",
+                        label,
+                        tex_coord
+                    );
+                }
+            }
+        }
+
+        let (mr_index, ao_index) = match (mr_texture, ao_texture) {
+            (Some((mr_index, mr_tex_coord)), Some((ao_index, ao_tex_coord))) => {
+                if mr_tex_coord == ao_tex_coord {
+                    (Some(mr_index), Some(ao_index))
+                } else {
+                    log::warn!(
+                        "metallic-roughness and occlusion textures use different TEXCOORD sets; occlusion will be ignored"
+                    );
+                    (Some(mr_index), None)
+                }
+            }
+            (Some((mr_index, _)), None) => (Some(mr_index), None),
+            (None, Some((ao_index, _))) => (None, Some(ao_index)),
+            (None, None) => (None, None),
         };
-        
+
+        if mr_index.is_some() || ao_index.is_some() {
+            let key = MraoKey { mr: mr_index, ao: ao_index };
+            importer.mrao_requests.insert(key);
+            ret.material.mrao_texture_name = Some(
+                GltfImporter::generate_subasset_name(
+                    &importer.path,
+                    SubAssetType::MraoTexture(key)
+                )?.into_string().map_err(|_| GltfImportError::InvalidSubresourceName(importer.path.to_path_buf()))?
+            );
+        }
+
         if calculate_tangent {
             ret.recalculate_tangents()?;
         }
@@ -383,6 +482,98 @@ impl GltfImporter {
         ret.recondition();
 
         Ok(ret)
+    }
+
+    fn warn_unsupported_material_factors(importer: &mut GltfImporter, material: &gltf::Material) {
+        const EPSILON: f32 = 1e-6;
+
+        let material_key = material.index().unwrap_or(usize::MAX);
+        if !importer.warned_materials.insert(material_key) {
+            return;
+        }
+
+        let material_index = material.index()
+            .map(|index| index.to_string())
+            .unwrap_or_else(|| String::from("<default>"));
+        let material_name = material.name().unwrap_or("<unnamed>");
+        let pbr = material.pbr_metallic_roughness();
+
+        let metallic_factor = pbr.metallic_factor();
+        if (metallic_factor - 1.0).abs() > EPSILON {
+            log::warn!(
+                "glTF material {} (name: {}) uses unsupported metallicFactor {}; the value will be ignored",
+                material_index,
+                material_name,
+                metallic_factor
+            );
+        }
+
+        let roughness_factor = pbr.roughness_factor();
+        if (roughness_factor - 1.0).abs() > EPSILON {
+            log::warn!(
+                "glTF material {} (name: {}) uses unsupported roughnessFactor {}; the value will be ignored",
+                material_index,
+                material_name,
+                roughness_factor
+            );
+        }
+
+        if let Some(occlusion_texture) = material.occlusion_texture() {
+            let occlusion_strength = occlusion_texture.strength();
+            if (occlusion_strength - 1.0).abs() > EPSILON {
+                log::warn!(
+                    "glTF material {} (name: {}) uses unsupported occlusion strength {}; the value will be ignored",
+                    material_index,
+                    material_name,
+                    occlusion_strength
+                );
+            }
+        }
+    }
+
+    fn import_from_gltf_mrao(
+        document: &gltf::Document,
+        images: &[gltf::image::Data],
+        key: MraoKey,
+    ) -> Result<TextureAsset, GltfImportError> {
+        let mr_texture = key.mr
+            .map(|index| document.textures().nth(index).ok_or(GltfImportError::IndexOutOfRange(index)))
+            .transpose()?;
+        let ao_texture = key.ao
+            .map(|index| document.textures().nth(index).ok_or(GltfImportError::IndexOutOfRange(index)))
+            .transpose()?;
+
+        let mr_image = mr_texture.as_ref()
+            .map(|texture| {
+                let image_index = texture.source().index();
+                images.get(image_index).ok_or(GltfImportError::IndexOutOfRange(image_index))
+            })
+            .transpose()?;
+        let ao_image = ao_texture.as_ref()
+            .map(|texture| {
+                let image_index = texture.source().index();
+                images.get(image_index).ok_or(GltfImportError::IndexOutOfRange(image_index))
+            })
+            .transpose()?;
+
+        let mr_view = mr_image.map(GltfImageView::from_gltf).transpose()?;
+        let ao_view = ao_image.map(GltfImageView::from_gltf).transpose()?;
+
+        let sampler = match (&mr_texture, &ao_texture) {
+            (Some(mr), Some(ao)) => {
+                if !samplers_equal(&mr.sampler(), &ao.sampler()) {
+                    log::warn!(
+                        "metallic-roughness and occlusion textures use different samplers; using the metallic-roughness sampler"
+                    );
+                }
+                Self::import_from_gltf_sampler(&mr.sampler())
+            }
+            (Some(mr), None) => Self::import_from_gltf_sampler(&mr.sampler()),
+            (None, Some(ao)) => Self::import_from_gltf_sampler(&ao.sampler()),
+            (None, None) => return Err(GltfImportError::BadMraoTexture(GltfMraoError::InvalidTexture)),
+        };
+
+        Ok(build_mrao_texture_asset(mr_view.as_ref(), ao_view.as_ref(), sampler)?)
     }
 
     // Texture importer
@@ -466,4 +657,11 @@ impl GltfImporter {
             texels: TexelData::Plain(image.pixels.clone().into_boxed_slice()),
         })
     }
+}
+
+fn samplers_equal(a: &gltf::texture::Sampler, b: &gltf::texture::Sampler) -> bool {
+    a.wrap_s() == b.wrap_s()
+        && a.wrap_t() == b.wrap_t()
+        && a.mag_filter() == b.mag_filter()
+        && a.min_filter() == b.min_filter()
 }

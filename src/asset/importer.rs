@@ -3,6 +3,7 @@ use std::{collections::HashMap, path::{Path, PathBuf}, sync::{Arc, RwLock}};
 use crate::asset::{asset_types::Asset, error::ImportError};
 
 pub mod gltf_importer;
+mod gltf_mrao;
 pub mod image_file_importer;
 pub mod vertex_reconditioner;
 
