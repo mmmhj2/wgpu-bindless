@@ -1,7 +1,7 @@
 use std::{collections::HashMap, num::NonZero, borrow::Cow};
 use wgpu::{ColorTargetState, ColorWrites, DepthBiasState, PipelineLayoutDescriptor};
 
-use crate::renderer::{asset_registry::GpuAssetRegistry, device_interface::DeviceInterface, mesh::{mesh_manager::MeshManager, vertex_types::VertexType}, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, CameraPerspective, HasViewProjectionMatrix}, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor}}};
+use crate::renderer::{asset_registry::GpuAssetRegistry, device_interface::DeviceInterface, mesh::{mesh_manager::MeshManager, vertex_types::VertexType}, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, CameraPerspective, HasViewProjectionMatrix}, lighting::LightingManager, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor}}};
 
 macro_rules! include_bindless_wgsl {
     ($($token:tt)*) => {
@@ -22,6 +22,7 @@ macro_rules! include_bindless_wgsl {
 pub struct PipelineStates {
     asset_registry: GpuAssetRegistry,
     cameras: CameraManager,
+    lighting: LightingManager,
     mesh_manager: MeshManager,
     rasterizer_pipeline_layouts: HashMap<String, wgpu::PipelineLayout>,
     rasterizer_pipelines: HashMap<String, RasterizerPipeline>
@@ -32,6 +33,7 @@ impl PipelineStates {
 
         let asset_registry = GpuAssetRegistry::new(di);
         let cameras = CameraManager::new(di);
+        let lighting = LightingManager::new(di);
         let mesh_manager = MeshManager::new(di);
         let mut rasterizer_pipeline_layouts: HashMap<String, wgpu::PipelineLayout> = HashMap::new();
         let mut rasterizer_pipelines: HashMap<String, RasterizerPipeline> = HashMap::new();
@@ -45,6 +47,7 @@ impl PipelineStates {
                 bind_group_layouts: &[
                         Some(asset_registry.get_bindless_resource_manager().get_bind_group_layout()),
                         Some(cameras.get_bind_group_layout()),
+                        Some(lighting.get_bind_group_layout()),
                         Some(mesh_manager.get_bind_group_layout())
                     ],
                 immediate_size: (std::mem::size_of::<u32>() * 3) as u32
@@ -109,6 +112,7 @@ impl PipelineStates {
         return Self{
             asset_registry,
             cameras,
+            lighting,
             mesh_manager,
             rasterizer_pipeline_layouts,
             rasterizer_pipelines
@@ -149,6 +153,7 @@ impl PipelineStates {
         rp.set_bind_group(0, &bindless_bind_group, &[]);
         di.get_queue().write_buffer(&camera_buffer, 0, &self.cameras.get_active_camera().get_v_p_vp_matrices_as_u8());
         rp.set_bind_group(1, &camera_bind_group, &[]);
+        rp.set_bind_group(2, self.lighting.get_bind_group(), &[]);
     }
 
     /// Query the default pipeline.
@@ -168,6 +173,9 @@ impl PipelineStates {
 
     pub fn get_camera_manager(&self) -> &CameraManager { &self.cameras }
     pub fn set_active_camera(&mut self, camera: CameraPerspective) { self.cameras.set_active_camera(camera); }
+
+    pub fn get_lighting_manager(&self) -> &LightingManager { &self.lighting }
+    pub fn get_lighting_manager_mut(&mut self) -> &mut LightingManager { &mut self.lighting }
 
     pub fn get_mesh_manager(&self) -> &MeshManager { &self.mesh_manager }
 

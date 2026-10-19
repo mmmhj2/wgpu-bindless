@@ -5,4 +5,5 @@ pub mod sampler_manager;
 pub mod bindless_resource_manager;
 pub mod pbr_material;
 pub mod camera;
+pub mod lighting;
 pub mod skybox;
