@@ -8,7 +8,7 @@ use rust_renderer::{
         asset_types::{AssetData::{SceneAssetType, TextureAssetType}, GpuAssetType},
         importer::{gltf_importer::GltfImporter, image_file_importer::ColorSpace},
     }, renderer::{
-        device_interface::DeviceInterface, mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance}, pipeline::{camera::{Camera, CameraPerspective, CameraPerspectiveBuilder, HasViewMatrix, HasViewProjectionMatrix}, lighting::Light, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager}, postfx::{bloom::BloomPass, postfx_stack::{PostFxExtraInputs, PostFxInput, PostFxStack}, tonemap::AcesTonemapPass}, window::RendererState
+        device_interface::DeviceInterface, mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance}, pipeline::{camera::{Camera, CameraPerspective, CameraPerspectiveBuilder, HasViewMatrix, HasViewProjectionMatrix}, lighting::{Light, LightKindEnum}, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager}, postfx::{bloom::BloomPass, postfx_stack::{PostFxExtraInputs, PostFxInput, PostFxStack}, tonemap::AcesTonemapPass}, window::RendererState
     },
 };
 use winit::{application::ApplicationHandler, event::{KeyEvent, WindowEvent}, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window};
@@ -46,11 +46,16 @@ impl State {
         self.rotate_camera_ws(vec_ws.truncate());
     }
 
-    /// Rotate the directional light around the world Y axis by the given degrees.
-    pub fn rotate_light_y(&mut self, degrees: f32) {
-        let (sin, cos) = cgmath::Deg(degrees).0.to_radians().sin_cos();
-        let [x, y, z] = self.light.direction;
-        self.light.direction = [cos * x + sin * z, y, -sin * x + cos * z];
+    /// Rotate the directional light with an axis-angle (in degree) rotation.
+    pub fn rotate_light_ws(&mut self, rotate_axis_angle: cgmath::Vector3<f32>) {
+        let angle = rotate_axis_angle.magnitude();
+        let axis = rotate_axis_angle.normalize();
+
+        let rotmat = cgmath::Matrix3::from_axis_angle(axis, cgmath::Deg(angle));
+        match &mut self.light.light {
+            LightKindEnum::Directional(d) => d.direction = rotmat * d.direction,
+            _ => panic!("Light is not directional")
+        };
     }
 }
 
@@ -118,7 +123,7 @@ impl RendererState for State {
 
         // Scene lighting: a single directional light plus a faint ambient term.
         pipeline.get_lighting_manager_mut().set_ambient([0.03, 0.03, 0.03]);
-        let light = Light::directional([0.4, -1.0, 0.6], [1.0, 0.95, 0.9], 3.0);
+        let light = Light::directional(cgmath::vec3(1.0, 0.0, 0.0), [1.0, 0.95, 0.9], 3.0);
 
         Self {
             window: window.clone(),
@@ -300,8 +305,10 @@ impl ApplicationHandler<State> for MyAppState {
                 (KeyCode::KeyD, _) => state.rotate_camera_cs(cgmath::vec3(0.0,  1.0, 0.0)),
                 (KeyCode::KeyW, _) => state.rotate_camera_cs(cgmath::vec3(-1.0, 0.0, 0.0)),
                 (KeyCode::KeyS, _) => state.rotate_camera_cs(cgmath::vec3( 1.0, 0.0, 0.0)),
-                (KeyCode::KeyQ, _) => state.rotate_light_y(5.0),
-                (KeyCode::KeyE, _) => state.rotate_light_y(-5.0),
+                (KeyCode::ArrowUp   , _) => state.rotate_light_ws(cgmath::vec3(-1.0, 0.0, 0.0)),
+                (KeyCode::ArrowDown , _) => state.rotate_light_ws(cgmath::vec3( 1.0, 0.0, 0.0)),
+                (KeyCode::ArrowLeft , _) => state.rotate_light_ws(cgmath::vec3(1.0, -1.0, 0.0)),
+                (KeyCode::ArrowRight, _) => state.rotate_light_ws(cgmath::vec3(0.0,  1.0, 0.0)),
                 _ => {}
             },
             _ => {}

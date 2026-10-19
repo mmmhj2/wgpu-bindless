@@ -1,18 +1,60 @@
-use std::num::NonZero;
+use std::{default, num::NonZero};
 
 use bytemuck::Zeroable;
+use cgmath::Angle;
 
 use crate::renderer::device_interface::DeviceInterface;
 
 /// Maximum number of lights that can be uploaded to the GPU at once.
 pub const MAX_LIGHTS: usize = 64;
 
-/// Discriminator stored in the GPU light struct.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LightKind {
-    Directional = 0,
-    Point = 1,
-    Spot = 2,
+/// Cut-off distance for point/spot lights; a non-positive value means no range limit.
+#[derive(Debug, Clone)]
+pub struct LightCutoff {
+    pub range: f32,
+    pub inner_cone: cgmath::Rad<f32>,
+    pub outer_cone: cgmath::Rad<f32>
+}
+
+impl default::Default for LightCutoff {
+    fn default() -> Self {
+        Self { range: 0.0, inner_cone: cgmath::Rad(0.0), outer_cone: cgmath::Rad(0.0) }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LightPoint {
+    pub position: cgmath::Point3<f32>,
+    pub cutoff: Option<LightCutoff>
+}
+
+#[derive(Debug, Clone)]
+pub struct LightDirectional {
+    pub direction: cgmath::Vector3<f32>
+}
+
+#[derive(Debug, Clone)]
+pub struct LightSpot {
+    pub position: cgmath::Point3<f32>,
+    pub direction: cgmath::Vector3<f32>,
+    pub cutoff: LightCutoff
+}
+
+#[derive(Debug, Clone)]
+pub enum LightKindEnum {
+    Point(LightPoint),
+    Directional(LightDirectional),
+    Spot(LightSpot)
+}
+
+impl LightKindEnum {
+    fn into_enum(&self) -> LightKind {
+        match self {
+            LightKindEnum::Point(_) => LightKind::Point,
+            LightKindEnum::Directional(_) => LightKind::Directional,
+            LightKindEnum::Spot(_) => LightKind::Spot,
+        }
+    }
 }
 
 /// CPU-side description of an analytic light source in world space.
@@ -21,64 +63,56 @@ pub enum LightKind {
 /// to the device.
 #[derive(Clone, Debug)]
 pub struct Light {
-    pub kind: LightKind,
     pub color: [f32; 3],
     pub intensity: f32,
-    /// World-space position, used by point and spot lights.
-    pub position: [f32; 3],
-    /// World-space direction (pointing away from the light), used by directional and spot lights.
-    pub direction: [f32; 3],
-    /// Cut-off distance for point/spot lights; a non-positive value means no range limit.
-    pub range: f32,
-    pub inner_cone_radians: f32,
-    pub outer_cone_radians: f32,
+    pub light: LightKindEnum
 }
 
 impl Light {
-    pub fn directional(direction: [f32; 3], color: [f32; 3], intensity: f32) -> Self {
+    pub fn directional(direction: cgmath::Vector3<f32>, color: [f32; 3], intensity: f32) -> Self {
         Self {
-            kind: LightKind::Directional,
             color,
             intensity,
-            position: [0.0; 3],
-            direction,
-            range: 0.0,
-            inner_cone_radians: 0.0,
-            outer_cone_radians: 0.0,
+            light: LightKindEnum::Directional(
+                LightDirectional {
+                    direction
+                }
+            ),
         }
     }
 
-    pub fn point(position: [f32; 3], color: [f32; 3], intensity: f32, range: f32) -> Self {
+    pub fn point(position: cgmath::Point3<f32>, color: [f32; 3], intensity: f32, range: Option<f32>) -> Self {
         Self {
-            kind: LightKind::Point,
             color,
             intensity,
-            position,
-            direction: [0.0, -1.0, 0.0],
-            range,
-            inner_cone_radians: 0.0,
-            outer_cone_radians: 0.0,
+            light: LightKindEnum::Point(
+                LightPoint {
+                    position,
+                    cutoff: range.map(|r| LightCutoff { range: r, ..Default::default() } )
+                }
+            )
         }
     }
 
     pub fn spot(
-        position: [f32; 3],
-        direction: [f32; 3],
+        position: cgmath::Point3<f32>,
+        direction: cgmath::Vector3<f32>,
         color: [f32; 3],
         intensity: f32,
         range: f32,
-        inner_cone_radians: f32,
-        outer_cone_radians: f32,
+        inner_cone: cgmath::Rad<f32>,
+        outer_cone: cgmath::Rad<f32>,
     ) -> Self {
         Self {
-            kind: LightKind::Spot,
             color,
             intensity,
-            position,
-            direction,
-            range,
-            inner_cone_radians,
-            outer_cone_radians,
+            light: LightKindEnum::Spot(
+                LightSpot {
+                    position, 
+                    direction, 
+                    cutoff: LightCutoff { range, inner_cone, outer_cone }
+                }
+            )
         }
     }
 
@@ -93,26 +127,53 @@ impl Light {
             self.color[1] * self.intensity,
             self.color[2] * self.intensity,
         ];
-        let (cos_inner, cos_outer) = match self.kind {
-            LightKind::Spot => (
-                self.inner_cone_radians.cos(),
-                self.outer_cone_radians.cos(),
+        let (cos_inner, cos_outer) = match &self.light {
+            LightKindEnum::Spot(s) => (
+                s.cutoff.inner_cone.cos(),
+                s.cutoff.outer_cone.cos(),
             ),
             _ => (1.0, 0.0),
         };
 
-        GpuLight {
-            color_kind: [radiance[0], radiance[1], radiance[2], self.kind as u32 as f32],
-            position_range: [
-                self.position[0],
-                self.position[1],
-                self.position[2],
-                self.range,
-            ],
-            direction: [self.direction[0], self.direction[1], self.direction[2], 0.0],
-            cones: [cos_inner, cos_outer, 0.0, 0.0],
+        match &self.light {
+            LightKindEnum::Point(p) => GpuLight {
+                color_kind: [radiance[0], radiance[1], radiance[2], self.light.into_enum() as u32 as f32],
+                position_range: [
+                    p.position.x,
+                    p.position.y,
+                    p.position.z,
+                    p.cutoff.as_ref().map_or(0.0, |c| c.range)
+                ],
+                direction: [0.0; 4],
+                cones: [cos_inner, cos_outer, 0.0, 0.0]
+            },
+            LightKindEnum::Directional(d) => GpuLight {
+                color_kind: [radiance[0], radiance[1], radiance[2], self.light.into_enum() as u32 as f32],
+                position_range: [0.0; 4],
+                direction: [d.direction.x, d.direction.y, d.direction.z, 0.0],
+                cones: [cos_inner, cos_outer, 0.0, 0.0]
+            },
+            LightKindEnum::Spot(s) => GpuLight {
+                color_kind: [radiance[0], radiance[1], radiance[2], self.light.into_enum() as u32 as f32],
+                position_range: [
+                    s.position.x,
+                    s.position.y,
+                    s.position.z,
+                    s.cutoff.range
+                ],
+                direction: [s.direction.x, s.direction.y, s.direction.z, 0.0],
+                cones: [cos_inner, cos_outer, 0.0, 0.0]
+            },
         }
     }
+}
+
+/// Discriminator stored in the GPU light struct.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LightKind {
+    Directional = 0,
+    Point = 1,
+    Spot = 2,
 }
 
 /// GPU-side light layout. Must stay in sync with `GpuLight` in `bindless_header.wgsl`.
@@ -254,7 +315,7 @@ mod test {
 
     #[test]
     fn directional_light_bakes_intensity_into_radiance() {
-        let light = Light::directional([0.0, -1.0, 0.0], [0.5, 0.25, 0.125], 4.0);
+        let light = Light::directional(cgmath::vec3(0.0, -1.0, 0.0), [0.5, 0.25, 0.125], 4.0);
         let gpu = light.to_gpu();
 
         assert_eq!(gpu.color_kind, [2.0, 1.0, 0.5, 0.0]);
@@ -265,13 +326,13 @@ mod test {
     #[test]
     fn spot_light_precomputes_cone_cosines() {
         let light = Light::spot(
-            [1.0, 2.0, 3.0],
-            [0.0, 0.0, 1.0],
+            cgmath::point3(1.0, 2.0, 3.0),
+            cgmath::vec3(0.0, 0.0, 1.0),
             [1.0, 1.0, 1.0],
             1.0,
             10.0,
-            0.0,
-            std::f32::consts::FRAC_PI_2,
+            cgmath::Rad(0.0),
+            cgmath::Rad(std::f32::consts::FRAC_PI_2),
         );
         let gpu = light.to_gpu();
 
