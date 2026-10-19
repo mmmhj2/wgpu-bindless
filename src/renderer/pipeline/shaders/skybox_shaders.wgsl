@@ -50,9 +50,9 @@ struct Camera {
 };
 @group(1) @binding(0)
 var<uniform> camera: Camera;
-@group(2) @binding(0)
+@group(3) @binding(0)
 var skybox_tx: texture_cube<f32>;
-@group(2) @binding(1)
+@group(3) @binding(1)
 var skybox_sp: sampler;
 
 struct VertexOutput {

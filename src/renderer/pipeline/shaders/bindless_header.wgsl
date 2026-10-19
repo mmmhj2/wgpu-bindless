@@ -11,7 +11,26 @@ struct Camera {
 @group(1) @binding(0)
 var<uniform> camera: Camera;
 
+struct GpuLight {
+    // rgb = radiance (colour * intensity), a = kind (0 = directional, 1 = point, 2 = spot)
+    color_kind      : vec4<f32>,
+    // xyz = world position, a = range
+    position_range  : vec4<f32>,
+    // xyz = world direction, a = reserved
+    direction       : vec4<f32>,
+    // x = cos(inner cone), y = cos(outer cone), zw = reserved for shadow parameters
+    cones           : vec4<f32>
+};
+
+struct Lighting {
+    ambient     : vec3<f32>,
+    light_count : u32,
+    lights      : array<GpuLight, 64>
+};
 @group(2) @binding(0)
+var<uniform> lighting: Lighting;
+
+@group(3) @binding(0)
 var<storage, read> model_matrices: array<mat4x4<f32>>;
 
 struct Immediates {

@@ -14,6 +14,25 @@ struct VertexOutput {
 const PI: f32 = 3.14159265359;
 const EPSILON: f32 = 0.0001;
 
+const LIGHT_DIRECTIONAL: f32 = 0.0;
+const LIGHT_SPOT: f32 = 2.0;
+
+/// Smoothly fade a point/spot light out towards its range boundary.
+/// A non-positive range disables the window entirely.
+fn range_window(distance: f32, range: f32) -> f32 {
+    if (range <= 0.0) {
+        return 1.0;
+    }
+    let ratio = clamp(distance / range, 0.0, 1.0);
+    let ratio_sq = ratio * ratio;
+    return max(1.0 - ratio_sq * ratio_sq, 0.0);
+}
+
+/// Cone falloff for spot lights, using precomputed cosines of the cone angles.
+fn spot_attenuation(cos_theta: f32, cos_inner: f32, cos_outer: f32) -> f32 {
+    return clamp((cos_theta - cos_outer) / max(cos_inner - cos_outer, EPSILON), 0.0, 1.0);
+}
+
 struct PBRVertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) world_position: vec3<f32>,
@@ -80,10 +99,7 @@ fn fs_main(in: PBRVertexOutput) -> @location(0) vec4<f32> {
     var diffuse_texture = sample_diffuse(in.uv0);
     var baseColor = in.color.rgb * diffuse_texture.rgb;
 
-    var normal_indices = unpack_tx(immediates.normal_tx_sp);
     var normal_texture = sample_normal(in.uv0);
-
-    var mrao_indices = unpack_tx(immediates.mrao_tx_sp);
     var mrao_texture = sample_mrao(in.uv0);
 
     var ao = mrao_texture.r;
@@ -94,27 +110,61 @@ fn fs_main(in: PBRVertexOutput) -> @location(0) vec4<f32> {
     var tangent_normal = normal_texture.rgb * 2.0 - 1.0;
     // Since WGSL does not have matrix inverse function,
     // we will have to do everything in the view space.
+    // Or maybe we should precompute the inverse and pass it to GPU?
+    var P = (camera.view_matrix * vec4<f32>(in.world_position, 1.0)).xyz;
     var N = normalize((camera.view_matrix * vec4<f32>(TBN * tangent_normal, 0.0)).xyz);
-    var V = -normalize((camera.view_matrix * vec4<f32>(in.world_position, 1.0)).xyz);
-    var light_dir = vec3<f32>(-1.0, 1.0, 0.0);
-    var L = normalize((camera.view_matrix * vec4<f32>(light_dir, 0.0)).xyz);
-    var H = normalize(V + L);
+    var V = normalize(-P);
 
     var ndotV = max(dot(N, V), 0.0);
-    var ndotL = max(dot(N, L), 0.0);
-    var ndotH = max(dot(N, H), 0.0);
-    var dotV = max(dot(H, V), 0.0);
-
     var F0 = mix(vec3<f32>(0.04), baseColor, metallic);
-    var D = D_GGX(ndotH, roughness);
-    var G = G_Smith(ndotV, ndotL, roughness);
-    var F = F_Schlick(dotV, F0);
 
-    var specular_brdf = (D * G * F) / max(4.0 * ndotV * ndotL, EPSILON);
+    var Lo = vec3<f32>(0.0);
+    for (var i = 0u; i < lighting.light_count; i = i + 1u) {
+        let light = lighting.lights[i];
+        let kind = light.color_kind.a;
+        let radiance = light.color_kind.rgb;
 
-    var kd = mix(vec3<f32>(1.0) - F, vec3<f32>(0.0), metallic);
-    var diffuse_brdf = baseColor * kd;
+        var L: vec3<f32>;
+        var attenuation = 1.0;
 
-    var Lo = (diffuse_brdf + specular_brdf) * ndotL;
+        if (kind == LIGHT_DIRECTIONAL) {
+            // Directional: constant direction, no distance falloff.
+            L = normalize((camera.view_matrix * vec4<f32>(light.direction.xyz, 0.0)).xyz);
+        } else {
+            let light_position = (camera.view_matrix * vec4<f32>(light.position_range.xyz, 1.0)).xyz;
+            let to_light = light_position - P;
+            let distance = length(to_light);
+            L = to_light / max(distance, EPSILON);
+            attenuation = range_window(distance, light.position_range.a) / max(distance * distance, EPSILON);
+
+            if (kind == LIGHT_SPOT) {
+                // Spot: additionally modulate by the cone around the light direction.
+                let light_dir = normalize((camera.view_matrix * vec4<f32>(light.direction.xyz, 0.0)).xyz);
+                let cos_theta = dot(-L, light_dir);
+                attenuation = attenuation * spot_attenuation(cos_theta, light.cones.x, light.cones.y);
+            }
+        }
+
+        let ndotL = max(dot(N, L), 0.0);
+        if (ndotL <= 0.0 || attenuation <= 0.0) {
+            continue;
+        }
+
+        let H = normalize(V + L);
+        let ndotH = max(dot(N, H), 0.0);
+        let dotV = max(dot(H, V), 0.0);
+
+        let D = D_GGX(ndotH, roughness);
+        let G = G_Smith(ndotV, ndotL, roughness);
+        let F = F_Schlick(dotV, F0);
+
+        let specular_brdf = (D * G * F) / max(4.0 * ndotV * ndotL, EPSILON);
+        let kd = (vec3<f32>(1.0) - F) * (1.0 - metallic);
+        let diffuse_brdf = baseColor * kd;
+
+        Lo = Lo + (diffuse_brdf + specular_brdf) * ndotL * radiance * attenuation;
+    }
+
+    Lo = Lo + baseColor * lighting.ambient * ao;
     return vec4<f32>(Lo, 1.0);
 }
