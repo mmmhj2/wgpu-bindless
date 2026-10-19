@@ -51,7 +51,7 @@ impl SkyboxManager {
 
         let pipeline_layout = di.get_device().create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Skybox Pipeline Layout"),
-            bind_group_layouts: &[None, Some(cameras.get_bind_group_layout()), Some(&skybox_bindgroup_layout)],
+            bind_group_layouts: &[None, Some(cameras.get_bind_group_layout()), None, Some(&skybox_bindgroup_layout)],
             immediate_size: 0
         });
 
@@ -102,7 +102,7 @@ impl SkyboxManager {
     /// specified by the constructor.
     /// Camera bind group must be bound, possibly via the `prepare_render_pass`
     /// call.
-    /// The second bind group will be mutated by the draw call.
+    /// The fourth bind group will be mutated by the draw call.
     pub fn draw_skybox(&self, di: &DeviceInterface, rp: &mut wgpu::RenderPass) {
         let bind_group = di.get_device().create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
@@ -118,7 +118,7 @@ impl SkyboxManager {
                 }
             ]
         });
-        rp.set_bind_group(2, &bind_group, &[]);
+        rp.set_bind_group(3, &bind_group, &[]);
         rp.set_pipeline(&self.pipeline);
         rp.draw(0..36, 0..1);
     }
