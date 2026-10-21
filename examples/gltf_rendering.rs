@@ -12,7 +12,7 @@ use rust_renderer::{
 };
 use winit::{event_loop::EventLoop, window::Window};
 
-const GLTF_PATH: &str = "resource/test_two_cubes.glb";
+const GLTF_PATH: &str = "resource/DamagedHelmet.glb";
 
 pub struct State {
     window: Arc<Window>,

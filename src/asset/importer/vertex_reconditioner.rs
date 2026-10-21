@@ -96,13 +96,13 @@ pub trait TangentRecalculator : VertexReconditionable + VertexReconditionableAtt
 
             let (sdir, tdir) = Self::solve_direction(v, w);
 
-            tangents1[i] = sdir;
+            tangents1[i + 0] = sdir;
             tangents1[i + 1] = sdir;
             tangents1[i + 2] = sdir;
 
-            tangents2[i] = tdir;
-            tangents2[i] = tdir;
-            tangents2[i] = tdir;
+            tangents2[i + 0] = tdir;
+            tangents2[i + 1] = tdir;
+            tangents2[i + 2] = tdir;
         }
 
         return Ok((tangents1, tangents2));
@@ -138,13 +138,13 @@ pub trait TangentRecalculator : VertexReconditionable + VertexReconditionableAtt
 
             let (sdir, tdir) = Self::solve_direction(v, w);
             
-            tangents1[i] += sdir;
-            tangents1[i + 1] += sdir;
-            tangents1[i + 2] += sdir;
+            tangents1[index_buffer[i + 0] as usize] += sdir;
+            tangents1[index_buffer[i + 1] as usize] += sdir;
+            tangents1[index_buffer[i + 2] as usize] += sdir;
 
-            tangents2[i] += tdir;
-            tangents2[i] += tdir;
-            tangents2[i] += tdir;
+            tangents2[index_buffer[i + 0] as usize] += tdir;
+            tangents2[index_buffer[i + 1] as usize] += tdir;
+            tangents2[index_buffer[i + 2] as usize] += tdir;
         }
 
         return Ok((tangents1, tangents2));
