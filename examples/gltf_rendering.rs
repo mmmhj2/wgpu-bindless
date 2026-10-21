@@ -13,7 +13,7 @@ use rust_renderer::{
 };
 use winit::{application::ApplicationHandler, event::{KeyEvent, WindowEvent}, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window};
 
-const GLTF_PATH: &str = "resource/test_two_cubes.glb";
+const GLTF_PATH: &str = "resource/DamagedHelmet.glb";
 
 struct State {
     window: Arc<Window>,
