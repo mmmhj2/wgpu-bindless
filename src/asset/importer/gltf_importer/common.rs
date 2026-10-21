@@ -73,6 +73,7 @@ impl ChannelFormat {
 pub(super) enum ChannelCount {
     One,
     Two,
+    Three,
     Four,
 }
 
@@ -81,6 +82,7 @@ impl ChannelCount {
         match self {
             ChannelCount::One => 1,
             ChannelCount::Two => 2,
+            ChannelCount::Three => 3,
             ChannelCount::Four => 4,
         }
     }
@@ -102,13 +104,14 @@ impl<'a> GltfImageView<'a> {
         let (format, channels) = match image.format {
             gltf::image::Format::R8 => (ChannelFormat::U8, ChannelCount::One),
             gltf::image::Format::R8G8 => (ChannelFormat::U8, ChannelCount::Two),
+            // While the GPU texture does not support RGB three channel images, reading from them is fine.
+            gltf::image::Format::R8G8B8 => (ChannelFormat::U8, ChannelCount::Three),
             gltf::image::Format::R8G8B8A8 => (ChannelFormat::U8, ChannelCount::Four),
             gltf::image::Format::R16 => (ChannelFormat::U16, ChannelCount::One),
             gltf::image::Format::R16G16 => (ChannelFormat::U16, ChannelCount::Two),
+            gltf::image::Format::R16G16B16 => (ChannelFormat::U16, ChannelCount::Three),
             gltf::image::Format::R16G16B16A16 => (ChannelFormat::U16, ChannelCount::Four),
             gltf::image::Format::R32G32B32A32FLOAT => (ChannelFormat::F32, ChannelCount::Four),
-            // WGPU does not support RGB textures by default, and the existing
-            // texture import path does not support them either.
             other => return Err(GltfImageImportError::UnsupportedFormat(other)),
         };
 

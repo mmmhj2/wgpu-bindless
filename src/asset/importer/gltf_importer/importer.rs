@@ -1,4 +1,4 @@
-use std::{collections::{HashSet, VecDeque}, ffi::OsString, path::{Path, PathBuf}, sync::{Arc, RwLock}};
+use std::{collections::{HashSet, VecDeque}, ffi::OsString, num::NonZeroU32, path::{Path, PathBuf}, sync::{Arc, RwLock}};
 
 use crate::asset::{asset_types::{Asset, AssetMetadata, scene_asset::{SceneAsset, SceneMeshInstanceAsset}, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat}, vertex::{VertexBufferOthers, VertexBufferPosition}}, error::ImportError, importer::{AssetImporter, ImporterContext, gltf_importer::{common::{GltfImageView, GltfImportError}, mrao::build_mrao_texture_asset}, vertex_reconditioner::{ReconditionerError, TangentRecalculator}}};
 
@@ -14,7 +14,7 @@ pub struct GltfImporter {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct MraoKey {
+pub(super) struct MraoKey {
     mr: Option<usize>,
     ao: Option<usize>,
 }
@@ -122,7 +122,7 @@ impl AssetImporter for GltfImporter {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum SubAssetType {
+pub(super) enum SubAssetType {
     Texture(usize),
     /// A GLTF mesh, which consists of several primitives, and is placed in a scene.
     /// 
@@ -600,6 +600,20 @@ impl GltfImporter {
         })
     }
 
+    fn recondition_rgb8_texture(width: NonZeroU32, height: NonZeroU32, pixels: &Vec<u8>) -> Vec<u8> {
+        let mut ret = Vec::with_capacity((width.get() * height.get() * 4) as usize);
+        assert_eq!(ret.capacity(), pixels.len() / 3 * 4);
+
+        for i in (0..pixels.len()).step_by(3) {
+            ret.push(pixels[i]);
+            ret.push(pixels[i+1]);
+            ret.push(pixels[i+2]);
+            ret.push(255);
+        };
+
+        ret
+    }
+
     pub fn import_from_gltf_texture(
         texture: &gltf::Texture,
         images: &[gltf::image::Data],
@@ -609,7 +623,22 @@ impl GltfImporter {
         // not from the texture's own index into the image list.
         let image = images.get(texture.source().index())
             .ok_or(GltfImportError::IndexOutOfRange(texture.source().index()))?;
-        let converted_format = Self::match_texture_format(image.format, is_srgb)?;
+        let (converted_format, texels) = match image.format {
+            gltf::image::Format::R8G8B8 => {
+                log::info!("Reconditioning RGB8 texture");
+                (
+                    if is_srgb {TextureFormat::Rgba8Srgb} else {TextureFormat::Rgba8Unorm},
+                    &Self::recondition_rgb8_texture(
+                        image.width.try_into().unwrap(),
+                        image.height.try_into().unwrap(),
+                        &image.pixels)
+                )
+            },
+            _ => (
+                Self::match_texture_format(image.format, is_srgb)?,
+                &image.pixels
+            )
+        };
 
         Ok(TextureAsset {
             format: converted_format,
@@ -620,7 +649,7 @@ impl GltfImporter {
             sampler: Self::import_from_gltf_sampler(&texture.sampler()),
             // One gltf image can correspond to multiple textures with different sampler.
             // So we must clone its data for safety.
-            texels: TexelData::Plain(image.pixels.clone().into_boxed_slice()),
+            texels: TexelData::Plain(texels.clone().into_boxed_slice()),
         })
     }
 }
