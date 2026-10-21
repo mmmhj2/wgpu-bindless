@@ -3,11 +3,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::asset::{
-    error::AssetIoError,
-    importer::{
-        gltf_importer::GltfImporter,
-        image_file_importer::{ColorSpace, ImageArrayImporter, ImageFileImporter},
-        AssetImporter,
+    error::AssetIoError, importer::{
+        AssetImporter, gltf_importer::GltfImporter, image_file_importer::{ColorSpace, ImageArrayImporter, ImageFileImporter},
     },
 };
 
