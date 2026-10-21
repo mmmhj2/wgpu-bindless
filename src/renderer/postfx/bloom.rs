@@ -25,7 +25,7 @@ pub struct BloomPass {
 }
 
 impl BloomPass {
-    const BLOOM_RADIUS: f32 = 0.5;
+    const BLOOM_RADIUS: f32 = 0.005;
     const BLOOM_STRENGTH: f64 = 0.05;
     pub const BLOOM_MIPCHAIN_HIGHEST_NAME: &str = "BloomMipchainHighest";
 
