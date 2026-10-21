@@ -189,8 +189,11 @@ impl GltfImporter {
         }
     }
 
+    // For non-public interfaces, concrete type `&Path` might actually be
+    // better than `AsRef<Path>`, as it reduces instantiation bloat. See
+    // https://internals.rust-lang.org/t/reducing-generics-bloat/6337
     pub(super) fn generate_subasset_filename(gltf_file: impl AsRef<Path>, asset_type: SubAssetType) -> Result<PathBuf, GltfImportError> {
-        Ok(gltf_file.with_file_name(Self::generate_subasset_name(gltf_file, asset_type)?).with_added_extension("asset"))
+        Ok(gltf_file.as_ref().with_file_name(Self::generate_subasset_name(&gltf_file, asset_type)?).with_added_extension("asset"))
     }
 
     pub(super) fn generate_subasset_name(gltf_file: impl AsRef<Path>, asset_type: SubAssetType) -> Result<OsString, GltfImportError> {
@@ -214,14 +217,14 @@ impl GltfImporter {
             }
         };
 
-        let mut new_filename = gltf_file.file_name()
-            .ok_or_else(|| GltfImportError::InvalidSubresourceName(gltf_file.to_path_buf()))?
+        let mut new_filename = gltf_file.as_ref().file_name()
+            .ok_or_else(|| GltfImportError::InvalidSubresourceName(gltf_file.as_ref().to_path_buf()))?
             .to_os_string();
         new_filename.push(new_suffix);
         Ok(new_filename)
     }
 
-    pub(super) fn generate_subasset_filename_string(gltf_file: &Path, asset_type: SubAssetType) -> Option<String> {
+    pub(super) fn generate_subasset_filename_string(gltf_file: impl AsRef<Path>, asset_type: SubAssetType) -> Option<String> {
         Some(Self::generate_subasset_filename(gltf_file, asset_type).ok()?.to_str()?.to_string())
     }
 
@@ -230,16 +233,16 @@ impl GltfImporter {
     /// One mesh may contain several primitives, so both the mesh index and the
     /// primitive index are required to address a primitive uniquely.
     pub(super) fn primitive_subasset_name(gltf_file: impl AsRef<Path>, mesh_index: usize, primitive_index: usize) -> Result<String, GltfImportError> {
-        Self::generate_subasset_name(gltf_file, SubAssetType::Primitive { mesh: mesh_index, primitive: primitive_index })?
+        Self::generate_subasset_name(&gltf_file, SubAssetType::Primitive { mesh: mesh_index, primitive: primitive_index })?
             .into_string()
-            .map_err(|_| GltfImportError::InvalidSubresourceName(gltf_file.to_path_buf()))
+            .map_err(|_| GltfImportError::InvalidSubresourceName(gltf_file.as_ref().to_path_buf()))
     }
 
     /// Resolve the subasset name of a single glTF scene.
     pub fn scene_subasset_name(gltf_file: impl AsRef<Path>, scene_index: usize) -> Result<String, GltfImportError> {
-        Self::generate_subasset_name(gltf_file, SubAssetType::Scene(scene_index))?
+        Self::generate_subasset_name(&gltf_file, SubAssetType::Scene(scene_index))?
             .into_string()
-            .map_err(|_| GltfImportError::InvalidSubresourceName(gltf_file.to_path_buf()))
+            .map_err(|_| GltfImportError::InvalidSubresourceName(gltf_file.as_ref().to_path_buf()))
     }
 
     // Primitive importer
