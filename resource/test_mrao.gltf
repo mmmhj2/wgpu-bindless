@@ -1,0 +1,89 @@
+{
+  "asset": {
+    "version": "2.0"
+  },
+  "buffers": [
+    {
+      "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAEAAAACAAAAiVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEElEQVR4nGNg0Aj4D8YwBgAuhAXdzHFeHwAAAABJRU5ErkJgggAAAIlQTkcNChoKAAAADUlIRFIAAAACAAAAAggGAAAAcrYNJAAAABFJREFUeJxjUGBg+A/CDDAGACM0BH0aky2+AAAAAElFTkSuQmCCAACJUE5HDQoaCgAAAA1JSERSAAAAAgAAAAIIBgAAAHK2DSQAAAARSURBVHicY1DQCPgPwgwwBgAzxAZdf1uZdQAAAABJRU5ErkJggg==",
+      "byteLength": 334
+    }
+  ],
+  "bufferViews": [
+    {"buffer": 0, "byteOffset": 0, "byteLength": 36, "target": 34962},
+    {"buffer": 0, "byteOffset": 36, "byteLength": 36, "target": 34962},
+    {"buffer": 0, "byteOffset": 72, "byteLength": 24, "target": 34962},
+    {"buffer": 0, "byteOffset": 96, "byteLength": 12, "target": 34963},
+    {"buffer": 0, "byteOffset": 108, "byteLength": 73},
+    {"buffer": 0, "byteOffset": 184, "byteLength": 74},
+    {"buffer": 0, "byteOffset": 260, "byteLength": 74}
+  ],
+  "accessors": [
+    {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0]},
+    {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"},
+    {"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC2"},
+    {"bufferView": 3, "componentType": 5125, "count": 3, "type": "SCALAR"}
+  ],
+  "images": [
+    {"bufferView": 4, "mimeType": "image/png"},
+    {"bufferView": 5, "mimeType": "image/png"},
+    {"bufferView": 6, "mimeType": "image/png"}
+  ],
+  "samplers": [{}],
+  "textures": [
+    {"sampler": 0, "source": 0},
+    {"sampler": 0, "source": 1},
+    {"sampler": 0, "source": 2}
+  ],
+  "materials": [
+    {
+      "name": "separate",
+      "pbrMetallicRoughness": {
+        "metallicFactor": 0.5,
+        "metallicRoughnessTexture": {"index": 0}
+      },
+      "occlusionTexture": {"index": 1}
+    },
+    {
+      "name": "orm",
+      "pbrMetallicRoughness": {
+        "metallicRoughnessTexture": {"index": 2}
+      },
+      "occlusionTexture": {"index": 2}
+    },
+    {
+      "name": "mr_only",
+      "pbrMetallicRoughness": {
+        "metallicRoughnessTexture": {"index": 0}
+      }
+    },
+    {
+      "name": "ao_only",
+      "occlusionTexture": {"index": 1}
+    },
+    {
+      "name": "none"
+    },
+    {
+      "name": "separate_duplicate",
+      "pbrMetallicRoughness": {
+        "metallicRoughnessTexture": {"index": 0}
+      },
+      "occlusionTexture": {"index": 1}
+    }
+  ],
+  "meshes": [
+    {
+      "primitives": [
+        {"attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2}, "indices": 3, "material": 0},
+        {"attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2}, "indices": 3, "material": 1},
+        {"attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2}, "indices": 3, "material": 2},
+        {"attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2}, "indices": 3, "material": 3},
+        {"attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2}, "indices": 3, "material": 4},
+        {"attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2}, "indices": 3, "material": 5}
+      ]
+    }
+  ],
+  "nodes": [{"mesh": 0}],
+  "scenes": [{"nodes": [0]}],
+  "scene": 0
+}
