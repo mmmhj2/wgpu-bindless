@@ -1,7 +1,7 @@
 use std::{collections::HashMap, num::NonZero, borrow::Cow};
 use wgpu::{ColorTargetState, ColorWrites, DepthBiasState, PipelineLayoutDescriptor};
 
-use crate::renderer::{asset_registry::GpuAssetRegistry, device_interface::DeviceInterface, mesh::{mesh_manager::MeshManager, vertex_types::VertexType}, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, CameraPerspective, HasViewProjectionMatrix}, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor}}};
+use crate::renderer::{asset_registry::GpuAssetRegistry, device_interface::DeviceInterface, mesh::{mesh_manager::MeshManager, vertex_types::VertexType}, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, CameraPerspective, HasViewProjectionMatrix}, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor, RasterizerPipelineDescriptorBuilder}}};
 
 macro_rules! include_bindless_wgsl {
     ($($token:tt)*) => {
@@ -57,50 +57,45 @@ impl PipelineStates {
                     write_mask: ColorWrites::ALL
             })
         ];
-        let default_rasterizer_pipeline_descriptor = RasterizerPipelineDescriptor::from((
-            wgpu::VertexState{
+        let default_rasterizer_pipeline_descriptor =
+            RasterizerPipelineDescriptorBuilder::new(wgpu::VertexState{
                 module: &default_shader_module,
                 entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: VertexType::get_vertex_buffer_layout(VertexType::Basic)
-            },
-            wgpu::FragmentState{
+            }).set_fragment_state(wgpu::FragmentState{
                 module: &default_shader_module,
                 entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &targets
-            },
-            wgpu::DepthStencilState{
+            }).set_depth_stencil_state(wgpu::DepthStencilState{
                 format: wgpu::TextureFormat::Depth32Float,
                 depth_write_enabled: Some(true),
                 depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: Default::default(),
                 bias: Default::default()
-            }
-        ));
+            }).build();
 
         let pbr_shader_module = di.get_device().create_shader_module(include_bindless_wgsl!("./shaders/cook_torrance.wgsl"));
-        let pbr_rasterizer_pipeline_descriptor = RasterizerPipelineDescriptor::from((
-            wgpu::VertexState{
+        let pbr_rasterizer_pipeline_descriptor = 
+            RasterizerPipelineDescriptorBuilder::new(wgpu::VertexState{
                 module: &pbr_shader_module,
                 entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: VertexType::get_vertex_buffer_layout(VertexType::Basic)
-            },
-            wgpu::FragmentState{
+            }).set_fragment_state(wgpu::FragmentState{
                 module: &pbr_shader_module,
                 entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &targets
-            },
-            wgpu::DepthStencilState{
+            }).set_depth_stencil_state(wgpu::DepthStencilState{
                 format: wgpu::TextureFormat::Depth32Float,
                 depth_write_enabled: Some(true),
                 depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: Default::default(),
                 bias: Default::default()
-            }
-        ));
+            }).build();
+
 
         rasterizer_pipelines.insert(String::from("default"), RasterizerPipeline::new(di, default_rasterizer_pipeline_descriptor, Some(&default_rasterizer_pipeline_layout)));
         rasterizer_pipelines.insert(String::from("cook_torrance"), RasterizerPipeline::new(di, pbr_rasterizer_pipeline_descriptor, Some(&default_rasterizer_pipeline_layout)));

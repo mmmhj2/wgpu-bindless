@@ -6,7 +6,7 @@ const DEFAULT_PRIMITIVE_STATE : wgpu::PrimitiveState = wgpu::PrimitiveState{
     topology: wgpu::PrimitiveTopology::TriangleList,
     strip_index_format: None,
     front_face: wgpu::FrontFace::Ccw,
-    cull_mode: Some(wgpu::Face::Back),
+    cull_mode: None,
     unclipped_depth: false,
     polygon_mode: wgpu::PolygonMode::Fill,
     conservative: false
@@ -20,46 +20,58 @@ const DEFAULT_MULTISAMPLE_STATE : wgpu::MultisampleState = wgpu::MultisampleStat
 
 /// Simplified version of RenderPipelineDescriptor
 pub struct RasterizerPipelineDescriptor<'a> {
-    pub cull_mode       : Option<wgpu::Face>,
-    pub front_face      : wgpu::FrontFace,
-    pub vertex          : wgpu::VertexState<'a>,
-    pub fragment        : Option<wgpu::FragmentState<'a>>,
-    pub depthstencil    : Option<wgpu::DepthStencilState>
+    cull_mode       : Option<wgpu::Face>,
+    front_face      : wgpu::FrontFace,
+    vertex          : wgpu::VertexState<'a>,
+    fragment        : Option<wgpu::FragmentState<'a>>,
+    depthstencil    : Option<wgpu::DepthStencilState>
+}
+pub struct RasterizerPipelineDescriptorBuilder<'a> {
+    rpd: RasterizerPipelineDescriptor<'a>
 }
 
-impl<'a> From<wgpu::VertexState<'a>> for RasterizerPipelineDescriptor<'a> {
-    fn from(value: wgpu::VertexState<'a>) -> Self {
-        RasterizerPipelineDescriptor {
-            cull_mode: None,
-            front_face: wgpu::FrontFace::Ccw,
-            vertex: value,
-            fragment: None,
-            depthstencil: None
+impl<'a> RasterizerPipelineDescriptorBuilder<'a> {
+    /// Create a descriptor builder.
+    /// 
+    /// The build has the following default settings:
+    /// - cull mode set to none,
+    /// - front face winding set to counter-clockwise,
+    /// - fragment state is empty,
+    /// - depth stencil state is empty.
+    pub fn new(v: wgpu::VertexState<'a>) -> Self {
+        Self {
+            rpd: RasterizerPipelineDescriptor {
+                cull_mode: None,
+                front_face: wgpu::FrontFace::Ccw,
+                vertex: v,
+                fragment: None,
+                depthstencil: None
+            }
         }
     }
-}
 
-impl<'a> From<(wgpu::VertexState<'a>, wgpu::FragmentState<'a>)> for RasterizerPipelineDescriptor<'a> {
-    fn from(value: (wgpu::VertexState<'a>, wgpu::FragmentState<'a>)) -> Self {
-        RasterizerPipelineDescriptor {
-            cull_mode: None,
-            front_face: wgpu::FrontFace::Ccw,
-            vertex: value.0,
-            fragment: Some(value.1),
-            depthstencil: None
-        }
+    pub fn set_cull_mode(mut self, cm: Option<wgpu::Face>) -> Self {
+        self.rpd.cull_mode = cm;
+        self
     }
-}
 
-impl<'a> From<(wgpu::VertexState<'a>, wgpu::FragmentState<'a>, wgpu::DepthStencilState)> for RasterizerPipelineDescriptor<'a> {
-    fn from(value: (wgpu::VertexState<'a>, wgpu::FragmentState<'a>, wgpu::DepthStencilState)) -> Self {
-        RasterizerPipelineDescriptor {
-            cull_mode: None,
-            front_face: wgpu::FrontFace::Ccw,
-            vertex: value.0,
-            fragment: Some(value.1),
-            depthstencil: Some(value.2)
-        }
+    pub fn set_front_face(mut self, ff: wgpu::FrontFace) -> Self {
+        self.rpd.front_face = ff;
+        self
+    }
+
+    pub fn set_fragment_state(mut self, f: wgpu::FragmentState<'a>) -> Self {
+        self.rpd.fragment = Some(f);
+        self
+    }
+
+    pub fn set_depth_stencil_state(mut self, ds: wgpu::DepthStencilState) -> Self {
+        self.rpd.depthstencil = Some(ds);
+        self
+    }
+
+    pub fn build(self) -> RasterizerPipelineDescriptor<'a> {
+        self.rpd
     }
 }
 
@@ -83,6 +95,7 @@ impl<'a> From<RasterizerPipelineDescriptor<'a>> for wgpu::RenderPipelineDescript
     }
 }
 
+/// A thin wrapper around `wgpu::RenderPipeline` that simplifies pipeline creation.
 pub struct RasterizerPipeline {
     pipeline : wgpu::RenderPipeline
 }

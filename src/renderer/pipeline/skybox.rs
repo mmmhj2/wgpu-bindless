@@ -1,4 +1,4 @@
-use crate::renderer::{device_interface::DeviceInterface, pipeline::{camera::CameraManager, rasterizer_pipeline::RasterizerPipelineDescriptor, sampler::SamplerDescription}};
+use crate::renderer::{device_interface::DeviceInterface, pipeline::{camera::CameraManager, rasterizer_pipeline::{RasterizerPipelineDescriptor, RasterizerPipelineDescriptorBuilder}, sampler::SamplerDescription}};
 
 
 pub struct SkyboxManager {
@@ -56,26 +56,28 @@ impl SkyboxManager {
         });
 
         let shader_module = di.get_device().create_shader_module(wgpu::include_wgsl!("./shaders/skybox_shaders.wgsl"));
-        let vertex_state = wgpu::VertexState{
+        let targets = [Some(wgpu::ColorTargetState {
+            format: color_attachment_format,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL
+        })];
+        let rpd: RasterizerPipelineDescriptor = RasterizerPipelineDescriptorBuilder::new(wgpu::VertexState{
             module: &shader_module,
             entry_point: None,
             compilation_options: Default::default(),
             buffers: &[],
-        };
-        let fragment_state = wgpu::FragmentState{
+        }).set_fragment_state(wgpu::FragmentState{
             module: &shader_module,
             entry_point: None,
             compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState { format: color_attachment_format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
-        };
-        let ds_state = wgpu::DepthStencilState{
+            targets: &targets,
+        }).set_depth_stencil_state(wgpu::DepthStencilState{
             format: depth_attachment_format,
             depth_write_enabled: Some(true),
             depth_compare: Some(wgpu::CompareFunction::LessEqual),
             stencil: Default::default(),
             bias: Default::default(),
-        };
-        let rpd: RasterizerPipelineDescriptor = (vertex_state, fragment_state, ds_state).into();
+        }).build();
         let mut pd: wgpu::RenderPipelineDescriptor = rpd.into();
         pd.layout = Some(&pipeline_layout);
         let pipeline = di.get_device().create_render_pipeline(&pd);
