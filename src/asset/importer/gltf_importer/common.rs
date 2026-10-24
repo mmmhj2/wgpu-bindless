@@ -33,6 +33,9 @@ pub enum GltfImportError {
         source: gltf::Error,
     },
 
+    #[error("this gltf file depends on an external resource '{0}'.")]
+    ExternalResourceUnavailable(String),
+
     #[error("generated subresource name '{0}' is invalid.")]
     InvalidSubresourceName(PathBuf),
 

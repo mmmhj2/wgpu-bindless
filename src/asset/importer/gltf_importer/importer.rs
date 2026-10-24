@@ -36,6 +36,17 @@ impl AssetImporter for GltfImporter {
         let (document, buffers, images) = gltf::import(path)
             .map_err(|source| GltfImportError::Read { path: path.to_path_buf(), source })?;
 
+        for b in document.buffers() {
+            if let gltf::buffer::Source::Uri(uri) = b.source() {
+                return Err(Box::new(GltfImportError::ExternalResourceUnavailable(String::from(uri))))
+            }
+        }
+        for i in document.images() {
+            if let gltf::image::Source::Uri { uri, mime_type: _ } = i.source() {
+                return Err(Box::new(GltfImportError::ExternalResourceUnavailable(String::from(uri))))
+            }
+        }
+
         for mesh in document.meshes() {
             log::info!("Found mesh {} with {} primitives, importing...", mesh.index(), mesh.primitives().len());
 
