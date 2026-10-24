@@ -1,30 +1,13 @@
 use std::{collections::HashMap, num::NonZero, borrow::Cow};
 use wgpu::{ColorTargetState, ColorWrites, DepthBiasState, PipelineLayoutDescriptor};
 
-use crate::renderer::{asset_registry::GpuAssetRegistry, device_interface::DeviceInterface, mesh::{mesh_manager::MeshManager, vertex_types::VertexType}, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, CameraPerspective, HasViewProjectionMatrix}, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor, RasterizerPipelineDescriptorBuilder}}};
-
-macro_rules! include_bindless_wgsl {
-    ($($token:tt)*) => {
-        {
-            let header = include_str!("./shaders/bindless_header.wgsl").to_owned();
-            let body = include_str!($($token)*);
-            let complete: String = header + body;
-            wgpu::ShaderModuleDescriptor {
-                label: Some($($token)*),
-                source: wgpu::ShaderSource::Wgsl(
-                    Cow::from(complete)
-                ),
-            }
-        }
-    };
-}
+use crate::renderer::{asset_registry::GpuAssetRegistry, device_interface::DeviceInterface, mesh::{mesh_manager::MeshManager, vertex_types::VertexType}, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, CameraPerspective, HasViewProjectionMatrix}, pipeline_cache::{PipelineCache, PipelineKey, PipelineLayoutKey}, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor, RasterizerPipelineDescriptorBuilder}}};
 
 pub struct PipelineStates {
     asset_registry: GpuAssetRegistry,
     cameras: CameraManager,
     mesh_manager: MeshManager,
-    rasterizer_pipeline_layouts: HashMap<String, wgpu::PipelineLayout>,
-    rasterizer_pipelines: HashMap<String, RasterizerPipeline>
+    cache: PipelineCache
 }
 
 impl PipelineStates {
@@ -33,80 +16,19 @@ impl PipelineStates {
         let asset_registry = GpuAssetRegistry::new(di);
         let cameras = CameraManager::new(di);
         let mesh_manager = MeshManager::new(di);
-        let mut rasterizer_pipeline_layouts: HashMap<String, wgpu::PipelineLayout> = HashMap::new();
-        let mut rasterizer_pipelines: HashMap<String, RasterizerPipeline> = HashMap::new();
-
-        let default_shader_module = di.get_device().create_shader_module(
-            include_bindless_wgsl!("./shaders/default_shaders.wgsl")
-        );
-        let default_rasterizer_pipeline_layout = di.get_device().create_pipeline_layout(
-            &PipelineLayoutDescriptor{
-                label: None,
-                bind_group_layouts: &[
-                        Some(asset_registry.get_bindless_resource_manager().get_bind_group_layout()),
-                        Some(cameras.get_bind_group_layout()),
-                        Some(mesh_manager.get_bind_group_layout())
-                    ],
-                immediate_size: (std::mem::size_of::<u32>() * 3) as u32
-            }
-        );
-        let targets = [
-            Some(ColorTargetState{
-                    format: format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: ColorWrites::ALL
-            })
+        let bind_group_layouts = [
+            Some(asset_registry.get_bindless_resource_manager().get_bind_group_layout()),
+            Some(cameras.get_bind_group_layout()),
+            Some(mesh_manager.get_bind_group_layout())
         ];
-        let default_rasterizer_pipeline_descriptor =
-            RasterizerPipelineDescriptorBuilder::new(wgpu::VertexState{
-                module: &default_shader_module,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: VertexType::get_vertex_buffer_layout(VertexType::Basic)
-            }).set_fragment_state(wgpu::FragmentState{
-                module: &default_shader_module,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &targets
-            }).set_depth_stencil_state(wgpu::DepthStencilState{
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                stencil: Default::default(),
-                bias: Default::default()
-            }).build();
-
-        let pbr_shader_module = di.get_device().create_shader_module(include_bindless_wgsl!("./shaders/cook_torrance.wgsl"));
-        let pbr_rasterizer_pipeline_descriptor = 
-            RasterizerPipelineDescriptorBuilder::new(wgpu::VertexState{
-                module: &pbr_shader_module,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: VertexType::get_vertex_buffer_layout(VertexType::Basic)
-            }).set_fragment_state(wgpu::FragmentState{
-                module: &pbr_shader_module,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &targets
-            }).set_depth_stencil_state(wgpu::DepthStencilState{
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                stencil: Default::default(),
-                bias: Default::default()
-            }).build();
-
-
-        rasterizer_pipelines.insert(String::from("default"), RasterizerPipeline::new(di, default_rasterizer_pipeline_descriptor, Some(&default_rasterizer_pipeline_layout)));
-        rasterizer_pipelines.insert(String::from("cook_torrance"), RasterizerPipeline::new(di, pbr_rasterizer_pipeline_descriptor, Some(&default_rasterizer_pipeline_layout)));
-        rasterizer_pipeline_layouts.insert(String::from("default"), default_rasterizer_pipeline_layout);
+        let mut cache = PipelineCache::new(di, format, wgpu::TextureFormat::Depth32Float, &bind_group_layouts);
+        cache.prepare_pbr_pipeline(di, format, wgpu::TextureFormat::Depth32Float);
 
         return Self{
             asset_registry,
             cameras,
             mesh_manager,
-            rasterizer_pipeline_layouts,
-            rasterizer_pipelines
+            cache
         }
     }
 
@@ -120,19 +42,18 @@ impl PipelineStates {
         rp.set_bind_group(1, self.cameras.prepare(di), &[]);
     }
 
-    /// Query the default pipeline.
-    /// It is guaranteed to be valid. 
+    /// Query the default pipeline, which is guaranteed to be valid.
     /// 
     /// Panic
     /// ---
     /// If the default pipeline cannot be found, the program is considered to be in
     /// invalid state and will panic and terminate.
     pub fn get_default_pipeline(&self) -> &RasterizerPipeline {
-        self.query_pipeline(&String::from("default")).expect("Default pipeline not found for some reason.")
+        self.query_pipeline(PipelineKey::Default).expect("default pipeline should always be ready.")
     }
 
-    pub fn query_pipeline(&self, name: &String) -> Option<&RasterizerPipeline> {
-        self.rasterizer_pipelines.get(name)
+    pub fn query_pipeline(&self, key: PipelineKey) -> Option<&RasterizerPipeline> {
+        self.cache.pipelines.get(&key)
     }
 
     pub fn get_camera_manager(&self) -> &CameraManager { &self.cameras }
@@ -140,19 +61,18 @@ impl PipelineStates {
 
     pub fn get_mesh_manager(&self) -> &MeshManager { &self.mesh_manager }
 
-    /// Query the default pipeline layout.
-    /// It is guaranteed to be valid. 
+    /// Query the default pipeline layout which is guaranteed to be valid. 
     /// 
     /// Panic
     /// ---
     /// If the default pipeline layout cannot be found, the program is considered to be in
     /// invalid state and will panic and terminate.
     pub fn get_default_pipeline_layout(&self) -> &wgpu::PipelineLayout {
-        self.query_pipeline_layout(&String::from("default")).expect("Default pipeline layout not found for some reason.")
+        self.query_pipeline_layout(PipelineLayoutKey::Default).expect("Default pipeline layout should always be ready.")
     }
 
-    pub fn query_pipeline_layout(&self, name: &String) -> Option<&wgpu::PipelineLayout> {
-        self.rasterizer_pipeline_layouts.get(name)
+    pub fn query_pipeline_layout(&self, key: PipelineLayoutKey) -> Option<&wgpu::PipelineLayout> {
+        self.cache.layouts.get(&key)
     }
 
     pub fn get_bindless_resource_manager(&self) -> &BindlessResourceManager { self.asset_registry.get_bindless_resource_manager() }

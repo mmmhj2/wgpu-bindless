@@ -8,7 +8,7 @@ use rust_renderer::{
         asset_types::{AssetData::{SceneAssetType, TextureAssetType}, GpuAssetType},
         importer::{gltf_importer::GltfImporter, image_file_importer::ColorSpace},
     }, renderer::{
-        device_interface::DeviceInterface, mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance}, pipeline::{camera::{Camera, CameraPerspective, CameraPerspectiveBuilder, HasViewMatrix, HasViewProjectionMatrix}, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager}, postfx::{bloom::BloomPass, postfx_stack::{PostFxExtraInputs, PostFxInput, PostFxStack}, tonemap::AcesTonemapPass}, window::RendererState
+        device_interface::DeviceInterface, mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance}, pipeline::{camera::{Camera, CameraPerspective, CameraPerspectiveBuilder, HasViewMatrix, HasViewProjectionMatrix}, pipeline_cache::PipelineKey, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline, skybox::SkyboxManager}, postfx::{bloom::BloomPass, postfx_stack::{PostFxExtraInputs, PostFxInput, PostFxStack}, tonemap::AcesTonemapPass}, window::RendererState
     },
 };
 use winit::{application::ApplicationHandler, event::{KeyEvent, WindowEvent}, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window};
@@ -187,7 +187,7 @@ impl RendererState for State {
 
             self.pipeline.set_active_camera(self.camera.clone());
             self.pipeline.prepare_render_pass(self.get_device_interface(), &mut rp);
-            rp.set_rasterizer_pipeline(self.pipeline.query_pipeline(&String::from("cook_torrance")).expect("cook torrance pipeline not found"));
+            rp.set_rasterizer_pipeline(self.pipeline.query_pipeline(PipelineKey::CookTorrancePbr).expect("cook torrance pipeline not found"));
             for m in &self.gltf_models {
                 m.draw(&mut rp);
             }

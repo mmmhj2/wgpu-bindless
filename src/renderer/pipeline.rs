@@ -1,4 +1,5 @@
 pub mod rasterizer_pipeline;
+pub mod pipeline_cache;
 pub mod pipeline_state;
 pub mod sampler;
 pub mod sampler_manager;
