@@ -27,21 +27,19 @@ impl <const CAPACITY: usize> LowestIntegerCache<CAPACITY> {
     }
 
     /// Get the lowest available unallocated integer in the cache.
-    /// Returns `None` if the cache is full and an allocation cannot be performed.
-    pub fn get_lowest_integer(& self) -> Option<usize> {
+    /// 
+    /// May return a value equal to the capacity, indicating the cache is full
+    /// and no further allocation can be performed.
+    pub fn get_lowest_integer(&self) -> usize {
         for idx in (self.watermark/LIC_BIT_PER_DWORD)..(CAPACITY) {
             let v = self.bitfield[idx];
-            if !v == 0 {
-                continue;
-            }
-            if v == 0 {
-                return Some(idx * LIC_BIT_PER_DWORD);
-            }
+            if (!v) == 0 { continue; }
+            if v == 0 { return idx * LIC_BIT_PER_DWORD; }
 
             let lowest_zero = (!v) & (!v).wrapping_neg();
-            return Some(lowest_zero.trailing_zeros() as usize + idx * LIC_BIT_PER_DWORD);
+            return lowest_zero.trailing_zeros() as usize + idx * LIC_BIT_PER_DWORD;
         }
-        return None;
+        return LIC_BIT_PER_DWORD * self.bitfield.len();
     }
 
     /// Allocate from the cache.
@@ -49,12 +47,15 @@ impl <const CAPACITY: usize> LowestIntegerCache<CAPACITY> {
     pub fn allocate(&mut self) -> Option<usize> {
         let ret = self.get_lowest_integer();
         
-        if let Some(v) = ret {
-            self.watermark = v + 1;
-            let (q, r) = v.div_rem_euclid(&LIC_BIT_PER_DWORD);
+        if ret < LIC_BIT_PER_DWORD * self.bitfield.len() {
+            self.watermark = ret + 1;
+            let (q, r) = ret.div_rem_euclid(&LIC_BIT_PER_DWORD);
             self.bitfield[q] |= (1 << r);
+
+            Some(ret)
+        } else {
+            None
         }
-        ret
     }
 
     /// Free the integer.
@@ -78,14 +79,14 @@ mod test {
         let mut t = LowestIntegerCache::<TEST_CAPACITY>::new();
         
         for i in 0..(TEST_CAPACITY*LIC_BIT_PER_DWORD) {
-            assert_eq!(t.get_lowest_integer().unwrap(), i);
+            assert_eq!(t.get_lowest_integer(), i);
             t.allocate();
         }
-        assert_eq!(t.get_lowest_integer(), None);
+        assert!(t.get_lowest_integer() >= TEST_CAPACITY*LIC_BIT_PER_DWORD);
 
         for i in (0..(TEST_CAPACITY*LIC_BIT_PER_DWORD)).rev() {
             t.free(i);
-            assert_eq!(t.get_lowest_integer(), Some(i));
+            assert_eq!(t.get_lowest_integer(), i);
         }
     }
 
@@ -98,7 +99,7 @@ mod test {
 
         for i in (0..20).rev() {
             t.free(i * 10);
-            assert_eq!(t.get_lowest_integer(), Some(i * 10));
+            assert_eq!(t.get_lowest_integer(), i * 10);
         }
     }
 }
