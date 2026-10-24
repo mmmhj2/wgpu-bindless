@@ -93,6 +93,10 @@ pub struct CameraPerspective {
     far_clip_distance   : f32
 }
 
+impl CameraPerspective {
+    pub fn get_underlying_camera(&self) -> &Camera { &self.camera }
+}
+
 impl Default for CameraPerspective {
     /// Constructa default perspective camera that:
     /// - has a vertical FoV of 90 degrees;

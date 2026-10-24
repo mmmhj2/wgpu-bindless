@@ -2,7 +2,7 @@ use std::{error, sync::Arc};
 use gltf::Texture;
 use winit::window::Window;
 
-use crate::renderer::pipeline::bindless_resource_manager::{MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS};
+use crate::renderer::pipeline::{bindless_resource_manager::MAX_TEXTURE_SLOTS, sampler_manager::MAX_SAMPLER_SLOTS};
 
 struct SurfaceDetailInfo {
     surface     : wgpu::Surface<'static>,
@@ -147,7 +147,9 @@ impl DeviceInterface {
     pub fn is_presentation_ready(&self) -> bool { self.presentation_ready }
 
     /// Request the default color texture format for this device.
-    /// This format is selected by the surface creation routine.
+    /// 
+    /// This format is selected by the surface creation routine, and is
+    /// identical to the swap chain image format.
     pub fn get_default_texture_format(&self) -> wgpu::TextureFormat {
         self.surface.config.format
     }

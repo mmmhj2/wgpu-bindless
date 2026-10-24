@@ -89,3 +89,12 @@ fn fs_upsample(
     upsample *= 1.0 / 16.0;
     return vec4f(upsample, 0.0);
 }
+
+// Final composite pass:
+// no blur, mixing is handled by blending, so sample the texture only.
+@fragment
+fn fs_composite(
+    in: VertexOutput
+) -> @location(0) vec4f {
+    return vec4f(textureSample(source_tx, source_sp, vec2(in.uv.x, in.uv.y)).rgb, 0.0);
+}

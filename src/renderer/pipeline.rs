@@ -1,8 +1,8 @@
 pub mod rasterizer_pipeline;
 pub mod pipeline_state;
 pub mod sampler;
+pub mod sampler_manager;
 pub mod bindless_resource_manager;
 pub mod pbr_material;
 pub mod camera;
-pub mod framebuffers;
 pub mod skybox;
