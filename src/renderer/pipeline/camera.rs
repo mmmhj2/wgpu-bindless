@@ -1,8 +1,12 @@
 use std::num::NonZero;
 
 use cgmath::Point3;
+use wgpu::BufferBinding;
 
 use crate::renderer::device_interface::DeviceInterface;
+
+
+const CAMERA_UBO_SIZE : usize = std::mem::size_of::<[[f32; 4]; 4]>() * 3;
 
 pub trait HasViewMatrix {
     fn get_view_matrix (&self) -> cgmath::Matrix4<f32>;
@@ -25,10 +29,8 @@ pub trait HasViewProjectionMatrix : HasViewMatrix {
         Self::OPENGL_TO_WGPU_MATRIX * self.get_projection_matrix() * self.get_view_matrix()
     }
 
-    /// Get the u8 array containing the view, projection and view-projection matrices.
-    /// 
-    /// Useful for committing its data to GPU.
-    fn get_v_p_vp_matrices_as_u8(&self) -> [u8; std::mem::size_of::<f32>() * 16 * 3] {
+    /// Get the u8 array containing the matrices that should be submitted to the GPU as UBO.
+    fn get_ubo_content(&self) -> [u8; CAMERA_UBO_SIZE] {
         let arr: [[[f32; 4]; 4]; 3] = [
             self.get_view_matrix().into(),
             self.get_projection_matrix().into(),
@@ -143,9 +145,12 @@ impl CameraPerspectiveBuilder {
     pub fn build(&mut self) -> CameraPerspective { self.camera.clone() }
 }
 
+
 pub struct CameraManager {
-    active_camera               : CameraPerspective,
-    camera_bind_group_layout    : wgpu::BindGroupLayout
+    active_camera       : CameraPerspective,
+    bind_group_layout   : wgpu::BindGroupLayout,
+    ubo                 : wgpu::Buffer,
+    bind_group          : wgpu::BindGroup
 }
 
 impl CameraManager {
@@ -156,7 +161,7 @@ impl CameraManager {
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
-                min_binding_size: Some(NonZero::new(std::mem::size_of::<[[f32; 4]; 4]>() as u64 * 3).unwrap())
+                min_binding_size: Some(NonZero::new(CAMERA_UBO_SIZE as u64).unwrap())
             },
             count: None,
         }
@@ -169,13 +174,44 @@ impl CameraManager {
 
     /// Create a new camera manager with a default perspective camera.
     pub fn new(di: &DeviceInterface) -> Self {
+        let bind_group_layout = di.get_device().create_bind_group_layout(&Self::BGLD_CAMERA);
+        let buffer = di.get_device().create_buffer(&wgpu::BufferDescriptor{
+            label: Some("Camera UBO"),
+            size: CAMERA_UBO_SIZE as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+            mapped_at_creation: false,
+        });
+        let bind_group = di.get_device().create_bind_group(&wgpu::BindGroupDescriptor{
+            label: None,
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(BufferBinding{
+                        buffer: &buffer,
+                        offset: 0,
+                        size: Some((CAMERA_UBO_SIZE as u64).try_into().unwrap())
+                    })
+                }
+            ]
+        });
+
         Self {
             active_camera: Default::default(),
-            camera_bind_group_layout: di.get_device().create_bind_group_layout(&Self::BGLD_CAMERA),
+            bind_group_layout,
+            bind_group,
+            ubo: buffer
         }
     }
 
-    pub fn get_bind_group_layout(&self) -> &wgpu::BindGroupLayout { &self.camera_bind_group_layout }
+    pub fn get_bind_group_layout(&self) -> &wgpu::BindGroupLayout { &self.bind_group_layout }
+
+    /// Prepare for rendering, and return the bind group pointing to the camera uniform buffer.
+    pub fn prepare(&self, di: &DeviceInterface) -> &wgpu::BindGroup {
+        di.get_queue().write_buffer(&self.ubo, 0, &self.active_camera.get_ubo_content());
+        &self.bind_group
+    }
+
     pub fn set_active_camera(&mut self, camera: CameraPerspective) { self.active_camera = camera }
     pub fn get_active_camera(&self) -> &CameraPerspective { &self.active_camera }
 }

@@ -121,34 +121,8 @@ impl PipelineStates {
     /// Then it pushes the camera matrix of the current active camera to GPU and bind its uniform buffer.
     pub fn prepare_render_pass(&self, di: &DeviceInterface, rp: &mut wgpu::RenderPass) -> () {
         let bindless_bind_group = self.asset_registry.get_bindless_resource_manager().get_bind_group(di.get_device());
-
-        let camera_buffer_size = std::mem::size_of::<[[f32; 4]; 4]>() as u64 * 3;
-        let camera_buffer = di.get_device().create_buffer(&wgpu::wgt::BufferDescriptor {
-            label: None,
-            size: camera_buffer_size,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false
-        });
-        let camera_bind_group = di.get_device().create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: self.cameras.get_bind_group_layout(),
-            entries: &[
-                wgpu::BindGroupEntry{
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(
-                        wgpu::BufferBinding {
-                            buffer: &camera_buffer,
-                            offset: 0,
-                            size: None
-                        }
-                    ) 
-                } 
-            ]
-        });
-
         rp.set_bind_group(0, &bindless_bind_group, &[]);
-        di.get_queue().write_buffer(&camera_buffer, 0, &self.cameras.get_active_camera().get_v_p_vp_matrices_as_u8());
-        rp.set_bind_group(1, &camera_bind_group, &[]);
+        rp.set_bind_group(1, self.cameras.prepare(di), &[]);
     }
 
     /// Query the default pipeline.
