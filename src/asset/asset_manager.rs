@@ -15,6 +15,19 @@ impl AssetManager {
         }
     }
 
+    fn insert_assets(&self, assets: impl Iterator<Item=Arc<RwLock<Asset>>>) -> Result<(), AssetError> {
+        let mut database = self.asset_database.write().map_err(|_| AssetError::LockPoisoned)?;
+        for asset in assets {
+            let asset_inner = asset.read().map_err(|_| AssetError::LockPoisoned)?;
+            let name = asset_inner.metadata().asset_name.as_str();
+
+            if let Some(_) = database.insert(String::from(name), asset.clone()) {
+                log::warn!("Overwriting asset {name}")
+            }
+        }
+        Ok(())
+    }
+
     /// Import through a concrete importer, stamp provenance, persist, register.
     pub fn import<T: AssetImporter>(&self, importer: T) -> Result<(), AssetError> {
         self.run_importer(importer).map(|_| ())
@@ -66,8 +79,7 @@ impl AssetManager {
             );
         }
 
-        let mut database = self.asset_database.write().map_err(|_| AssetError::LockPoisoned)?;
-        database.extend(pending_database);
+        self.insert_assets(pending_database.into_values())?;
         Ok(outputs)
     }
 
@@ -83,9 +95,8 @@ impl AssetManager {
     /// Load one serialized asset container from disk and register it.
     pub fn load_asset_file(&self, path: &Path) -> Result<Arc<RwLock<Asset>>, AssetError> {
         let asset = Asset::load_from_disk(path)?;
-        let name = asset.metadata().asset_name.clone();
         let asset = Arc::new(RwLock::new(asset));
-        self.asset_database.write().map_err(|_| AssetError::LockPoisoned)?.insert(name, asset.clone());
+        self.insert_assets(Some(asset.clone()).into_iter())?;
         Ok(asset)
     }
 
