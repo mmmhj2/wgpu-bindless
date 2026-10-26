@@ -26,6 +26,23 @@ impl <const CAPACITY: usize> LowestIntegerCache<CAPACITY> {
         }
     }
 
+    /// Total number of integers this cache can manage.
+    pub fn capacity(&self) -> usize { LIC_BIT_PER_DWORD * self.bitfield.len() }
+
+    /// Whether the given integer is currently allocated.
+    ///
+    /// Returns `false` for out-of-capacity indices.
+    pub fn is_allocated(&self, x: usize) -> bool {
+        if x >= self.capacity() { return false; }
+        let (q, r) = x.div_rem_euclid(&LIC_BIT_PER_DWORD);
+        self.bitfield[q] & (1 << r) != 0
+    }
+
+    /// Number of integers currently allocated.
+    pub fn allocated_count(&self) -> usize {
+        self.bitfield.iter().map(|v| v.count_ones() as usize).sum()
+    }
+
     /// Get the lowest available unallocated integer in the cache.
     /// 
     /// May return a value equal to the capacity, indicating the cache is full
@@ -50,7 +67,7 @@ impl <const CAPACITY: usize> LowestIntegerCache<CAPACITY> {
         if ret < LIC_BIT_PER_DWORD * self.bitfield.len() {
             self.watermark = ret + 1;
             let (q, r) = ret.div_rem_euclid(&LIC_BIT_PER_DWORD);
-            self.bitfield[q] |= (1 << r);
+            self.bitfield[q] |= 1 << r;
 
             Some(ret)
         } else {
