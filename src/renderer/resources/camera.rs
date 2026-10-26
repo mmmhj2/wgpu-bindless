@@ -7,6 +7,7 @@ use wgpu::BufferBinding;
 const CAMERA_UBO_SIZE : usize = std::mem::size_of::<[[f32; 4]; 4]>() * 3;
 
 pub trait HasViewMatrix {
+    /// Get the view matrix.
     fn get_view_matrix (&self) -> cgmath::Matrix4<f32>;
 }
 
@@ -18,16 +19,23 @@ pub trait HasViewProjectionMatrix : HasViewMatrix {
         cgmath::Vector4::new(0.0, 0.0, 0.5, 1.0),
     );
 
+    /// Get the projection matrix.
+    /// 
+    /// This matrix should follow the `cgmath` OpenGL NDC convention. It will be
+    /// converted to WGSL NDC convention by [`Self::get_vp_matrix`].
     fn get_projection_matrix (&self) -> cgmath::Matrix4<f32>;
 
-    /// Acquire the view-projection matrix that applys view and projection transform accordingly.
+    /// Acquire the view-projection matrix that applys view and projection transform.
     /// 
-    /// This function automatically applys correct transform from OpenGL NDC space of `cgmath` to the NDC space of WGSL. 
+    /// This function automatically applys correct transform from OpenGL NDC
+    /// space of `cgmath` to the NDC space of WGSL. 
     fn get_vp_matrix (&self) -> cgmath::Matrix4<f32> {
         Self::OPENGL_TO_WGPU_MATRIX * self.get_projection_matrix() * self.get_view_matrix()
     }
 
     /// Get the u8 array containing the matrices that should be submitted to the GPU as UBO.
+    /// 
+    /// Note: The projection matrix is still in the OpenGL NDC convention.
     fn get_ubo_content(&self) -> [u8; CAMERA_UBO_SIZE] {
         let arr: [[[f32; 4]; 4]; 3] = [
             self.get_view_matrix().into(),
@@ -51,7 +59,8 @@ pub struct Camera {
 impl Default for Camera {
     /// Construct a default camera that is positioned at origin, looking at +z, and up vector pointing to +y.
     /// 
-    /// This coordinate system is therefore the expected one recommended by [the GLTF specification](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#coordinate-system-and-units).
+    /// This coordinate system is therefore identical to the expected one recommended by
+    /// [the GLTF specification](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#coordinate-system-and-units).
     fn default() -> Self {
         Self { 
             origin: cgmath::point3(0.0, 0.0, 0.0),

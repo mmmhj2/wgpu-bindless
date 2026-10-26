@@ -35,6 +35,12 @@ impl SkyboxManager {
         entries: &Self::DBG_SKYBOX,
     };
 
+    /// Create the skybox manager.
+    /// 
+    /// Pipeline and its layout will be registered to [`PipelineLibrary`], and
+    /// old resources sharing their keys will be replaced.
+    /// 
+    /// TODO: use bindless sampler array instead of an orphan sampler.
     pub fn new(
         device: &wgpu::Device,
         camera_bind_group_layout: &wgpu::BindGroupLayout,

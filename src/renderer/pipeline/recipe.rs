@@ -5,8 +5,12 @@ use crate::renderer::pipeline::{
 
 /// Creates render pipelines for one program.
 ///
-/// The recipe receives the vertex layout chosen by the caller; this is the
-/// extension point for runtime/Naga-derived vertex state dispatch.
+/// Each pipeline recipe has a unique pipeline key indicating its associated
+/// shader program. A layout key is also present to determine its bind group
+/// layout.
+/// 
+/// The recipe currently acts as the extension point for runtime/Naga-derived
+/// vertex state. It can also provide potential extensions for other states (wireframe, etc.).
 pub trait PipelineRecipe {
     fn key(&self) -> PipelineKey;
     fn layout_key(&self) -> PipelineLayoutKey;
@@ -21,6 +25,9 @@ pub trait PipelineRecipe {
     ) -> RasterizerPipeline;
 }
 
+/// Create a shader module used for bindless rendering.
+/// 
+/// The shader module will be prefixed automatically by the bindless header.
 pub(crate) fn bindless_shader_module(
     device: &wgpu::Device,
     label: &'static str,

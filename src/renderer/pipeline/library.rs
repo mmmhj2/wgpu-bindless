@@ -82,7 +82,7 @@ impl PipelineLibrary {
     /// Insert an externally-built pipeline.
     ///
     /// Passes such as the skybox own a custom bind group layout and build their
-    /// pipeline during setup; registering it here keeps pipeline ownership in
+    /// pipeline during setup. Registering it here keeps pipeline ownership in
     /// one place.
     pub fn insert_pipeline(
         &mut self,
@@ -91,17 +91,30 @@ impl PipelineLibrary {
         layout: PipelineLayoutKey,
         pipeline: RasterizerPipeline,
     ) {
-        self.pipelines.insert(
+        if let Some(_) = self.pipelines.insert(
             RenderPipelineKey { program, vertex_layout, layout },
             pipeline,
-        );
+        ) {
+            log::warn!("An externally registered pipeline overwrites another pipeline: {:?} {:?} {:?}", program, vertex_layout, layout)
+        };
     }
 
+    /// Register a recipe that allows lazy creation of a pipeline.
+    /// 
+    /// See [`PipelineRecipe`] for customization points of the recipe.
     pub fn register_recipe(&mut self, recipe: Box<dyn PipelineRecipe>) {
-        self.recipes.insert(recipe.key(), recipe);
+        let key = recipe.key();
+        if let Some(_) = self.recipes.insert(key, recipe) {
+            log::warn!("A new pipeline recipe overwrites an older one: {:?}", key)
+        }
     }
 
     /// Get a pipeline, creating it on demand from its recipe and vertex layout.
+    /// 
+    /// Panic
+    /// ---
+    /// If the given program has not been associated with a recipe, the method
+    /// panicks.
     pub fn get_or_create(
         &mut self,
         device: &wgpu::Device,

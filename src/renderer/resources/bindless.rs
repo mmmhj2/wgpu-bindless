@@ -144,9 +144,10 @@ impl BindlessResources {
     pub fn get_default_mrao_texture(&self) -> SampledTextureHandle { self.default_mrao_texture }
     pub fn get_default_sampler(&self) -> SamplerHandle { self.default_sampler }
 
-    /// Register a texture that will only ever be sampled.
+    /// Register a sampled texture.
     ///
-    /// Do not pass views belonging to render targets.
+    /// The bindless resource manager is only supposed to handle read-only
+    /// resources. Do not pass views belonging to render targets.
     pub fn create_sampled_texture(
         &mut self,
         view: wgpu::TextureView,
@@ -198,7 +199,11 @@ impl BindlessResources {
     /// Build the bind group for the read-only texture/sampler arrays.
     ///
     /// Freed slots below the high-water mark are filled with the default white
-    /// texture / default sampler so existing resource indices stay stable.
+    /// texture / default sampler so there are no "holes" in the binding array,
+    /// which is not supported by WGPU.
+    /// (Apparently WGPU does not supports Vulkan null descriptor feature yet.)
+    /// 
+    /// TODO: Cache the bind group to avoid rebuilding it every frame.
     pub fn get_bind_group(&self, device: &wgpu::Device) -> wgpu::BindGroup {
         assert!(self.sampled_textures.len() > 0);
         assert!(self.samplers.len() > 0);

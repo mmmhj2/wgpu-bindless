@@ -21,7 +21,8 @@ use crate::{
 
 /// Owns the GPU-resident resources uploaded from the asset database.
 ///
-/// The cache itself does not own the bindless tables; upload methods borrow
+/// The cache itself does not own the bindless tables.
+/// Instead, they are only modified through upload methods, which borrow
 /// them explicitly through [`MeshUploadContext`] or an orchestrator helper.
 pub struct GpuAssetCache {
     /// Asset name -> (texture handle, sampler handle) in the bindless table.

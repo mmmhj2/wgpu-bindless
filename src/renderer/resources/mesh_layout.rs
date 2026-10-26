@@ -1,5 +1,6 @@
 use std::num::NonZero;
 
+/// A small helper struct handling per-mesh binding groups (i.e. model matrices)
 pub struct MeshLayout {
     bind_group_layout: wgpu::BindGroupLayout
 }
