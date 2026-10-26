@@ -3,8 +3,6 @@ use std::{default, num::NonZero};
 use bytemuck::Zeroable;
 use cgmath::Angle;
 
-use crate::renderer::device_interface::DeviceInterface;
-
 /// Maximum number of lights that can be uploaded to the GPU at once.
 pub const MAX_LIGHTS: usize = 64;
 
@@ -240,9 +238,7 @@ impl LightingManager {
         entries: &Self::BGL_LIGHTING,
     };
 
-    pub fn new(di: &DeviceInterface) -> Self {
-        let device = di.get_device();
-
+    pub fn new(device: &wgpu::Device) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&Self::BGLD_LIGHTING);
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Lighting uniform buffer"),

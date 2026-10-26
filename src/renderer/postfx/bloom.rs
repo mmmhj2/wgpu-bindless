@@ -1,7 +1,7 @@
 use std::num::NonZero;
 
 use crate::renderer::{
-    device_interface::DeviceInterface, pipeline::sampler::SamplerDescription, postfx::{framebuffers::FramebufferMipChain, postfx_stack::{OutputMode, PostFxContext, PostFxPass, PostFxResourceCache}},
+    pipeline::sampler::SamplerDescription, postfx::{framebuffers::FramebufferMipChain, postfx_stack::{OutputMode, PostFxContext, PostFxPass, PostFxResourceCache}},
 };
 
 /// Screen space bloom pass.
@@ -62,11 +62,11 @@ impl BloomPass {
         border_color: None,
     };
 
-    pub fn new(di: &DeviceInterface, hdr_format: wgpu::TextureFormat) -> Self {
-        let bgl_bloom = di.get_device().create_bind_group_layout(&Self::DBGL_BLOOM);
+    pub fn new(device: &wgpu::Device, hdr_format: wgpu::TextureFormat) -> Self {
+        let bgl_bloom = device.create_bind_group_layout(&Self::DBGL_BLOOM);
 
-        let module = di.get_device().create_shader_module(wgpu::include_wgsl!("./shaders/bloom.wgsl"));
-        let layout = di.get_device().create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(&bgl_bloom)], immediate_size: 4 });
+        let module = device.create_shader_module(wgpu::include_wgsl!("./shaders/bloom.wgsl"));
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(&bgl_bloom)], immediate_size: 4 });
 
         let internal_format = hdr_format;
 
@@ -95,7 +95,7 @@ impl BloomPass {
             cache: None
         };
 
-        let ppl_bloom_down = di.get_device().create_render_pipeline(&descriptor);
+        let ppl_bloom_down = device.create_render_pipeline(&descriptor);
 
         descriptor.label = Some("Bloom Upsample Pipeline");
         let binding = [ Some(wgpu::ColorTargetState{
@@ -120,7 +120,7 @@ impl BloomPass {
             compilation_options: Default::default(),
             targets: &binding
         });
-        let ppl_bloom_up = di.get_device().create_render_pipeline(&descriptor);
+        let ppl_bloom_up = device.create_render_pipeline(&descriptor);
 
         descriptor.label = Some("Bloom Composite Pipeline");
         let binding = [ Some(wgpu::ColorTargetState{
@@ -145,13 +145,13 @@ impl BloomPass {
             compilation_options: Default::default(),
             targets: &binding
         });
-        let ppl_bloom_composite = di.get_device().create_render_pipeline(&descriptor);
+        let ppl_bloom_composite = device.create_render_pipeline(&descriptor);
 
         Self { bgl_bloom, ppl_bloom_down, ppl_bloom_up, ppl_bloom_composite, internal_format, mip_chain: FramebufferMipChain::new(internal_format) }
     }
 
-    fn build_bind_group(&self, di: &DeviceInterface, tx: &wgpu::TextureView, sp: &wgpu::Sampler) -> wgpu::BindGroup {
-        di.get_device().create_bind_group(&wgpu::BindGroupDescriptor {
+    fn build_bind_group(&self, device: &wgpu::Device, tx: &wgpu::TextureView, sp: &wgpu::Sampler) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &self.bgl_bloom,
             entries: &[
@@ -175,16 +175,16 @@ impl PostFxPass for BloomPass {
         unsafe { OutputMode::in_place() }
     }
 
-    fn resize(&mut self, di: &DeviceInterface, width: NonZero<u32>, height: NonZero<u32>) {
-        self.mip_chain.create_textures(di, width, height);
+    fn resize(&mut self, device: &wgpu::Device, width: NonZero<u32>, height: NonZero<u32>) {
+        self.mip_chain.create_textures(device, width, height);
     }
 
     fn apply(&mut self, ctx: &mut PostFxContext<'_>, cache: &mut PostFxResourceCache) {
-        let di = ctx.device;
+        let device = ctx.device;
         let input = ctx.input;
         let output = ctx.output;
 
-        let sampler = ctx.samplers.push_sampler(di.get_device(), Self::INPUT_SAMPLER)
+        let sampler = ctx.samplers.push_sampler(device, Self::INPUT_SAMPLER)
             .expect("Failed to push bloom input sampler.").1;
         let ce = &mut ctx.encoder;
 
@@ -226,7 +226,7 @@ impl PostFxPass for BloomPass {
                 multiview_mask: None,
             });
 
-            let bg = self.build_bind_group(di, fb, sampler);
+            let bg = self.build_bind_group(device, fb, sampler);
             rp.set_pipeline(&self.ppl_bloom_down);
             rp.set_immediates(0, bytemuck::cast_slice(&[Self::BLOOM_RADIUS]));
             rp.set_bind_group(0, &bg, &[]);
@@ -252,7 +252,7 @@ impl PostFxPass for BloomPass {
                 multiview_mask: None,
             });
 
-            let bg = self.build_bind_group(di, &mipchain[mip - 1], sampler);
+            let bg = self.build_bind_group(device, &mipchain[mip - 1], sampler);
             rp.set_pipeline(&self.ppl_bloom_down);
             rp.set_immediates(0, bytemuck::cast_slice(&[Self::BLOOM_RADIUS]));
             rp.set_bind_group(0, &bg, &[]);
@@ -279,7 +279,7 @@ impl PostFxPass for BloomPass {
                 multiview_mask: None,
             });
 
-            let bg = self.build_bind_group(di, &mipchain[mip], sampler);
+            let bg = self.build_bind_group(device, &mipchain[mip], sampler);
             rp.set_pipeline(&self.ppl_bloom_up);
             rp.set_immediates(0, bytemuck::cast_slice(&[Self::BLOOM_RADIUS]));
             rp.set_bind_group(0, &bg, &[]);
@@ -305,7 +305,7 @@ impl PostFxPass for BloomPass {
                 multiview_mask: None,
             });
 
-            let bg = self.build_bind_group(di, &mipchain[0], sampler);
+            let bg = self.build_bind_group(device, &mipchain[0], sampler);
             rp.set_pipeline(&self.ppl_bloom_composite);
             rp.set_blend_constant(wgpu::Color{r: Self::BLOOM_STRENGTH, g: Self::BLOOM_STRENGTH, b: Self::BLOOM_STRENGTH, a: 1.0});
             rp.set_immediates(0, bytemuck::cast_slice(&[Self::BLOOM_RADIUS]));

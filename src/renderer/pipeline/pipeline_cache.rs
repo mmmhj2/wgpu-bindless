@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::renderer::{device_interface::DeviceInterface, mesh::vertex_types::VertexType, pipeline::rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptorBuilder}};
+use crate::renderer::{mesh::vertex_types::VertexType, pipeline::rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptorBuilder}};
 
 macro_rules! include_bindless_wgsl {
     ($($token:tt)*) => {
@@ -49,15 +49,15 @@ impl PipelineCache {
     /// - `default_bgl` : Bind group layout for default layout. Generally assembled
     /// from bindless resources, camera, lighting and mesh resources.
     pub fn new(
-        di: &DeviceInterface,
+        device: &wgpu::Device,
         color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat,
         default_bgl: &[Option<&wgpu::BindGroupLayout>]
     ) -> Self {
-        let default_shader_module = di.get_device().create_shader_module(
+        let default_shader_module = device.create_shader_module(
             include_bindless_wgsl!("./shaders/default_shaders.wgsl")
         );
-        let default_rasterizer_pipeline_layout = di.get_device().create_pipeline_layout(
+        let default_rasterizer_pipeline_layout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor{
                 label: None,
                 bind_group_layouts: default_bgl,
@@ -95,7 +95,7 @@ impl PipelineCache {
         let mut pipelines = HashMap::new();
         let mut layouts = HashMap::new();
         
-        pipelines.insert(PipelineKey::Default, RasterizerPipeline::new(di, default_rasterizer_pipeline_descriptor, Some(&default_rasterizer_pipeline_layout)));
+        pipelines.insert(PipelineKey::Default, RasterizerPipeline::new(device, default_rasterizer_pipeline_descriptor, Some(&default_rasterizer_pipeline_layout)));
         layouts.insert(PipelineLayoutKey::Default, default_rasterizer_pipeline_layout);
 
         PipelineCache { pipelines, layouts }
@@ -105,7 +105,7 @@ impl PipelineCache {
     /// 
     /// This pipeline shares the same layout as the default pipeline.
     pub fn prepare_pbr_pipeline(&mut self,
-        di: &DeviceInterface,
+        device: &wgpu::Device,
         color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat,
     ) {
@@ -117,7 +117,7 @@ impl PipelineCache {
                     write_mask: wgpu::ColorWrites::ALL
             })
         ];
-        let pbr_shader_module = di.get_device().create_shader_module(
+        let pbr_shader_module = device.create_shader_module(
             include_bindless_wgsl!("./shaders/cook_torrance.wgsl")
         );
         let pbr_rasterizer_pipeline_descriptor = 
@@ -138,6 +138,6 @@ impl PipelineCache {
                 stencil: Default::default(),
                 bias: Default::default()
             }).build();
-        self.pipelines.insert(PipelineKey::CookTorrancePbr, RasterizerPipeline::new(di, pbr_rasterizer_pipeline_descriptor, Some(&layout)));
+        self.pipelines.insert(PipelineKey::CookTorrancePbr, RasterizerPipeline::new(device, pbr_rasterizer_pipeline_descriptor, Some(&layout)));
     }
 }

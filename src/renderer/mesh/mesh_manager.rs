@@ -1,7 +1,5 @@
 use std::num::NonZero;
 
-use crate::renderer::device_interface::DeviceInterface;
-
 pub struct MeshManager {
     bind_group_layout: wgpu::BindGroupLayout
 }
@@ -26,9 +24,9 @@ impl MeshManager {
         entries: &Self::BLG_MODEL_MATRICES,
     };
 
-    pub fn new(di: &DeviceInterface) -> Self {
+    pub fn new(device: &wgpu::Device) -> Self {
         Self {
-            bind_group_layout: di.get_device().create_bind_group_layout(&Self::BGLD_MODEL_MATRICES)
+            bind_group_layout: device.create_bind_group_layout(&Self::BGLD_MODEL_MATRICES)
         }
     }
 

@@ -2,11 +2,11 @@ use std::sync::Arc;
 use winit::{application::ApplicationHandler, event::{KeyEvent, WindowEvent}, event_loop::ActiveEventLoop, keyboard::{KeyCode, PhysicalKey}, window::Window};
 use crate::renderer::window::RendererState;
 
-pub struct DefaultAppHandler<RState : RendererState + 'static> {
+pub struct DefaultAppHandler<RState : RendererState<'static> + 'static> {
     pub state: Option<RState>,
 }
 
-impl<RState : RendererState + 'static> DefaultAppHandler<RState> {
+impl<RState : RendererState<'static> + 'static> DefaultAppHandler<RState> {
     pub fn new() -> Self {
         Self {
             state: None,
@@ -14,7 +14,7 @@ impl<RState : RendererState + 'static> DefaultAppHandler<RState> {
     }
 }
 
-impl<RState : RendererState + 'static> ApplicationHandler<RState> for DefaultAppHandler<RState> {
+impl<RState : RendererState<'static> + 'static> ApplicationHandler<RState> for DefaultAppHandler<RState> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let mut window_attributes = Window::default_attributes();
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());

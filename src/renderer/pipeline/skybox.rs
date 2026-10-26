@@ -1,4 +1,4 @@
-use crate::renderer::{device_interface::DeviceInterface, pipeline::{camera::CameraManager, rasterizer_pipeline::{RasterizerPipelineDescriptor, RasterizerPipelineDescriptorBuilder}, sampler::SamplerDescription}};
+use crate::renderer::pipeline::{camera::CameraManager, rasterizer_pipeline::{RasterizerPipelineDescriptor, RasterizerPipelineDescriptorBuilder}, sampler::SamplerDescription};
 
 
 pub struct SkyboxManager {
@@ -30,7 +30,7 @@ impl SkyboxManager {
     };
 
     pub fn new(
-        di: &DeviceInterface,
+        device: &wgpu::Device,
         cameras: &CameraManager,
         color_attachment_format: wgpu::TextureFormat,
         depth_attachment_format: wgpu::TextureFormat
@@ -45,17 +45,17 @@ impl SkyboxManager {
             anisotropy_clamp: 1,
             border_color: None
         };
-        let skybox_sampler = di.get_device().create_sampler(&(sd.into()));
+        let skybox_sampler = device.create_sampler(&(sd.into()));
 
-        let skybox_bindgroup_layout = di.get_device().create_bind_group_layout(&Self::DBGL_SKYBOX);
+        let skybox_bindgroup_layout = device.create_bind_group_layout(&Self::DBGL_SKYBOX);
 
-        let pipeline_layout = di.get_device().create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Skybox Pipeline Layout"),
             bind_group_layouts: &[None, Some(cameras.get_bind_group_layout()), None, Some(&skybox_bindgroup_layout)],
             immediate_size: 0
         });
 
-        let shader_module = di.get_device().create_shader_module(wgpu::include_wgsl!("./shaders/skybox_shaders.wgsl"));
+        let shader_module = device.create_shader_module(wgpu::include_wgsl!("./shaders/skybox_shaders.wgsl"));
         let targets = [Some(wgpu::ColorTargetState {
             format: color_attachment_format,
             blend: None,
@@ -80,7 +80,7 @@ impl SkyboxManager {
         }).build();
         let mut pd: wgpu::RenderPipelineDescriptor = rpd.into();
         pd.layout = Some(&pipeline_layout);
-        let pipeline = di.get_device().create_render_pipeline(&pd);
+        let pipeline = device.create_render_pipeline(&pd);
 
         Self {
             skybox_textures: None,
@@ -105,8 +105,8 @@ impl SkyboxManager {
     /// Camera bind group must be bound, possibly via the `prepare_render_pass`
     /// call.
     /// The fourth bind group will be mutated by the draw call.
-    pub fn draw_skybox(&self, di: &DeviceInterface, rp: &mut wgpu::RenderPass) {
-        let bind_group = di.get_device().create_bind_group(&wgpu::BindGroupDescriptor {
+    pub fn draw_skybox(&self, device: &wgpu::Device, rp: &mut wgpu::RenderPass) {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &self.skybox_bindgroup_layout,
             entries: &[

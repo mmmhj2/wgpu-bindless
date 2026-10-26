@@ -8,7 +8,9 @@ use rust_renderer::{
         asset_types::{AssetData::{SceneAssetType, TextureAssetType}, GpuAssetType},
         importer::{gltf_importer::GltfImporter, image_file_importer::ColorSpace},
     }, renderer::{
-        device_interface::DeviceInterface,
+        context::{
+            frame_context::Backbuffers, gpu_context::GpuContext, surface_context::SurfaceContext,
+        },
         mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance},
         pipeline::{
             camera::{Camera, CameraPerspective, CameraPerspectiveBuilder, HasViewMatrix, HasViewProjectionMatrix},
@@ -31,7 +33,9 @@ const GLTF_PATH: &str = "resource/DamagedHelmet.glb";
 
 struct State {
     window: Arc<Window>,
-    device: DeviceInterface,
+    gpu: GpuContext,
+    surface: SurfaceContext<'static>,
+    backbuffers: Backbuffers,
     pipeline: PipelineStates,
     skybox: SkyboxManager,
     postfx: PostFxStack,
@@ -73,14 +77,20 @@ impl State {
     }
 }
 
-impl RendererState for State {
+impl RendererState<'static> for State {
     async fn new(window: Arc<Window>) -> Self {
-        let device = DeviceInterface::new(window.clone(), true).await.unwrap();
-        let mut pipeline = PipelineStates::prepare_default_pipelines(&device, wgpu::TextureFormat::Rgba16Float);
-        let mut skybox = SkyboxManager::new(&device, pipeline.get_camera_manager(), wgpu::TextureFormat::Rgba16Float, wgpu::TextureFormat::Depth32Float);
-        let mut postfx = PostFxStack::new(&device, wgpu::TextureFormat::Rgba16Float);
-        postfx.push_pass(Box::new(BloomPass::new(&device, wgpu::TextureFormat::Rgba16Float)));
-        postfx.push_pass(Box::new(AcesTonemapPass::new(&device, wgpu::TextureFormat::Rgba16Float, device.get_default_texture_format())));
+        let mut gpu = GpuContext::new();
+        let mut surface = SurfaceContext::new(gpu.instance(), window.clone()).unwrap();
+        gpu.create_device(Some(surface.surface())).await.unwrap();
+        surface.select_color_format(gpu.try_adapter().expect("adapter should be ready"), true);
+        surface.configure(gpu.device());
+
+        let surface_format = surface.get_color_format().expect("surface color format should be selected");
+        let mut pipeline = PipelineStates::prepare_default_pipelines(gpu.device(), gpu.queue(), wgpu::TextureFormat::Rgba16Float);
+        let mut skybox = SkyboxManager::new(gpu.device(), pipeline.get_camera_manager(), wgpu::TextureFormat::Rgba16Float, wgpu::TextureFormat::Depth32Float);
+        let mut postfx = PostFxStack::new(wgpu::TextureFormat::Rgba16Float, surface_format);
+        postfx.push_pass(Box::new(BloomPass::new(gpu.device(), wgpu::TextureFormat::Rgba16Float)));
+        postfx.push_pass(Box::new(AcesTonemapPass::new(gpu.device(), wgpu::TextureFormat::Rgba16Float, surface_format)));
 
         // Load through the import manifest: on the first run the jobs are
         // imported and persisted; later runs load the cached containers unless a
@@ -116,7 +126,7 @@ impl RendererState for State {
             let asset = asset_manager.get_asset(&scene_name).expect("gltf scene asset should be present");
             let asset = asset.read().expect("failed to read gltf scene asset");
             if let SceneAssetType(scene) = asset.get_data() {
-                StaticMeshInstance::create_from_scene_asset(&device, &mut pipeline, scene, &asset_manager)
+                StaticMeshInstance::create_from_scene_asset(gpu.device(), gpu.queue(), &mut pipeline, scene, &asset_manager)
             } else {
                 panic!("asset '{scene_name}' is not a scene asset");
             }
@@ -126,7 +136,7 @@ impl RendererState for State {
             let asset = asset_manager.get_asset("skybox").expect("skybox array asset should be present");
             let asset = asset.read().expect("failed to read skybox asset");
             if let TextureAssetType(texture) = asset.get_data() {
-                texture.upload("skybox", device.get_device(), device.get_queue())
+                texture.upload("skybox", gpu.device(), gpu.queue())
             } else {
                 panic!("skybox asset is not a texture asset");
             }
@@ -140,8 +150,10 @@ impl RendererState for State {
         let light = Light::directional(cgmath::vec3(1.0, 0.0, 0.0), [1.0, 0.95, 0.9], 3.0);
 
         Self {
-            window: window.clone(),
-            device,
+            window,
+            gpu,
+            surface,
+            backbuffers: Backbuffers::new(wgpu::TextureFormat::Depth32Float),
             pipeline,
             skybox,
             postfx,
@@ -155,35 +167,13 @@ impl RendererState for State {
     fn render(&mut self) -> Result<(), ()>{
         self.window.request_redraw();
 
-        // We can't render unless the surface is configured
-        if !self.device.is_presentation_ready() {
+        let Some(frame) = self.backbuffers.new_frame(self.gpu.device(), &mut self.surface) else {
             return Ok(());
-        }
-            
-        let output = match self.device.get_current_surface_texture() {
-            wgpu::CurrentSurfaceTexture::Success(surface_texture) => surface_texture,
-            wgpu::CurrentSurfaceTexture::Suboptimal(surface_texture) => {
-                self.device.configure_surface();
-                surface_texture
-            }
-            wgpu::CurrentSurfaceTexture::Timeout
-            | wgpu::CurrentSurfaceTexture::Occluded
-            | wgpu::CurrentSurfaceTexture::Validation => {
-                // Skip this frame
-                return Ok(());
-            }
-            wgpu::CurrentSurfaceTexture::Outdated => {
-                self.device.configure_surface();
-                return Ok(());
-            }
-            wgpu::CurrentSurfaceTexture::Lost => {
-                panic!("Lost device");
-            }
         };
 
-        self.postfx.configure_with_surface(&self.device);
+        self.postfx.configure_with_size(self.gpu.device(), frame.get_size());
 
-        let mut encoder = self.device.get_device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = self.gpu.device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
 
@@ -205,7 +195,7 @@ impl RendererState for State {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: self.device.get_depth_texture_view().expect("Unprepared"),
+                    view: frame.get_depth_view(),
                     depth_ops: Some(wgpu::Operations{
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Discard
@@ -219,43 +209,51 @@ impl RendererState for State {
 
             self.pipeline.set_active_camera(self.camera.clone());
             self.pipeline.get_lighting_manager().upload_lights(
-                self.device.get_queue(),
+                self.gpu.queue(),
                 std::slice::from_ref(&self.light)
             );
-            self.pipeline.prepare_render_pass(self.get_device_interface(), &mut rp);
+            self.pipeline.prepare_render_pass(self.gpu.device(), self.gpu.queue(), &mut rp);
             rp.set_rasterizer_pipeline(self.pipeline.query_pipeline(PipelineKey::CookTorrancePbr).expect("cook torrance pipeline not found"));
             for m in &self.gltf_models {
                 m.draw(&mut rp);
             }
 
-            self.skybox.draw_skybox(&self.device, &mut rp);
+            self.skybox.draw_skybox(self.gpu.device(), &mut rp);
         }
 
-        let final_view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let final_view = frame.get_color_view();
 
         let inputs = PostFxExtraInputs::new()
-            .with(PostFxInput::Depth, self.device.get_depth_texture_view().expect("depth view should be ready"));
+            .with(PostFxInput::Depth, frame.get_depth_view());
 
         self.postfx.run(
-            &self.device,
+            self.gpu.device(),
             self.pipeline.get_bindless_resource_manager_mut().get_samplers_mut(),
             &mut encoder,
-            &final_view,
+            final_view,
             &inputs
         );
 
-        self.device.get_queue().submit(std::iter::once(encoder.finish()));
-        output.present();
+        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        frame.present();
 
         Ok(())
     }
-    
-    fn get_device_interface(&self) -> &DeviceInterface {
-        &self.device
+
+    fn gpu_context(&self) -> &GpuContext {
+        &self.gpu
     }
-    
-    fn get_device_interface_mut(&mut self) -> &mut DeviceInterface {
-        &mut self.device
+
+    fn surface_context(&self) -> &SurfaceContext<'static> {
+        &self.surface
+    }
+
+    fn surface_context_mut(&mut self) -> &mut SurfaceContext<'static> {
+        &mut self.surface
+    }
+
+    fn backbuffers_mut(&mut self) -> &mut Backbuffers {
+        &mut self.backbuffers
     }
 }
 

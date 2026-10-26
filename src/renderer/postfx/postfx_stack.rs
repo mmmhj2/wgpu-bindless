@@ -1,7 +1,6 @@
-use std::{collections::HashMap, num::NonZero, rc::Rc};
+use std::{collections::HashMap, num::NonZero};
 
 use crate::renderer::{
-    device_interface::DeviceInterface,
     pipeline::sampler_manager::SamplerManager,
     postfx::framebuffers::Framebuffer,
 };
@@ -50,7 +49,7 @@ impl<'a> PostFxExtraInputs<'a> {
 
 /// Execution context handed to a single post-processing pass.
 pub struct PostFxContext<'a> {
-    pub device: &'a DeviceInterface,
+    pub device: &'a wgpu::Device,
     pub encoder: &'a mut wgpu::CommandEncoder,
     pub samplers: &'a mut SamplerManager,
     pub size: (u32, u32),
@@ -168,9 +167,9 @@ pub trait PostFxPass {
     /// As of now, output format of every pass (except the last pass) should be
     /// identical to the color attachment format, while the last one must be
     /// identical to the swap chain image format acquired from
-    /// [`get_default_texture_format`].
+    /// [`get_color_format`].
     /// 
-    /// [`get_default_texture_format`]: DeviceInterface::get_default_texture_format()
+    /// [`get_color_format`]: crate::renderer::context::surface_context::SurfaceContext::get_color_format()
     fn output_format(&self) -> wgpu::TextureFormat;
 
     /// External inputs this pass reads, validated by the stack before execution.
@@ -186,7 +185,7 @@ pub trait PostFxPass {
     ///
     /// Passes allocate size-dependent resources here instead of polling the
     /// surface configuration every frame.
-    fn resize(&mut self, _di: &DeviceInterface, _width: NonZero<u32>, _height: NonZero<u32>) {}
+    fn resize(&mut self, _device: &wgpu::Device, _width: NonZero<u32>, _height: NonZero<u32>) {}
 
     /// Record this pass into the encoder using `ctx`.
     fn apply(&mut self, ctx: &mut PostFxContext<'_>, resource: &mut PostFxResourceCache);
@@ -218,10 +217,10 @@ impl PostFxStack {
     /// 
     /// **Note:** since the HDR target should be rendered to, it must be
     /// identical to the color render target format of the main render pass.
-    pub fn new(di: &DeviceInterface, hdr_format: wgpu::TextureFormat) -> Self {
+    pub fn new(hdr_format: wgpu::TextureFormat, output_format: wgpu::TextureFormat) -> Self {
         Self {
             hdr_format,
-            output_format: di.get_default_texture_format(),
+            output_format,
             cache: PostFxResourceCache::new(),
             size: None,
             hdr_target: Framebuffer::new(hdr_format, "PostFx HDR target"),
@@ -239,26 +238,23 @@ impl PostFxStack {
 
     /// The HDR texture the scene must be rendered into before [`PostFxStack::run`].
     pub fn scene_target(&self) -> &wgpu::TextureView {
-        self.hdr_target.get_texture().expect("call configure_with_surface first")
+        self.hdr_target.get_texture().expect("call configure_with_size first")
     }
 
     /// Rebuild the HDR and scratch targets and notify the passes when the
     /// surface size changes.
-    pub fn configure_with_surface(&mut self, di: &DeviceInterface) {
-        let width = NonZero::<u32>::new(di.get_current_surface_configuration().width)
-            .expect("framebuffer width should be larger than zero.");
-        let height = NonZero::<u32>::new(di.get_current_surface_configuration().height)
-            .expect("framebuffer height should be larger than zero.");
+    pub fn configure_with_size(&mut self, device: &wgpu::Device, size: (NonZero<u32>, NonZero<u32>)) {
+        let (width, height) = size;
 
         let need_rebuild = self.size.map_or(true, |s| s != (width, height));
         if need_rebuild {
             log::info!("Rebuilding post-processing stack with size {}x{}", width, height);
-            self.hdr_target.create_texture(di, width, height);
+            self.hdr_target.create_texture(device, width, height);
             for fb in &mut self.scratch {
-                fb.create_texture(di, width, height);
+                fb.create_texture(device, width, height);
             }
             for pass in &mut self.passes {
-                pass.resize(di, width, height);
+                pass.resize(device, width, height);
             }
             self.size = Some((width, height));
 
@@ -287,13 +283,13 @@ impl PostFxStack {
     ///
     /// Panic
     /// ---
-    /// Panics if the stack has no passes, if `configure_with_surface` has not
+    /// Panics if the stack has no passes, if `configure_with_size` has not
     /// been called, if a pass requires an input that was not provided, if a
     /// pass declares a format incompatible with the chain, or if the final pass
     /// requests in-place output.
     pub fn run(
         &mut self,
-        di: &DeviceInterface,
+        device: &wgpu::Device,
         samplers: &mut SamplerManager,
         ce: &mut wgpu::CommandEncoder,
         final_view: &wgpu::TextureView,
@@ -304,7 +300,7 @@ impl PostFxStack {
 
         let hdr_format = self.hdr_format;
         let output_format = self.output_format;
-        let (width, height) = self.size.expect("call configure_with_surface before run.");
+        let (width, height) = self.size.expect("call configure_with_size before run.");
         let size = (width.get(), height.get());
 
         // Validate the whole chain before recording anything.
@@ -333,7 +329,7 @@ impl PostFxStack {
             }
         }
 
-        let scene = self.hdr_target.get_texture().expect("call configure_with_surface before run.").clone();
+        let scene = self.hdr_target.get_texture().expect("call configure_with_size before run.").clone();
 
         // Index of the buffer holding the chain's current input; `None` = scene.
         let mut current: Option<usize> = None;
@@ -372,7 +368,7 @@ impl PostFxStack {
             };
 
             let mut ctx = PostFxContext {
-                device: di,
+                device,
                 encoder: &mut *ce,
                 samplers: &mut *samplers,
                 size,

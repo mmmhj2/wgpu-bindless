@@ -8,14 +8,14 @@ use crate::{
             TangentRecalculator, VertexReconditionable, VertexReconditionableAttributeWrite
         }
     }, renderer::{
-        device_interface::DeviceInterface, mesh::{
+        mesh::{
             drawable_mesh_traits::{
                 DrawableMesh,
                 ImmediateDrawableMesh
             },
             mesh_manager::MeshManager
         }, pipeline::{
-            bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial, sampler::SamplerDescription
+            bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial
         }
     }
 };
@@ -41,12 +41,12 @@ impl ImmediateMesh {
 }
 
 impl ImmediateMeshBuilder {
-    pub fn new(di: &DeviceInterface, mgr: &mut BindlessResourceManager, material: Option<PBRMaterial>) -> Self {
+    pub fn new(device: &wgpu::Device, mgr: &mut BindlessResourceManager, material: Option<PBRMaterial>) -> Self {
         let material = if let Some(m) = material {
             m
         } else {
             PBRMaterial::create_from_views(
-                di.get_device(),
+                device,
                 mgr,
                 None,
                 None,
@@ -95,27 +95,27 @@ impl ImmediateMeshBuilder {
     }
 
     /// Commit 
-    pub fn commit(self, di: &DeviceInterface, mmgr: &MeshManager) -> ImmediateMesh {
+    pub fn commit(self, device: &wgpu::Device, queue: &wgpu::Queue, mmgr: &MeshManager) -> ImmediateMesh {
         assert_eq!(self.position.len(), self.attributes.len());
 
-        let pb = di.get_device().create_buffer(&BufferDescriptor{
+        let pb = device.create_buffer(&BufferDescriptor{
             label: None,
             mapped_at_creation: false,
             size: (self.position.len() as u64) * (std::mem::size_of::<VertexBufferPosition>() as u64),
             usage: BufferUsages::VERTEX | BufferUsages::COPY_DST
         });
 
-        let ab = di.get_device().create_buffer(&BufferDescriptor{
+        let ab = device.create_buffer(&BufferDescriptor{
             label: None,
             mapped_at_creation: false,
             size: (self.attributes.len() as u64) * (std::mem::size_of::<VertexBufferOthers>() as u64),
             usage: BufferUsages::VERTEX | BufferUsages::COPY_DST
         });
 
-        let bg = self.build_immediate_model_matrix(di, mmgr);
+        let bg = self.build_immediate_model_matrix(device, queue, mmgr);
 
-        di.get_queue().write_buffer(&pb, 0, bytemuck::cast_slice(self.position.as_slice()));
-        di.get_queue().write_buffer(&ab, 0, bytemuck::cast_slice(self.attributes.as_slice()));
+        queue.write_buffer(&pb, 0, bytemuck::cast_slice(self.position.as_slice()));
+        queue.write_buffer(&ab, 0, bytemuck::cast_slice(self.attributes.as_slice()));
         ImmediateMesh::new(self.position.len() as u32, pb, ab, self.material, bg)
     }
 }

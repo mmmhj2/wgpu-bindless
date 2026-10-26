@@ -1,7 +1,4 @@
-use std::{collections::HashMap, num::NonZero, borrow::Cow};
-use wgpu::{ColorTargetState, ColorWrites, DepthBiasState, PipelineLayoutDescriptor};
-
-use crate::renderer::{asset_registry::GpuAssetRegistry, device_interface::DeviceInterface, mesh::{mesh_manager::MeshManager, vertex_types::VertexType}, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, CameraPerspective, HasViewProjectionMatrix}, lighting::LightingManager, pipeline_cache::{PipelineCache, PipelineKey, PipelineLayoutKey}, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor, RasterizerPipelineDescriptorBuilder}}};
+use crate::renderer::{asset_registry::GpuAssetRegistry, mesh::mesh_manager::MeshManager, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, CameraPerspective}, lighting::LightingManager, pipeline_cache::{PipelineCache, PipelineKey, PipelineLayoutKey}, rasterizer_pipeline::RasterizerPipeline}};
 
 pub struct PipelineStates {
     asset_registry: GpuAssetRegistry,
@@ -12,20 +9,20 @@ pub struct PipelineStates {
 }
 
 impl PipelineStates {
-    pub fn prepare_default_pipelines (di: & DeviceInterface, format: wgpu::TextureFormat) -> Self {
+    pub fn prepare_default_pipelines (device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
 
-        let asset_registry = GpuAssetRegistry::new(di);
-        let cameras = CameraManager::new(di);
-        let lighting = LightingManager::new(di);
-        let mesh_manager = MeshManager::new(di);
+        let asset_registry = GpuAssetRegistry::new(device, queue);
+        let cameras = CameraManager::new(device);
+        let lighting = LightingManager::new(device);
+        let mesh_manager = MeshManager::new(device);
         let bind_group_layouts = [
             Some(asset_registry.get_bindless_resource_manager().get_bind_group_layout()),
             Some(cameras.get_bind_group_layout()),
             Some(lighting.get_bind_group_layout()),
             Some(mesh_manager.get_bind_group_layout())
         ];
-        let mut cache = PipelineCache::new(di, format, wgpu::TextureFormat::Depth32Float, &bind_group_layouts);
-        cache.prepare_pbr_pipeline(di, format, wgpu::TextureFormat::Depth32Float);
+        let mut cache = PipelineCache::new(device, format, wgpu::TextureFormat::Depth32Float, &bind_group_layouts);
+        cache.prepare_pbr_pipeline(device, format, wgpu::TextureFormat::Depth32Float);
 
         return Self{
             asset_registry,
@@ -40,10 +37,10 @@ impl PipelineStates {
     /// 
     /// It first sets the bindless bind groups to the render pass.
     /// Then it pushes the camera matrix of the current active camera to GPU and bind its uniform buffer.
-    pub fn prepare_render_pass(&self, di: &DeviceInterface, rp: &mut wgpu::RenderPass) -> () {
-        let bindless_bind_group = self.asset_registry.get_bindless_resource_manager().get_bind_group(di.get_device());
+    pub fn prepare_render_pass(&self, device: &wgpu::Device, queue: &wgpu::Queue, rp: &mut wgpu::RenderPass) -> () {
+        let bindless_bind_group = self.asset_registry.get_bindless_resource_manager().get_bind_group(device);
         rp.set_bind_group(0, &bindless_bind_group, &[]);
-        rp.set_bind_group(1, self.cameras.prepare(di), &[]);
+        rp.set_bind_group(1, self.cameras.prepare(queue), &[]);
         rp.set_bind_group(2, self.lighting.get_bind_group(), &[]);
     }
 

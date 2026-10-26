@@ -2,54 +2,50 @@
 #[cfg(target_os = "windows")]
 mod test {
     use std::sync::Arc;
-    use rust_renderer::{app::DefaultAppHandler, renderer::{device_interface::DeviceInterface, window::RendererState}};
+
+    use rust_renderer::{
+        app::DefaultAppHandler,
+        renderer::{
+            context::{
+                frame_context::Backbuffers, gpu_context::GpuContext,
+                surface_context::SurfaceContext,
+            },
+            window::RendererState,
+        },
+    };
     use winit::{event_loop::EventLoop, window::Window};
 
     pub struct State {
         window: Arc<Window>,
-        device: DeviceInterface
+        gpu: GpuContext,
+        surface: SurfaceContext<'static>,
+        backbuffers: Backbuffers,
     }
 
-    impl RendererState for State {
+    impl RendererState<'static> for State {
         async fn new(window: Arc<Window>) -> Self {
-            let device = DeviceInterface::new(window.clone(), true).await.unwrap();
+            let mut gpu = GpuContext::new();
+            let mut surface = SurfaceContext::new(gpu.instance(), window.clone()).unwrap();
+            gpu.create_device(Some(surface.surface())).await.unwrap();
+            surface.select_color_format(gpu.try_adapter().expect("adapter should be ready"), true);
+            surface.configure(gpu.device());
+
             Self {
-                window: window.clone(),
-                device
+                window,
+                gpu,
+                surface,
+                backbuffers: Backbuffers::new(wgpu::TextureFormat::Depth32Float),
             }
         }
 
-        fn render(&mut self) -> Result<(), ()>{
+        fn render(&mut self) -> Result<(), ()> {
             self.window.request_redraw();
 
-            // We can't render unless the surface is configured
-            if !self.device.is_presentation_ready() {
+            let Some(frame) = self.backbuffers.new_frame(self.gpu.device(), &mut self.surface) else {
                 return Ok(());
-            }
-                
-            let output = match self.device.get_current_surface_texture() {
-                wgpu::CurrentSurfaceTexture::Success(surface_texture) => surface_texture,
-                wgpu::CurrentSurfaceTexture::Suboptimal(surface_texture) => {
-                    self.device.configure_surface();
-                    surface_texture
-                }
-                wgpu::CurrentSurfaceTexture::Timeout
-                | wgpu::CurrentSurfaceTexture::Occluded
-                | wgpu::CurrentSurfaceTexture::Validation => {
-                    // Skip this frame
-                    return Ok(());
-                }
-                wgpu::CurrentSurfaceTexture::Outdated => {
-                    self.device.configure_surface();
-                    return Ok(());
-                }
-                wgpu::CurrentSurfaceTexture::Lost => {
-                    panic!("Lost device");
-                }
             };
 
-            let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let mut encoder = self.device.get_device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            let mut encoder = self.gpu.device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
 
@@ -57,7 +53,7 @@ mod test {
                 let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("Render Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
+                        view: frame.get_color_view(),
                         resolve_target: None,
                         depth_slice: None,
                         ops: wgpu::Operations {
@@ -77,18 +73,26 @@ mod test {
                 });
             }
 
-            self.device.get_queue().submit(std::iter::once(encoder.finish()));
-            output.present();
+            self.gpu.queue().submit(std::iter::once(encoder.finish()));
+            frame.present();
 
             Ok(())
         }
-        
-        fn get_device_interface(&self) -> &DeviceInterface {
-            &self.device
+
+        fn gpu_context(&self) -> &GpuContext {
+            &self.gpu
         }
-        
-        fn get_device_interface_mut(&mut self) -> &mut DeviceInterface {
-            &mut self.device
+
+        fn surface_context(&self) -> &SurfaceContext<'static> {
+            &self.surface
+        }
+
+        fn surface_context_mut(&mut self) -> &mut SurfaceContext<'static> {
+            &mut self.surface
+        }
+
+        fn backbuffers_mut(&mut self) -> &mut Backbuffers {
+            &mut self.backbuffers
         }
     }
 
@@ -98,7 +102,7 @@ mod test {
 
         // We need to create the eventloop from the test thread.
         #[cfg(target_os = "windows")]
-	    use winit::platform::windows::EventLoopBuilderExtWindows;
+        use winit::platform::windows::EventLoopBuilderExtWindows;
 
         let event_loop = EventLoop::<State>::with_user_event().with_any_thread(true).build().expect("Failed to build event loop.");
         let mut app = DefaultAppHandler::new();

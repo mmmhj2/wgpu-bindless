@@ -1,6 +1,4 @@
-use wgpu::{RenderPipelineDescriptor};
-
-use crate::renderer::device_interface::DeviceInterface;
+use wgpu::RenderPipelineDescriptor;
 
 const DEFAULT_PRIMITIVE_STATE : wgpu::PrimitiveState = wgpu::PrimitiveState{
     topology: wgpu::PrimitiveTopology::TriangleList,
@@ -101,12 +99,12 @@ pub struct RasterizerPipeline {
 }
 
 impl RasterizerPipeline {
-    pub fn new(di : &DeviceInterface, rpd : RasterizerPipelineDescriptor, layout : Option<&wgpu::PipelineLayout>) -> RasterizerPipeline {
+    pub fn new(device: &wgpu::Device, rpd : RasterizerPipelineDescriptor, layout : Option<&wgpu::PipelineLayout>) -> RasterizerPipeline {
         let mut desc: RenderPipelineDescriptor<'_> = rpd.into();
         desc.layout = layout;
 
         RasterizerPipeline{
-            pipeline : di.get_device().create_render_pipeline(&desc)
+            pipeline : device.create_render_pipeline(&desc)
         }
     }
 }

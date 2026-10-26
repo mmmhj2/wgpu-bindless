@@ -3,7 +3,6 @@ use std::num::NonZero;
 use cgmath::Point3;
 use wgpu::BufferBinding;
 
-use crate::renderer::device_interface::DeviceInterface;
 
 
 const CAMERA_UBO_SIZE : usize = std::mem::size_of::<[[f32; 4]; 4]>() * 3;
@@ -173,15 +172,15 @@ impl CameraManager {
     };
 
     /// Create a new camera manager with a default perspective camera.
-    pub fn new(di: &DeviceInterface) -> Self {
-        let bind_group_layout = di.get_device().create_bind_group_layout(&Self::BGLD_CAMERA);
-        let buffer = di.get_device().create_buffer(&wgpu::BufferDescriptor{
+    pub fn new(device: &wgpu::Device) -> Self {
+        let bind_group_layout = device.create_bind_group_layout(&Self::BGLD_CAMERA);
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor{
             label: Some("Camera UBO"),
             size: CAMERA_UBO_SIZE as u64,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
             mapped_at_creation: false,
         });
-        let bind_group = di.get_device().create_bind_group(&wgpu::BindGroupDescriptor{
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor{
             label: None,
             layout: &bind_group_layout,
             entries: &[
@@ -207,8 +206,8 @@ impl CameraManager {
     pub fn get_bind_group_layout(&self) -> &wgpu::BindGroupLayout { &self.bind_group_layout }
 
     /// Prepare for rendering, and return the bind group pointing to the camera uniform buffer.
-    pub fn prepare(&self, di: &DeviceInterface) -> &wgpu::BindGroup {
-        di.get_queue().write_buffer(&self.ubo, 0, &self.active_camera.get_ubo_content());
+    pub fn prepare(&self, queue: &wgpu::Queue) -> &wgpu::BindGroup {
+        queue.write_buffer(&self.ubo, 0, &self.active_camera.get_ubo_content());
         &self.bind_group
     }
 

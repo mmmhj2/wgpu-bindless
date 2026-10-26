@@ -1,5 +1,5 @@
 use crate::renderer::{
-    device_interface::DeviceInterface, pipeline::sampler::SamplerDescription, postfx::{bloom::BloomPass, postfx_stack::{PostFxContext, PostFxPass, PostFxResourceCache}},
+    pipeline::sampler::SamplerDescription, postfx::{bloom::BloomPass, postfx_stack::{PostFxContext, PostFxPass, PostFxResourceCache}},
 };
 
 const TONEMAP_SAMPLER: SamplerDescription = SamplerDescription {
@@ -48,9 +48,9 @@ const DBGL_TONEMAP: wgpu::BindGroupLayoutDescriptor<'static> = wgpu::BindGroupLa
     ]
 };
 
-fn build_pipeline(di: &DeviceInterface, layout: &wgpu::PipelineLayout, output_format: wgpu::TextureFormat, fs_name: &str) -> wgpu::RenderPipeline {
-    let module = di.get_device().create_shader_module(wgpu::include_wgsl!("./shaders/tonemap.wgsl"));
-    di.get_device().create_render_pipeline(
+fn build_pipeline(device: &wgpu::Device, layout: &wgpu::PipelineLayout, output_format: wgpu::TextureFormat, fs_name: &str) -> wgpu::RenderPipeline {
+    let module = device.create_shader_module(wgpu::include_wgsl!("./shaders/tonemap.wgsl"));
+    device.create_render_pipeline(
         &wgpu::RenderPipelineDescriptor {
             label: Some("Tonemapping"),
             layout: Some(&layout),
@@ -78,8 +78,8 @@ fn build_pipeline(di: &DeviceInterface, layout: &wgpu::PipelineLayout, output_fo
     )
 }
 
-fn generate_bind_group(di: &DeviceInterface, layout: &wgpu::BindGroupLayout, color_in: &wgpu::TextureView, lum_in: &wgpu::TextureView, sampler: &wgpu::Sampler) -> wgpu::BindGroup {
-    di.get_device().create_bind_group(&wgpu::BindGroupDescriptor {
+fn generate_bind_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, color_in: &wgpu::TextureView, lum_in: &wgpu::TextureView, sampler: &wgpu::Sampler) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: layout,
         entries: &[
@@ -115,10 +115,10 @@ pub struct AcesTonemapPass {
 }
 
 impl AcesTonemapPass {
-    pub fn new(di: &DeviceInterface, input_format: wgpu::TextureFormat, output_format: wgpu::TextureFormat) -> Self {
-        let bgl_tonemap = di.get_device().create_bind_group_layout(&DBGL_TONEMAP);
-        let layout = di.get_device().create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(&bgl_tonemap)], immediate_size: 0 });
-        Self { bgl_tonemap, ppl: build_pipeline(di, &layout, output_format, "fs_aces"), input_format, output_format }
+    pub fn new(device: &wgpu::Device, input_format: wgpu::TextureFormat, output_format: wgpu::TextureFormat) -> Self {
+        let bgl_tonemap = device.create_bind_group_layout(&DBGL_TONEMAP);
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(&bgl_tonemap)], immediate_size: 0 });
+        Self { bgl_tonemap, ppl: build_pipeline(device, &layout, output_format, "fs_aces"), input_format, output_format }
     }
 }
 
@@ -149,11 +149,11 @@ impl<T: TonemapPass> PostFxPass for T {
     }
 
     fn apply(&mut self, ctx: &mut PostFxContext<'_>, cache: &mut PostFxResourceCache) {
-        let di = ctx.device;
+        let device = ctx.device;
         let input = ctx.input;
         let output = ctx.output;
 
-        let sampler = match ctx.samplers.push_sampler(di.get_device(), TONEMAP_SAMPLER) {
+        let sampler = match ctx.samplers.push_sampler(device, TONEMAP_SAMPLER) {
             Ok((_, sp)) => sp,
             Err(e) => {
                 log::error!("failed to get sampler for tonemapping: {:?}", e);
@@ -170,7 +170,7 @@ impl<T: TonemapPass> PostFxPass for T {
         } else {
             input
         };
-        let bind_group = generate_bind_group(di, self.get_tonemap_bind_group_layout(), input, lum, sampler);
+        let bind_group = generate_bind_group(device, self.get_tonemap_bind_group_layout(), input, lum, sampler);
 
         let mut rp = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor{
             label: Some("Tonemap"),

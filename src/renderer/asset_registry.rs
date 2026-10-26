@@ -10,7 +10,6 @@ use crate::{
         },
     },
     renderer::{
-        device_interface::DeviceInterface,
         mesh::static_mesh::StaticMesh,
         pipeline::{
             bindless_resource_manager::BindlessResourceManager,
@@ -35,9 +34,9 @@ pub struct GpuAssetRegistry {
 }
 
 impl GpuAssetRegistry {
-    pub fn new(di: &DeviceInterface) -> Self {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         Self {
-            bindless: BindlessResourceManager::new(di),
+            bindless: BindlessResourceManager::new(device, queue),
             texture_bindings: HashMap::new(),
             mesh_cache: HashMap::new(),
         }
@@ -48,7 +47,7 @@ impl GpuAssetRegistry {
 
     /// Resolve a texture asset (by name) to its bindless (texture, sampler)
     /// indices, uploading it at most once.
-    fn texture_binding(&mut self, di: &DeviceInterface, assets: &AssetManager, name: &str) -> (usize, usize) {
+    fn texture_binding(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, assets: &AssetManager, name: &str) -> (usize, usize) {
         if let Some(binding) = self.texture_bindings.get(name) {
             return *binding;
         }
@@ -60,10 +59,10 @@ impl GpuAssetRegistry {
             _ => panic!("asset '{name}' is not a texture asset."),
         };
 
-        let uploaded = texture.upload(name, di.get_device(), di.get_queue());
+        let uploaded = texture.upload(name, device, queue);
         let tx = self.bindless.push_texture(uploaded.create_view(&Default::default()))
             .expect("failed to push texture to bindless manager.");
-        let sp = self.bindless.get_samplers_mut().push_sampler(di.get_device(), texture.sampler.clone().into())
+        let sp = self.bindless.get_samplers_mut().push_sampler(device, texture.sampler.clone().into())
             .expect("failed to push sampler to bindless manager.").0;
 
         let binding = (tx, sp);
@@ -77,22 +76,23 @@ impl GpuAssetRegistry {
     /// to the bindless manager's default textures.
     pub(crate) fn material_from_asset(
         &mut self,
-        di: &DeviceInterface,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
         assets: &AssetManager,
         material: &StaticMeshMaterial
     ) -> PBRMaterial {
         let (diffuse_tx, diffuse_sp) = match &material.diffuse_texture_name {
-            Some(name) => self.texture_binding(di, assets, name),
+            Some(name) => self.texture_binding(device, queue, assets, name),
             None => (self.bindless.get_white_texture(), self.bindless.get_samplers().get_default_sampler_id()),
         };
 
         let (normal_tx, normal_sp) = match &material.normal_texture_name {
-            Some(name) => self.texture_binding(di, assets, name),
+            Some(name) => self.texture_binding(device, queue, assets, name),
             None => (self.bindless.get_default_bump_texture(), self.bindless.get_samplers().get_default_sampler_id()),
         };
 
         let (mrao_tx, mrao_sp) = match &material.mrao_texture_name {
-            Some(name) => self.texture_binding(di, assets, name),
+            Some(name) => self.texture_binding(device, queue, assets, name),
             None => (self.bindless.get_default_mrao_texture(), self.bindless.get_samplers().get_default_sampler_id()),
         };
 
@@ -105,7 +105,8 @@ impl GpuAssetRegistry {
     /// through an `Arc`.
     pub(crate) fn static_mesh_from_asset(
         &mut self,
-        di: &DeviceInterface,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
         assets: &AssetManager,
         name: &str,
         mesh: &StaticMeshAsset
@@ -114,8 +115,8 @@ impl GpuAssetRegistry {
             return cached.clone();
         }
 
-        let geometry = mesh.upload(name, di.get_device(), di.get_queue());
-        let material = self.material_from_asset(di, assets, &mesh.material);
+        let geometry = mesh.upload(name, device, queue);
+        let material = self.material_from_asset(device, queue, assets, &mesh.material);
         let uploaded = Arc::new(StaticMesh::new(geometry, material));
         self.mesh_cache.insert(name.to_string(), uploaded.clone());
         uploaded

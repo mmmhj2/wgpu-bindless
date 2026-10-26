@@ -1,20 +1,47 @@
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
-use rust_renderer::{app::DefaultAppHandler, asset::{asset_manager::AssetManager, asset_store::{ImportJob, ImportManifest, ManifestEntry}, asset_types::{AssetData::TextureAssetType, GpuAssetType}, importer::image_file_importer::ColorSpace}, renderer::{device_interface::DeviceInterface, mesh::{drawable_mesh_traits::DrawableMesh, immediate_mesh::ImmediateMeshBuilder}, pipeline::{pbr_material::PBRMaterial, pipeline_state::PipelineStates, rasterizer_pipeline::UseRasterizerPipeline}, window::RendererState}};
+use rust_renderer::{
+    app::DefaultAppHandler,
+    asset::{
+        asset_manager::AssetManager,
+        asset_store::{ImportJob, ImportManifest, ManifestEntry},
+        asset_types::{AssetData::TextureAssetType, GpuAssetType},
+        importer::image_file_importer::ColorSpace,
+    },
+    renderer::{
+        context::{
+            frame_context::Backbuffers, gpu_context::GpuContext, surface_context::SurfaceContext,
+        },
+        mesh::{drawable_mesh_traits::DrawableMesh, immediate_mesh::ImmediateMeshBuilder},
+        pipeline::{
+            pbr_material::PBRMaterial, pipeline_state::PipelineStates,
+            rasterizer_pipeline::UseRasterizerPipeline,
+        },
+        window::RendererState,
+    },
+};
 use winit::{event_loop::EventLoop, window::Window};
 
 pub struct State {
     window: Arc<Window>,
-    device: DeviceInterface,
+    gpu: GpuContext,
+    surface: SurfaceContext<'static>,
+    backbuffers: Backbuffers,
     pipelines: PipelineStates,
     asset_manager: AssetManager,
-    material: PBRMaterial
+    material: PBRMaterial,
 }
 
-impl RendererState for State {
+impl RendererState<'static> for State {
     async fn new(window: Arc<Window>) -> Self {
-        let device = DeviceInterface::new(window.clone(), true).await.unwrap();
-        let mut pipelines = PipelineStates::prepare_default_pipelines(&device, device.get_default_texture_format());
+        let mut gpu = GpuContext::new();
+        let mut surface = SurfaceContext::new(gpu.instance(), window.clone()).unwrap();
+        gpu.create_device(Some(surface.surface())).await.unwrap();
+        surface.select_color_format(gpu.try_adapter().expect("adapter should be ready"), true);
+        surface.configure(gpu.device());
+
+        let format = surface.get_color_format().expect("surface color format should be selected");
+        let mut pipelines = PipelineStates::prepare_default_pipelines(gpu.device(), gpu.queue(), format);
 
         // Load the texture through an import manifest, so it is imported only
         // once and reused from disk afterwards.
@@ -31,7 +58,7 @@ impl RendererState for State {
             let asset_db = asset_manager.get_database();
             let texture_asset = asset_db.iter().next().expect("at least one asset should be imported successfully");
             if let TextureAssetType(asset) = texture_asset.1.read().unwrap().get_data() {
-                let texture = asset.upload(texture_asset.0, device.get_device(), device.get_queue());
+                let texture = asset.upload(texture_asset.0, gpu.device(), gpu.queue());
                 texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
                 sampler = asset.sampler.clone().into();
             } else {
@@ -40,7 +67,7 @@ impl RendererState for State {
         }
 
         let material = PBRMaterial::create_from_views(
-            device.get_device(),
+            gpu.device(),
             pipelines.get_bindless_resource_manager_mut(),
             Some((texture_view, Some(sampler))),
             None,
@@ -48,47 +75,24 @@ impl RendererState for State {
         ).expect("failed to allocate material.");
 
         Self {
-            window: window.clone(),
-            device,
+            window,
+            gpu,
+            surface,
+            backbuffers: Backbuffers::new(wgpu::TextureFormat::Depth32Float),
             pipelines,
             asset_manager,
-            material
+            material,
         }
     }
 
     fn render(&mut self) -> Result<(), ()> {
         self.window.request_redraw();
 
-        // We can't render unless the surface is configured
-        if !self.device.is_presentation_ready() {
+        let Some(frame) = self.backbuffers.new_frame(self.gpu.device(), &mut self.surface) else {
             return Ok(());
-        }
-            
-        let output = match self.device.get_current_surface_texture() {
-            wgpu::CurrentSurfaceTexture::Success(surface_texture) => surface_texture,
-            wgpu::CurrentSurfaceTexture::Suboptimal(surface_texture) => {
-                self.device.configure_surface();
-                surface_texture
-            }
-            wgpu::CurrentSurfaceTexture::Timeout
-            | wgpu::CurrentSurfaceTexture::Occluded
-            | wgpu::CurrentSurfaceTexture::Validation => {
-                // Skip this frame
-                return Ok(());
-            }
-            wgpu::CurrentSurfaceTexture::Outdated => {
-                self.device.configure_surface();
-                return Ok(());
-            }
-            wgpu::CurrentSurfaceTexture::Lost => {
-                // You could recreate the devices and all resources
-                // created with it here, but we'll just bail
-                panic!("Lost device");
-            }
         };
 
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self.device.get_device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = self.gpu.device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
 
@@ -97,7 +101,7 @@ impl RendererState for State {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: frame.get_color_view(),
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
@@ -111,7 +115,7 @@ impl RendererState for State {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: self.device.get_depth_texture_view().expect("Unprepared"),
+                    view: frame.get_depth_view(),
                     depth_ops: Some(wgpu::Operations{
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Discard
@@ -124,7 +128,7 @@ impl RendererState for State {
             });
 
             let mut mesh_builder = ImmediateMeshBuilder::new(
-                &self.device,
+                self.gpu.device(),
                 self.pipelines.get_bindless_resource_manager_mut(),
                 Some(self.material.clone()));
             mesh_builder.color3f([1.0, 1.0, 1.0]);
@@ -142,26 +146,39 @@ impl RendererState for State {
             mesh_builder.vertex3f([ 0.5,-0.5, 1.0]);
             mesh_builder.texcoord2f([0.0, 1.0]);
             mesh_builder.vertex3f([ 0.5, 0.5, 1.0]);
-            let mesh = mesh_builder.commit(&self.device, self.pipelines.get_mesh_manager());
+            let mesh = mesh_builder.commit(
+                self.gpu.device(),
+                self.gpu.queue(),
+                self.pipelines.get_mesh_manager(),
+            );
 
-            self.pipelines.prepare_render_pass(&self.device, &mut render_pass);
+            self.pipelines
+                .prepare_render_pass(self.gpu.device(), self.gpu.queue(), &mut render_pass);
             render_pass.set_rasterizer_pipeline(self.pipelines.get_default_pipeline());
             mesh.draw(&mut render_pass);
         }
 
         // submit will accept anything that implements IntoIter
-        self.device.get_queue().submit(std::iter::once(encoder.finish()));
-        output.present();
+        self.gpu.queue().submit(std::iter::once(encoder.finish()));
+        frame.present();
 
         Ok(())
     }
-    
-    fn get_device_interface(&self) -> &DeviceInterface {
-        &self.device
+
+    fn gpu_context(&self) -> &GpuContext {
+        &self.gpu
     }
-    
-    fn get_device_interface_mut(&mut self) -> &mut DeviceInterface {
-        &mut self.device
+
+    fn surface_context(&self) -> &SurfaceContext<'static> {
+        &self.surface
+    }
+
+    fn surface_context_mut(&mut self) -> &mut SurfaceContext<'static> {
+        &mut self.surface
+    }
+
+    fn backbuffers_mut(&mut self) -> &mut Backbuffers {
+        &mut self.backbuffers
     }
 }
 

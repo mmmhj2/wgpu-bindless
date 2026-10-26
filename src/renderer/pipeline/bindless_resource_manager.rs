@@ -1,5 +1,4 @@
 use std::num::NonZeroU32;
-use wgpu::TexelCopyBufferInfo;
 
 use crate::{
     asset::asset_types::{
@@ -7,7 +6,6 @@ use crate::{
         texture_asset::{TextureAsset, TextureDimension, TextureFormat}
     },
     renderer::{
-        device_interface::DeviceInterface,
         pipeline::sampler_manager::{SamplerManager, MAX_SAMPLER_SLOTS}
     },
     util::resource_allocator::{
@@ -53,11 +51,11 @@ impl BindlessResourceManager {
         entries: &Self::BGL_BINDLESS
     };
 
-    pub fn new (d: &DeviceInterface) -> Self {
+    pub fn new (device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let mut ret = Self {
-            bind_group_layout: d.get_device().create_bind_group_layout(&Self::BGLD_BINDLESS),
+            bind_group_layout: device.create_bind_group_layout(&Self::BGLD_BINDLESS),
             texture_view_allocator: LinearResourceAllocator::new(),
-            samplers: SamplerManager::new(d.get_device()),
+            samplers: SamplerManager::new(device),
             white_txv_idx: 0,
             default_bump_txv_idx: 0,
             default_mrao_txv_idx: 0
@@ -67,7 +65,7 @@ impl BindlessResourceManager {
             vec![255u8, 255, 255, 255],
             TextureFormat::Rgba8Unorm,
             TextureDimension::D2
-        ).upload("White texture", d.get_device(), d.get_queue());
+        ).upload("White texture", device, queue);
         ret.white_txv_idx = ret.push_texture(
             white_texture.create_view(&Default::default())
         ).expect("Failed to create white texture");
@@ -77,7 +75,7 @@ impl BindlessResourceManager {
             vec![128u8, 128, 255, 0],
             TextureFormat::Rgba8Unorm,
             TextureDimension::D2
-        ).upload("Default normal texture", d.get_device(), d.get_queue());
+        ).upload("Default normal texture", device, queue);
         ret.default_bump_txv_idx = ret.push_texture(
             default_normal_texture.create_view(&Default::default())
         ).expect("Failed to create default normal texture");
@@ -86,7 +84,7 @@ impl BindlessResourceManager {
             vec![0u8, 0, 0, 255],
             TextureFormat::Rgba8Unorm,
             TextureDimension::D2
-        ).upload("Default MRAO texture", d.get_device(), d.get_queue());
+        ).upload("Default MRAO texture", device, queue);
         ret.default_mrao_txv_idx = ret.push_texture(
             default_mrao_texture.create_view(&Default::default())
         ).expect("Failed to create default MRAO texture");

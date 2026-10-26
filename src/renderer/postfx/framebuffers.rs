@@ -1,6 +1,4 @@
-use std::{cmp::max, num::NonZero, rc::Rc};
-
-use crate::renderer::device_interface::DeviceInterface;
+use std::{cmp::max, num::NonZero};
 
 /// A single-resolution render target usable as a color attachment and a
 /// sampled texture.
@@ -26,8 +24,8 @@ impl Framebuffer {
         self.texture.as_ref().expect("framebuffer texture should be created")
     }
 
-    pub fn create_texture(&mut self, di: &DeviceInterface, width: NonZero<u32>, height: NonZero<u32>) {
-        let texture = di.get_device().create_texture(&wgpu::TextureDescriptor{
+    pub fn create_texture(&mut self, device: &wgpu::Device, width: NonZero<u32>, height: NonZero<u32>) {
+        let texture = device.create_texture(&wgpu::TextureDescriptor{
             label: Some(self.label),
             size: wgpu::Extent3d { width: width.get(), height: height.get(), depth_or_array_layers: 1 },
             mip_level_count: 1,
@@ -62,13 +60,13 @@ impl FramebufferMipChain {
     /// Create a mipchain from the framebuffer size.
     /// 
     /// The first miplevel of the mipchain will have a size of (full_res_width / 2, full_res_height / 2).
-    pub fn create_textures(&mut self, di: &DeviceInterface, full_res_width: NonZero<u32>, full_res_height: NonZero<u32>) {
+    pub fn create_textures(&mut self, device: &wgpu::Device, full_res_width: NonZero<u32>, full_res_height: NonZero<u32>) {
         self.texture.clear();
         let width = full_res_width.get() / 2;
         let height = full_res_height.get() / 2;
         let miplevels = (max(width, height) as f32).log2().floor() as u32 + 1;
 
-        let texture = di.get_device().create_texture(
+        let texture = device.create_texture(
             &wgpu::TextureDescriptor {
                 label: Some("Framebuffer mipchain"),
                 size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },

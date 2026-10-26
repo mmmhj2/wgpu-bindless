@@ -1,7 +1,7 @@
 use std::{num::NonZero, sync::Arc};
 use crate::{
     asset::{asset_manager::AssetManager, asset_types::{AssetData, scene_asset::SceneAsset}},
-    renderer::{device_interface::DeviceInterface, mesh::{Mesh, drawable_mesh_traits::DrawableMesh, mesh_manager::MeshManager, static_mesh::StaticMesh}, pipeline::{pbr_material::PBRMaterial, pipeline_state::PipelineStates}}
+    renderer::{mesh::{Mesh, drawable_mesh_traits::DrawableMesh, mesh_manager::MeshManager, static_mesh::StaticMesh}, pipeline::{pbr_material::PBRMaterial, pipeline_state::PipelineStates}}
 };
 
 /// Instances of instanced mesh.
@@ -14,8 +14,8 @@ pub struct StaticMeshInstance {
 }
 
 impl StaticMeshInstance {
-    fn generate_bind_group(di: &DeviceInterface, mmgr: &MeshManager, buffer: &wgpu::Buffer) -> wgpu::BindGroup {
-        di.get_device().create_bind_group(&wgpu::BindGroupDescriptor{
+    fn generate_bind_group(device: &wgpu::Device, mmgr: &MeshManager, buffer: &wgpu::Buffer) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor{
             label: Some("model matrix buffer bind group"),
             layout: mmgr.get_bind_group_layout(),
             entries: &[
@@ -38,7 +38,8 @@ impl StaticMeshInstance {
     /// If the asset has not been uploaded to the GPU, it will be uploaded via
     /// [`static_mesh_from_asset()`] during this process.
     pub fn create_from_scene_asset(
-        di: &DeviceInterface,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
         pipeline_states: &mut PipelineStates,
         scene: &SceneAsset,
         assets: &AssetManager
@@ -55,18 +56,18 @@ impl StaticMeshInstance {
                 _ => panic!("asset '{name}' is not a static mesh asset."),
             };
 
-            let buffer = di.get_device().create_buffer(&wgpu::BufferDescriptor{
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor{
                 label: Some("model matrix buffer"),
                 size: (std::mem::size_of::<f32>() * 16) as u64,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let bg = Self::generate_bind_group(di, pipeline_states.get_mesh_manager(), &buffer);
-            di.get_queue().write_buffer(&buffer, 0, bytemuck::cast_slice(&instance.world_matrix));
+            let bg = Self::generate_bind_group(device, pipeline_states.get_mesh_manager(), &buffer);
+            queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&instance.world_matrix));
 
             ret.push(
                 Self{
-                    mesh: pipeline_states.get_asset_registry_mut().static_mesh_from_asset(di, assets, name, mesh_asset),
+                    mesh: pipeline_states.get_asset_registry_mut().static_mesh_from_asset(device, queue, assets, name, mesh_asset),
                     model_matrix: buffer,
                     model_matrix_bg: bg
                 }
