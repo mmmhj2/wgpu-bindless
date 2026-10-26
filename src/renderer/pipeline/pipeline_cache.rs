@@ -138,6 +138,6 @@ impl PipelineCache {
                 stencil: Default::default(),
                 bias: Default::default()
             }).build();
-        self.pipelines.insert(PipelineKey::Default, RasterizerPipeline::new(di, pbr_rasterizer_pipeline_descriptor, Some(&layout)));
+        self.pipelines.insert(PipelineKey::CookTorrancePbr, RasterizerPipeline::new(di, pbr_rasterizer_pipeline_descriptor, Some(&layout)));
     }
 }

@@ -1,11 +1,12 @@
 use std::{collections::HashMap, num::NonZero, borrow::Cow};
 use wgpu::{ColorTargetState, ColorWrites, DepthBiasState, PipelineLayoutDescriptor};
 
-use crate::renderer::{asset_registry::GpuAssetRegistry, device_interface::DeviceInterface, mesh::{mesh_manager::MeshManager, vertex_types::VertexType}, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, CameraPerspective, HasViewProjectionMatrix}, pipeline_cache::{PipelineCache, PipelineKey, PipelineLayoutKey}, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor, RasterizerPipelineDescriptorBuilder}}};
+use crate::renderer::{asset_registry::GpuAssetRegistry, device_interface::DeviceInterface, mesh::{mesh_manager::MeshManager, vertex_types::VertexType}, pipeline::{bindless_resource_manager::BindlessResourceManager, camera::{CameraManager, CameraPerspective, HasViewProjectionMatrix}, lighting::LightingManager, pipeline_cache::{PipelineCache, PipelineKey, PipelineLayoutKey}, rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor, RasterizerPipelineDescriptorBuilder}}};
 
 pub struct PipelineStates {
     asset_registry: GpuAssetRegistry,
     cameras: CameraManager,
+    lighting: LightingManager,
     mesh_manager: MeshManager,
     cache: PipelineCache
 }
@@ -15,10 +16,12 @@ impl PipelineStates {
 
         let asset_registry = GpuAssetRegistry::new(di);
         let cameras = CameraManager::new(di);
+        let lighting = LightingManager::new(di);
         let mesh_manager = MeshManager::new(di);
         let bind_group_layouts = [
             Some(asset_registry.get_bindless_resource_manager().get_bind_group_layout()),
             Some(cameras.get_bind_group_layout()),
+            Some(lighting.get_bind_group_layout()),
             Some(mesh_manager.get_bind_group_layout())
         ];
         let mut cache = PipelineCache::new(di, format, wgpu::TextureFormat::Depth32Float, &bind_group_layouts);
@@ -27,6 +30,7 @@ impl PipelineStates {
         return Self{
             asset_registry,
             cameras,
+            lighting,
             mesh_manager,
             cache
         }
@@ -40,6 +44,7 @@ impl PipelineStates {
         let bindless_bind_group = self.asset_registry.get_bindless_resource_manager().get_bind_group(di.get_device());
         rp.set_bind_group(0, &bindless_bind_group, &[]);
         rp.set_bind_group(1, self.cameras.prepare(di), &[]);
+        rp.set_bind_group(2, self.lighting.get_bind_group(), &[]);
     }
 
     /// Query the default pipeline, which is guaranteed to be valid.
@@ -58,6 +63,9 @@ impl PipelineStates {
 
     pub fn get_camera_manager(&self) -> &CameraManager { &self.cameras }
     pub fn set_active_camera(&mut self, camera: CameraPerspective) { self.cameras.set_active_camera(camera); }
+
+    pub fn get_lighting_manager(&self) -> &LightingManager { &self.lighting }
+    pub fn get_lighting_manager_mut(&mut self) -> &mut LightingManager { &mut self.lighting }
 
     pub fn get_mesh_manager(&self) -> &MeshManager { &self.mesh_manager }
 

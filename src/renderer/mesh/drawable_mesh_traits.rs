@@ -16,7 +16,7 @@ pub trait DrawableMesh : Mesh {
     fn get_material(&self) -> &PBRMaterial;
 
     fn draw(&self, rp: &mut wgpu::RenderPass) -> () {
-        rp.set_bind_group(2, Some(self.get_model_matrix_bind_group()), &[]);
+        rp.set_bind_group(3, Some(self.get_model_matrix_bind_group()), &[]);
         rp.set_immediates(0, &self.get_material().as_u8_arr());
 
         let vbs = self.get_vertex_buffer();
