@@ -1,11 +1,17 @@
-use crate::renderer::pipeline::{camera::CameraManager, rasterizer_pipeline::{RasterizerPipelineDescriptor, RasterizerPipelineDescriptorBuilder}, sampler::SamplerDescription};
+use crate::renderer::{
+    pipeline::{
+        key::{PipelineKey, PipelineLayoutKey, VertexLayoutKey},
+        library::PipelineLibrary,
+        rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor, RasterizerPipelineDescriptorBuilder, UseRasterizerPipeline},
+    },
+    resources::sampler::SamplerDescription,
+};
 
 
 pub struct SkyboxManager {
     skybox_textures: Option<wgpu::TextureView>,
     skybox_sampler: wgpu::Sampler,
     skybox_bindgroup_layout: wgpu::BindGroupLayout,
-    pipeline: wgpu::RenderPipeline
 }
 
 impl SkyboxManager {
@@ -31,9 +37,10 @@ impl SkyboxManager {
 
     pub fn new(
         device: &wgpu::Device,
-        cameras: &CameraManager,
+        camera_bind_group_layout: &wgpu::BindGroupLayout,
         color_attachment_format: wgpu::TextureFormat,
-        depth_attachment_format: wgpu::TextureFormat
+        depth_attachment_format: wgpu::TextureFormat,
+        pipelines: &mut PipelineLibrary,
     ) -> Self {
 
         let sd = &SamplerDescription{
@@ -51,11 +58,11 @@ impl SkyboxManager {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Skybox Pipeline Layout"),
-            bind_group_layouts: &[None, Some(cameras.get_bind_group_layout()), None, Some(&skybox_bindgroup_layout)],
+            bind_group_layouts: &[None, Some(camera_bind_group_layout), None, Some(&skybox_bindgroup_layout)],
             immediate_size: 0
         });
 
-        let shader_module = device.create_shader_module(wgpu::include_wgsl!("./shaders/skybox_shaders.wgsl"));
+        let shader_module = device.create_shader_module(wgpu::include_wgsl!("../pipeline/shaders/skybox_shaders.wgsl"));
         let targets = [Some(wgpu::ColorTargetState {
             format: color_attachment_format,
             blend: None,
@@ -78,15 +85,19 @@ impl SkyboxManager {
             stencil: Default::default(),
             bias: Default::default(),
         }).build();
-        let mut pd: wgpu::RenderPipelineDescriptor = rpd.into();
-        pd.layout = Some(&pipeline_layout);
-        let pipeline = device.create_render_pipeline(&pd);
+        let pipeline = RasterizerPipeline::new(device, rpd, Some(&pipeline_layout));
+        pipelines.register_layout(PipelineLayoutKey::Skybox, pipeline_layout);
+        pipelines.insert_pipeline(
+            PipelineKey::Skybox,
+            VertexLayoutKey::EMPTY,
+            PipelineLayoutKey::Skybox,
+            pipeline,
+        );
 
         Self {
             skybox_textures: None,
             skybox_sampler,
             skybox_bindgroup_layout,
-            pipeline
         }
     }
 
@@ -102,10 +113,18 @@ impl SkyboxManager {
     /// 
     /// The render pass has to be started with the same color and depth format
     /// specified by the constructor.
-    /// Camera bind group must be bound, possibly via the `prepare_render_pass`
-    /// call.
+    /// Camera bind group must be bound, possibly via `SceneContext::bind_globals`.
     /// The fourth bind group will be mutated by the draw call.
-    pub fn draw_skybox(&self, device: &wgpu::Device, rp: &mut wgpu::RenderPass) {
+    pub fn draw_skybox(
+        &self,
+        device: &wgpu::Device,
+        pipelines: &PipelineLibrary,
+        rp: &mut wgpu::RenderPass,
+    ) {
+        let pipeline = pipelines
+            .get(PipelineKey::Skybox, VertexLayoutKey::EMPTY, PipelineLayoutKey::Skybox)
+            .expect("skybox pipeline should be registered");
+
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &self.skybox_bindgroup_layout,
@@ -121,7 +140,7 @@ impl SkyboxManager {
             ]
         });
         rp.set_bind_group(3, &bind_group, &[]);
-        rp.set_pipeline(&self.pipeline);
+        rp.set_rasterizer_pipeline(pipeline);
         rp.draw(0..36, 0..1);
     }
 }
