@@ -1,6 +1,6 @@
 use std::{num::NonZero, ops::Range};
 
-use crate::renderer::{mesh::{Mesh, mesh_manager::MeshManager}, pipeline::pbr_material::PBRMaterial};
+use crate::renderer::{mesh::Mesh, pipeline::pbr_material::PBRMaterial, resources::mesh_layout::MeshLayout};
 
 pub trait DrawableMesh : Mesh {
     /// Get the bind group that contains the storage buffer for model matrices.
@@ -37,7 +37,7 @@ pub trait ImmediateDrawableMesh {
     /// Get the model matrix of the mesh.
     fn get_model_matrix(&self) -> &[[f32; 4]; 4];
 
-    fn build_immediate_model_matrix(&self, device: &wgpu::Device, queue: &wgpu::Queue, mmgr: &MeshManager) -> wgpu::BindGroup {
+    fn build_immediate_model_matrix(&self, device: &wgpu::Device, queue: &wgpu::Queue, mmgr: &MeshLayout) -> wgpu::BindGroup {
         let immediate_buffer = device.create_buffer(&wgpu::BufferDescriptor{
             label: Some("immediate mesh model matrix buffer"),
             size: (std::mem::size_of::<f32>() * 4 * 4) as u64,

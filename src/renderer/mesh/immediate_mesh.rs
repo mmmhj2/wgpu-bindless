@@ -8,14 +8,14 @@ use crate::{
             TangentRecalculator, VertexReconditionable, VertexReconditionableAttributeWrite
         }
     }, renderer::{
-        mesh::{
-            drawable_mesh_traits::{
-                DrawableMesh,
-                ImmediateDrawableMesh
-            },
-            mesh_manager::MeshManager
-        }, pipeline::{
-            bindless_resource_manager::BindlessResourceManager, pbr_material::PBRMaterial
+        mesh::drawable_mesh_traits::{
+            DrawableMesh,
+            ImmediateDrawableMesh
+        },
+        pipeline::pbr_material::PBRMaterial,
+        resources::{
+            bindless::BindlessResources,
+            mesh_layout::MeshLayout,
         }
     }
 };
@@ -41,7 +41,7 @@ impl ImmediateMesh {
 }
 
 impl ImmediateMeshBuilder {
-    pub fn new(device: &wgpu::Device, mgr: &mut BindlessResourceManager, material: Option<PBRMaterial>) -> Self {
+    pub fn new(device: &wgpu::Device, mgr: &mut BindlessResources, material: Option<PBRMaterial>) -> Self {
         let material = if let Some(m) = material {
             m
         } else {
@@ -95,7 +95,7 @@ impl ImmediateMeshBuilder {
     }
 
     /// Commit 
-    pub fn commit(self, device: &wgpu::Device, queue: &wgpu::Queue, mmgr: &MeshManager) -> ImmediateMesh {
+    pub fn commit(self, device: &wgpu::Device, queue: &wgpu::Queue, mmgr: &MeshLayout) -> ImmediateMesh {
         assert_eq!(self.position.len(), self.attributes.len());
 
         let pb = device.create_buffer(&BufferDescriptor{

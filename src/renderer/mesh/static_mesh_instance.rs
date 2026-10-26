@@ -1,7 +1,15 @@
 use std::{num::NonZero, sync::Arc};
+
 use crate::{
-    asset::{asset_manager::AssetManager, asset_types::{AssetData, scene_asset::SceneAsset}},
-    renderer::{mesh::{Mesh, drawable_mesh_traits::DrawableMesh, mesh_manager::MeshManager, static_mesh::StaticMesh}, pipeline::{pbr_material::PBRMaterial, pipeline_state::PipelineStates}}
+    asset::asset_types::{AssetData, scene_asset::SceneAsset},
+    renderer::{
+        mesh::{Mesh, drawable_mesh_traits::DrawableMesh, static_mesh::StaticMesh},
+        pipeline::pbr_material::PBRMaterial,
+        resources::{
+            asset_cache::MeshUploadContext,
+            mesh_layout::MeshLayout,
+        },
+    },
 };
 
 /// Instances of instanced mesh.
@@ -14,7 +22,7 @@ pub struct StaticMeshInstance {
 }
 
 impl StaticMeshInstance {
-    fn generate_bind_group(device: &wgpu::Device, mmgr: &MeshManager, buffer: &wgpu::Buffer) -> wgpu::BindGroup {
+    fn generate_bind_group(device: &wgpu::Device, mmgr: &MeshLayout, buffer: &wgpu::Buffer) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor{
             label: Some("model matrix buffer bind group"),
             layout: mmgr.get_bind_group_layout(),
@@ -33,48 +41,45 @@ impl StaticMeshInstance {
     ///
     /// The scene asset is typically imported via the asset importer, and
     /// contains a list of mesh instances with their world matrices.
-    /// 
+    ///
     /// The model matrix buffers for each instance will be created and uploaded to the GPU.
     /// If the asset has not been uploaded to the GPU, it will be uploaded via
-    /// [`static_mesh_from_asset()`] during this process.
+    /// [`MeshUploadContext::static_mesh_from_asset()`] during this process.
     pub fn create_from_scene_asset(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        pipeline_states: &mut PipelineStates,
+        ctx: &mut MeshUploadContext<'_>,
         scene: &SceneAsset,
-        assets: &AssetManager
     ) -> Vec<Self> {
         let mut ret = Vec::new();
 
         for instance in &scene.instances {
             let name = instance.mesh_subasset_name.as_str();
 
-            let asset = assets.get_asset(name).unwrap_or_else(|| panic!("static mesh asset '{name}' not found."));
+            let asset = ctx.assets.get_asset(name).unwrap_or_else(|| panic!("static mesh asset '{name}' not found."));
             let asset = asset.read().expect("failed to acquire read lock for static mesh asset.");
             let mesh_asset = match asset.get_data() {
                 AssetData::StaticMeshAssetType(m) => m,
                 _ => panic!("asset '{name}' is not a static mesh asset."),
             };
 
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor{
+            let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor{
                 label: Some("model matrix buffer"),
                 size: (std::mem::size_of::<f32>() * 16) as u64,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let bg = Self::generate_bind_group(device, pipeline_states.get_mesh_manager(), &buffer);
-            queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&instance.world_matrix));
+            let bg = Self::generate_bind_group(ctx.device, ctx.mesh_layout, &buffer);
+            ctx.queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&instance.world_matrix));
 
             ret.push(
                 Self{
-                    mesh: pipeline_states.get_asset_registry_mut().static_mesh_from_asset(device, queue, assets, name, mesh_asset),
+                    mesh: ctx.static_mesh_from_asset(name, mesh_asset),
                     model_matrix: buffer,
                     model_matrix_bg: bg
                 }
             );
         }
 
-        return ret;
+        ret
     }
 }
 

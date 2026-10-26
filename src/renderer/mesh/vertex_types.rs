@@ -1,4 +1,7 @@
-use crate::asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition};
+use crate::{
+    asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition},
+    renderer::pipeline::key::VertexLayoutKey,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub enum VertexType {
@@ -7,6 +10,13 @@ pub enum VertexType {
 }
 
 impl VertexType {
+    pub fn layout_key(self) -> VertexLayoutKey {
+        match self {
+            Self::PositionOnly => VertexLayoutKey::POSITION_ONLY,
+            Self::Basic => VertexLayoutKey::BASIC,
+        }
+    }
+
 
     const POSITION_ATTRIBUTES : [wgpu::VertexAttribute; 1] = [wgpu::VertexAttribute{
         format: wgpu::VertexFormat::Float32x3,
