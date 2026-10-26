@@ -2,14 +2,25 @@ use std::{num::NonZeroU32, sync::Arc};
 
 use winit::window::Window;
 
-use crate::renderer::{
-    context::{
-        frame_context::{Backbuffers, FrameContext},
-        gpu_context::GpuContext,
-        surface_context::SurfaceContext,
+use crate::{
+    asset::asset_manager::AssetManager,
+    renderer::{
+        context::{
+            frame_context::{Backbuffers, FrameContext},
+            gpu_context::GpuContext,
+            surface_context::SurfaceContext,
+        },
+        pipeline::library::{PipelineLibrary, SceneBindGroupLayouts},
+        postfx::postfx_stack::{BindlessFrame, PostFxExtraInputs, PostFxInput, PostFxStack},
+        resources::{
+            asset_cache::{GpuAssetCache, MeshUploadContext},
+            bindless::BindlessResources,
+            camera::CameraManager,
+            lighting::LightingManager,
+            mesh_layout::MeshLayout,
+        },
+        scene::context::SceneContext,
     },
-    pipeline::pipeline_state::PipelineStates,
-    postfx::postfx_stack::{PostFxExtraInputs, PostFxInput, PostFxStack},
 };
 
 /// Configuration used to bootstrap a [`RenderOrchestrator`].
@@ -47,7 +58,12 @@ pub struct RenderOrchestrator {
     window: Arc<Window>,
     surface: SurfaceContext<'static>,
     backbuffers: Backbuffers,
-    pipelines: PipelineStates,
+    bindless: BindlessResources,
+    camera: CameraManager,
+    lighting: LightingManager,
+    mesh_layout: MeshLayout,
+    assets: GpuAssetCache,
+    pipelines: PipelineLibrary,
     postfx: Option<PostFxStack>,
     gpu: GpuContext,
     surface_format: wgpu::TextureFormat,
@@ -82,10 +98,20 @@ impl RenderOrchestrator {
             }
         });
 
-        let pipelines = PipelineStates::prepare_default_pipelines(
+        let bindless = BindlessResources::new(gpu.device(), gpu.queue());
+        let camera = CameraManager::new(gpu.device());
+        let lighting = LightingManager::new(gpu.device());
+        let mesh_layout = MeshLayout::new(gpu.device());
+        let pipelines = PipelineLibrary::build_default(
             gpu.device(),
-            gpu.queue(),
+            &SceneBindGroupLayouts {
+                bindless: bindless.get_bind_group_layout(),
+                camera: camera.get_bind_group_layout(),
+                lighting: lighting.get_bind_group_layout(),
+                mesh: mesh_layout.get_bind_group_layout(),
+            },
             scene_format,
+            config.depth_format,
         );
         let postfx = config
             .enable_postfx
@@ -96,6 +122,11 @@ impl RenderOrchestrator {
             window,
             surface,
             backbuffers,
+            bindless,
+            camera,
+            lighting,
+            mesh_layout,
+            assets: GpuAssetCache::new(),
             pipelines,
             postfx,
             gpu,
@@ -110,12 +141,42 @@ impl RenderOrchestrator {
     pub fn instance(&self) -> &wgpu::Instance { self.gpu.instance() }
     pub fn gpu(&self) -> &GpuContext { &self.gpu }
 
-    /// Split the GPU handles from the mutable pipeline state.
+    pub fn bindless(&self) -> &BindlessResources { &self.bindless }
+    pub fn bindless_mut(&mut self) -> &mut BindlessResources { &mut self.bindless }
+    pub fn camera(&self) -> &CameraManager { &self.camera }
+    pub fn camera_mut(&mut self) -> &mut CameraManager { &mut self.camera }
+    pub fn lighting(&self) -> &LightingManager { &self.lighting }
+    pub fn lighting_mut(&mut self) -> &mut LightingManager { &mut self.lighting }
+    pub fn mesh_layout(&self) -> &MeshLayout { &self.mesh_layout }
+    pub fn assets(&self) -> &GpuAssetCache { &self.assets }
+    pub fn assets_mut(&mut self) -> &mut GpuAssetCache { &mut self.assets }
+
+    /// Split the GPU context from the mutable bindless table.
     ///
-    /// Useful during setup, where resources are uploaded while pipelines are
-    /// still being mutated.
-    pub fn gpu_and_pipelines_mut(&mut self) -> (&GpuContext, &mut PipelineStates) {
-        (&self.gpu, &mut self.pipelines)
+    /// Useful during texture upload/setup, where both are needed at once.
+    pub fn gpu_and_bindless_mut(&mut self) -> (&GpuContext, &mut BindlessResources) {
+        (&self.gpu, &mut self.bindless)
+    }
+
+    /// Build the borrowed context required to upload meshes from assets.
+    pub fn mesh_upload_context<'a>(
+        &'a mut self,
+        assets: &'a AssetManager,
+    ) -> MeshUploadContext<'a> {
+        let gpu = &self.gpu;
+        MeshUploadContext {
+            device: gpu.device(),
+            queue: gpu.queue(),
+            bindless: &mut self.bindless,
+            mesh_layout: &self.mesh_layout,
+            cache: &mut self.assets,
+            assets,
+        }
+    }
+
+    /// Split the device from the mutable pipeline library.
+    pub fn device_and_pipelines_mut(&mut self) -> (&wgpu::Device, &mut PipelineLibrary) {
+        (self.gpu.device(), &mut self.pipelines)
     }
 
     /// Split the device from the mutable post-processing stack.
@@ -123,8 +184,8 @@ impl RenderOrchestrator {
         (self.gpu.device(), self.postfx.as_mut())
     }
 
-    pub fn pipelines(&self) -> &PipelineStates { &self.pipelines }
-    pub fn pipelines_mut(&mut self) -> &mut PipelineStates { &mut self.pipelines }
+    pub fn pipelines(&self) -> &PipelineLibrary { &self.pipelines }
+    pub fn pipelines_mut(&mut self) -> &mut PipelineLibrary { &mut self.pipelines }
     pub fn postfx(&self) -> Option<&PostFxStack> { self.postfx.as_ref() }
     pub fn postfx_mut(&mut self) -> Option<&mut PostFxStack> { self.postfx.as_mut() }
     pub fn surface_format(&self) -> wgpu::TextureFormat { self.surface_format }
@@ -168,6 +229,11 @@ impl RenderOrchestrator {
 
         Some(Frame {
             gpu: &self.gpu,
+            bindless: &mut self.bindless,
+            camera: &mut self.camera,
+            lighting: &mut self.lighting,
+            mesh_layout: &self.mesh_layout,
+            assets: &mut self.assets,
             pipelines: &mut self.pipelines,
             postfx: self.postfx.as_mut(),
             frame,
@@ -198,7 +264,12 @@ impl RenderOrchestrator {
 #[must_use]
 pub struct Frame<'a> {
     gpu: &'a GpuContext,
-    pipelines: &'a mut PipelineStates,
+    bindless: &'a mut BindlessResources,
+    camera: &'a mut CameraManager,
+    lighting: &'a mut LightingManager,
+    mesh_layout: &'a MeshLayout,
+    assets: &'a mut GpuAssetCache,
+    pipelines: &'a mut PipelineLibrary,
     postfx: Option<&'a mut PostFxStack>,
     frame: FrameContext,
     encoder: Option<wgpu::CommandEncoder>,
@@ -212,8 +283,8 @@ impl Frame<'_> {
 
     pub fn device(&self) -> &wgpu::Device { self.gpu.device() }
     pub fn queue(&self) -> &wgpu::Queue { self.gpu.queue() }
-    pub fn pipelines(&self) -> &PipelineStates { self.pipelines }
-    pub fn pipelines_mut(&mut self) -> &mut PipelineStates { self.pipelines }
+    pub fn pipelines(&self) -> &PipelineLibrary { self.pipelines }
+    pub fn pipelines_mut(&mut self) -> &mut PipelineLibrary { self.pipelines }
 
     pub fn encoder(&mut self) -> &mut wgpu::CommandEncoder {
         self.encoder
@@ -238,12 +309,11 @@ impl Frame<'_> {
 
     /// Record the main scene render pass.
     ///
-    /// The callback receives the render pass, the GPU context and the mutable
-    /// pipeline state. This split-borrow API lets the callback prepare bind
-    /// groups and draw without exposing the orchestrator again.
+    /// The callback receives the render pass, the GPU context and a transient
+    /// [`SceneContext`] containing split borrows of the scene resources.
     pub fn render_scene<F>(&mut self, clear: wgpu::Color, f: F)
     where
-        F: FnOnce(&mut wgpu::RenderPass<'_>, &GpuContext, &mut PipelineStates),
+        F: FnOnce(&mut wgpu::RenderPass<'_>, &GpuContext, &mut SceneContext<'_>),
     {
         let encoder = self
             .encoder
@@ -279,7 +349,16 @@ impl Frame<'_> {
             multiview_mask: None,
         });
 
-        f(&mut render_pass, self.gpu, self.pipelines);
+        let mut scene = SceneContext {
+            bindless: self.bindless,
+            camera: self.camera,
+            lighting: self.lighting,
+            mesh_layout: self.mesh_layout,
+            assets: self.assets,
+            pipelines: self.pipelines,
+        };
+
+        f(&mut render_pass, self.gpu, &mut scene);
     }
 
     /// Run post-processing, submit the recorded commands and present.
@@ -293,16 +372,20 @@ impl Frame<'_> {
             if postfx.has_passes() {
                 let inputs = PostFxExtraInputs::new()
                     .with(PostFxInput::Depth, self.frame.get_depth_view());
-                let samplers = self
-                    .pipelines
-                    .get_bindless_resource_manager_mut()
-                    .get_samplers_mut();
+                let bindless_bind_group = postfx
+                    .requires_bindless()
+                    .then(|| self.bindless.get_bind_group(self.gpu.device()));
+                let bindless = bindless_bind_group.as_ref().map(|bind_group| BindlessFrame {
+                    resources: &self.bindless,
+                    bind_group,
+                    group_index: 1,
+                });
                 postfx.run(
                     self.gpu.device(),
-                    samplers,
                     &mut encoder,
                     self.frame.get_color_view(),
                     &inputs,
+                    bindless.as_ref(),
                 );
             }
         }

@@ -4,7 +4,6 @@ pub mod vertex_types;
 pub mod immediate_mesh;
 pub mod static_mesh;
 pub mod static_mesh_instance;
-pub mod mesh_manager;
 pub mod drawable_mesh_traits;
 
 pub trait Mesh {

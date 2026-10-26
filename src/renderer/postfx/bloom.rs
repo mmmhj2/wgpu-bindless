@@ -1,7 +1,8 @@
 use std::num::NonZero;
 
 use crate::renderer::{
-    pipeline::sampler::SamplerDescription, postfx::{framebuffers::FramebufferMipChain, postfx_stack::{OutputMode, PostFxContext, PostFxPass, PostFxResourceCache}},
+    postfx::{framebuffers::FramebufferMipChain, postfx_stack::{OutputMode, PostFxContext, PostFxPass, PostFxResourceCache}},
+    resources::sampler::SamplerDescription,
 };
 
 /// Screen space bloom pass.
@@ -20,6 +21,7 @@ pub struct BloomPass {
     // Pipeline for final composition.
     ppl_bloom_composite: wgpu::RenderPipeline,
 
+    input_sampler: wgpu::Sampler,
     internal_format: wgpu::TextureFormat,
     mip_chain: FramebufferMipChain
 }
@@ -147,7 +149,16 @@ impl BloomPass {
         });
         let ppl_bloom_composite = device.create_render_pipeline(&descriptor);
 
-        Self { bgl_bloom, ppl_bloom_down, ppl_bloom_up, ppl_bloom_composite, internal_format, mip_chain: FramebufferMipChain::new(internal_format) }
+        let input_sampler = device.create_sampler(&wgpu::SamplerDescriptor::from(&Self::INPUT_SAMPLER));
+        Self {
+            bgl_bloom,
+            ppl_bloom_down,
+            ppl_bloom_up,
+            ppl_bloom_composite,
+            input_sampler,
+            internal_format,
+            mip_chain: FramebufferMipChain::new(internal_format),
+        }
     }
 
     fn build_bind_group(&self, device: &wgpu::Device, tx: &wgpu::TextureView, sp: &wgpu::Sampler) -> wgpu::BindGroup {
@@ -184,8 +195,7 @@ impl PostFxPass for BloomPass {
         let input = ctx.input;
         let output = ctx.output;
 
-        let sampler = ctx.samplers.push_sampler(device, Self::INPUT_SAMPLER)
-            .expect("Failed to push bloom input sampler.").1;
+        let sampler = &self.input_sampler;
         let ce = &mut ctx.encoder;
 
         let mipchain = self.mip_chain.get_textures();

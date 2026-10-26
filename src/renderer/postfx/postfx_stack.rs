@@ -1,8 +1,8 @@
 use std::{collections::HashMap, num::NonZero};
 
 use crate::renderer::{
-    pipeline::sampler_manager::SamplerManager,
     postfx::framebuffers::Framebuffer,
+    resources::bindless::BindlessResources,
 };
 
 /// A named resource produced by the  rendering passes and
@@ -47,12 +47,25 @@ impl<'a> PostFxExtraInputs<'a> {
     }
 }
 
+/// Read-only view of the global sampled-texture table.
+///
+/// Post-processing passes may sample from this table, but must not register
+/// render targets in it.
+pub struct BindlessFrame<'a> {
+    pub resources: &'a BindlessResources,
+    pub bind_group: &'a wgpu::BindGroup,
+    pub group_index: u32,
+}
+
 /// Execution context handed to a single post-processing pass.
 pub struct PostFxContext<'a> {
     pub device: &'a wgpu::Device,
     pub encoder: &'a mut wgpu::CommandEncoder,
-    pub samplers: &'a mut SamplerManager,
     pub size: (u32, u32),
+
+    /// Optional read-only bindless resources for passes that sample global
+    /// textures. Render targets stay in the pass-owned framebuffers.
+    pub bindless: Option<&'a BindlessFrame<'a>>,
 
     /// The chain's current input: the scene color for the first pass, and the
     /// previous pass's output afterwards.
@@ -175,6 +188,12 @@ pub trait PostFxPass {
     /// External inputs this pass reads, validated by the stack before execution.
     fn requires(&self) -> &'static [PostFxInput] { &[] }
 
+    /// Whether this pass samples the global bindless texture table.
+    ///
+    /// Render targets must never be registered there; only read-only sampled
+    /// textures are exposed through [`BindlessFrame`].
+    fn requires_bindless(&self) -> bool { false }
+
     /// How this pass writes its result.
     ///
     /// Defaults to [`OutputMode::separate`].
@@ -238,6 +257,11 @@ impl PostFxStack {
 
     pub fn has_passes(&self) -> bool { !self.passes.is_empty() }
 
+    /// Whether any registered pass needs the global bindless texture table.
+    pub fn requires_bindless(&self) -> bool {
+        self.passes.iter().any(|pass| pass.requires_bindless())
+    }
+
     /// The HDR texture the scene must be rendered into before [`PostFxStack::run`].
     pub fn scene_target(&self) -> &wgpu::TextureView {
         self.hdr_target.get_texture().expect("call configure_with_size first")
@@ -292,10 +316,10 @@ impl PostFxStack {
     pub fn run(
         &mut self,
         device: &wgpu::Device,
-        samplers: &mut SamplerManager,
         ce: &mut wgpu::CommandEncoder,
         final_view: &wgpu::TextureView,
-        inputs: &PostFxExtraInputs<'_>
+        inputs: &PostFxExtraInputs<'_>,
+        bindless: Option<&BindlessFrame<'_>>,
     ) {
         let count = self.passes.len();
         assert!(count > 0, "PostFxStack has no passes to run.");
@@ -372,8 +396,8 @@ impl PostFxStack {
             let mut ctx = PostFxContext {
                 device,
                 encoder: &mut *ce,
-                samplers: &mut *samplers,
                 size,
+                bindless,
                 input,
                 output,
                 scene_color: &scene,

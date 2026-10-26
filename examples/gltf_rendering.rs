@@ -12,12 +12,14 @@ use rust_renderer::{
         mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance},
         orchestrator::{RenderOrchestrator, RendererConfig},
         pipeline::{
-            camera::{CameraPerspective, CameraPerspectiveBuilder, HasViewMatrix},
-            pipeline_cache::PipelineKey,
-            lighting::{Light, LightKindEnum},
+            key::{PipelineKey, VertexLayoutKey},
             rasterizer_pipeline::UseRasterizerPipeline,
-            skybox::SkyboxManager
         },
+        resources::{
+            camera::{CameraPerspective, CameraPerspectiveBuilder, HasViewMatrix},
+            lighting::{Light, LightKindEnum},
+        },
+        scene::skybox::SkyboxManager,
         postfx::{
             bloom::BloomPass,
             tonemap::AcesTonemapPass
@@ -84,12 +86,17 @@ impl RendererState for State {
 
         let scene_format = orchestrator.scene_format();
         let surface_format = orchestrator.surface_format();
-        let mut skybox = SkyboxManager::new(
-            orchestrator.device(),
-            orchestrator.pipelines().get_camera_manager(),
-            scene_format,
-            wgpu::TextureFormat::Depth32Float
-        );
+        let camera_bgl = orchestrator.camera().get_bind_group_layout().clone();
+        let mut skybox = {
+            let (device, pipelines) = orchestrator.device_and_pipelines_mut();
+            SkyboxManager::new(
+                device,
+                &camera_bgl,
+                scene_format,
+                wgpu::TextureFormat::Depth32Float,
+                pipelines,
+            )
+        };
         {
             let (device, postfx) = orchestrator.device_and_postfx_mut();
             let postfx = postfx.expect("postfx should be enabled");
@@ -131,8 +138,8 @@ impl RendererState for State {
             let asset = asset_manager.get_asset(&scene_name).expect("gltf scene asset should be present");
             let asset = asset.read().expect("failed to read gltf scene asset");
             if let SceneAssetType(scene) = asset.get_data() {
-                let (gpu, pipelines) = orchestrator.gpu_and_pipelines_mut();
-                StaticMeshInstance::create_from_scene_asset(gpu.device(), gpu.queue(), pipelines, scene, &asset_manager)
+                let mut ctx = orchestrator.mesh_upload_context(&asset_manager);
+                StaticMeshInstance::create_from_scene_asset(&mut ctx, scene)
             } else {
                 panic!("asset '{scene_name}' is not a scene asset");
             }
@@ -152,7 +159,7 @@ impl RendererState for State {
         let camera = CameraPerspectiveBuilder::new().set_origin(cgmath::point3(0.0, 0.0, 3.0)).build();
 
         // Scene lighting: a single directional light plus a faint ambient term.
-        orchestrator.pipelines_mut().get_lighting_manager_mut().set_ambient([0.03, 0.03, 0.03]);
+        orchestrator.lighting_mut().set_ambient([0.03, 0.03, 0.03]);
         let light = Light::directional(cgmath::vec3(1.0, 0.0, 0.0), [1.0, 0.95, 0.9], 3.0);
 
         Self {
@@ -183,21 +190,25 @@ impl RendererState for State {
                     b: 0.3,
                     a: 1.0,
                 },
-                |render_pass, gpu, pipelines| {
-                    pipelines.set_active_camera(camera);
-                    pipelines.get_lighting_manager().upload_lights(
+                |render_pass, gpu, scene| {
+                    scene.camera.set_active_camera(camera);
+                    scene.lighting.upload_lights(
                         gpu.queue(),
                         std::slice::from_ref(&light)
                     );
-                    pipelines.prepare_render_pass(gpu.device(), gpu.queue(), render_pass);
+                    scene.bind_globals(gpu.device(), gpu.queue(), render_pass);
                     render_pass.set_rasterizer_pipeline(
-                        pipelines.query_pipeline(PipelineKey::CookTorrancePbr).expect("cook torrance pipeline not found")
+                        scene.pipelines.get_or_create(
+                            gpu.device(),
+                            PipelineKey::CookTorrancePbr,
+                            VertexLayoutKey::BASIC,
+                        )
                     );
                     for model in models {
                         model.draw(render_pass);
                     }
 
-                    skybox.draw_skybox(gpu.device(), render_pass);
+                    skybox.draw_skybox(gpu.device(), scene.pipelines, render_pass);
                 },
             );
         });

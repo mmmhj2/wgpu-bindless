@@ -37,8 +37,8 @@ mod test {
                 let asset = asset_manager.get_asset(&scene_name).expect("gltf scene asset should be present");
                 let asset = asset.read().expect("failed to read gltf scene asset");
                 if let AssetData::SceneAssetType(scene) = asset.get_data() {
-                    let (gpu, pipelines) = orchestrator.gpu_and_pipelines_mut();
-                    StaticMeshInstance::create_from_scene_asset(gpu.device(), gpu.queue(), pipelines, scene, &asset_manager)
+                    let mut ctx = orchestrator.mesh_upload_context(&asset_manager);
+                    StaticMeshInstance::create_from_scene_asset(&mut ctx, scene)
                 } else {
                     panic!("asset '{scene_name}' is not a scene asset");
                 }

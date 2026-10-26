@@ -1,5 +1,6 @@
 use crate::renderer::{
-    pipeline::sampler::SamplerDescription, postfx::{bloom::BloomPass, postfx_stack::{PostFxContext, PostFxPass, PostFxResourceCache}},
+    postfx::{bloom::BloomPass, postfx_stack::{PostFxContext, PostFxPass, PostFxResourceCache}},
+    resources::sampler::SamplerDescription,
 };
 
 const TONEMAP_SAMPLER: SamplerDescription = SamplerDescription {
@@ -109,6 +110,7 @@ fn generate_bind_group(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, co
 pub struct AcesTonemapPass {
     bgl_tonemap: wgpu::BindGroupLayout,
     ppl: wgpu::RenderPipeline,
+    sampler: wgpu::Sampler,
 
     input_format: wgpu::TextureFormat,
     output_format: wgpu::TextureFormat
@@ -118,7 +120,14 @@ impl AcesTonemapPass {
     pub fn new(device: &wgpu::Device, input_format: wgpu::TextureFormat, output_format: wgpu::TextureFormat) -> Self {
         let bgl_tonemap = device.create_bind_group_layout(&DBGL_TONEMAP);
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(&bgl_tonemap)], immediate_size: 0 });
-        Self { bgl_tonemap, ppl: build_pipeline(device, &layout, output_format, "fs_aces"), input_format, output_format }
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor::from(&TONEMAP_SAMPLER));
+        Self {
+            bgl_tonemap,
+            ppl: build_pipeline(device, &layout, output_format, "fs_aces"),
+            sampler,
+            input_format,
+            output_format,
+        }
     }
 }
 
@@ -130,6 +139,7 @@ trait TonemapPass: PostFxPass {
     fn requires_average_luminance() -> bool { false }
     fn get_tonemap_bind_group_layout(&self) -> &wgpu::BindGroupLayout;
     fn get_tonemap_pipeline(&self) -> &wgpu::RenderPipeline;
+    fn get_tonemap_sampler(&self) -> &wgpu::Sampler;
 }
 
 impl<T: TonemapPass> PostFxPass for T {
@@ -153,13 +163,7 @@ impl<T: TonemapPass> PostFxPass for T {
         let input = ctx.input;
         let output = ctx.output;
 
-        let sampler = match ctx.samplers.push_sampler(device, TONEMAP_SAMPLER) {
-            Ok((_, sp)) => sp,
-            Err(e) => {
-                log::error!("failed to get sampler for tonemapping: {:?}", e);
-                ctx.samplers.get_default_sampler().1
-            },
-        };
+        let sampler = self.get_tonemap_sampler();
         
         let lum = if Self::requires_average_luminance() {
             let avg_lum = cache.try_get(BloomPass::BLOOM_MIPCHAIN_HIGHEST_NAME);
@@ -205,5 +209,8 @@ impl TonemapPass for AcesTonemapPass {
     }
     fn get_tonemap_pipeline(&self) -> &wgpu::RenderPipeline {
         &self.ppl
+    }
+    fn get_tonemap_sampler(&self) -> &wgpu::Sampler {
+        &self.sampler
     }
 }

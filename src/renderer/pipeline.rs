@@ -1,10 +1,7 @@
-pub mod rasterizer_pipeline;
-pub mod pipeline_cache;
-pub mod pipeline_state;
-pub mod sampler;
-pub mod sampler_manager;
-pub mod bindless_resource_manager;
+pub mod builtin;
+pub mod key;
+pub mod library;
 pub mod pbr_material;
-pub mod camera;
-pub mod lighting;
-pub mod skybox;
+pub mod rasterizer_pipeline;
+pub mod recipe;
+pub mod vertex_layout;

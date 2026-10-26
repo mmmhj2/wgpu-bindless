@@ -11,7 +11,11 @@ use rust_renderer::{
     renderer::{
         mesh::{drawable_mesh_traits::DrawableMesh, immediate_mesh::ImmediateMeshBuilder},
         orchestrator::{RenderOrchestrator, RendererConfig},
-        pipeline::{pbr_material::PBRMaterial, rasterizer_pipeline::UseRasterizerPipeline},
+        pipeline::{
+            key::{PipelineKey, VertexLayoutKey},
+            pbr_material::PBRMaterial,
+            rasterizer_pipeline::UseRasterizerPipeline,
+        },
         window::RendererState,
     },
 };
@@ -40,13 +44,13 @@ impl RendererState for State {
             let asset_db = asset_manager.get_database();
             let texture_asset = asset_db.iter().next().expect("at least one asset should be imported successfully");
             if let TextureAssetType(asset) = texture_asset.1.read().unwrap().get_data() {
-                let (gpu, pipelines) = orchestrator.gpu_and_pipelines_mut();
+                let (gpu, bindless) = orchestrator.gpu_and_bindless_mut();
                 let texture = asset.upload(texture_asset.0, gpu.device(), gpu.queue());
                 let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
                 let sampler = asset.sampler.clone().into();
                 PBRMaterial::create_from_views(
                     gpu.device(),
-                    pipelines.get_bindless_resource_manager_mut(),
+                    bindless,
                     Some((texture_view, Some(sampler))),
                     None,
                     None
@@ -77,10 +81,10 @@ impl RendererState for State {
                     b: 0.3,
                     a: 1.0,
                 },
-                |render_pass, gpu, pipelines| {
+                |render_pass, gpu, scene| {
                     let mut mesh_builder = ImmediateMeshBuilder::new(
                         gpu.device(),
-                        pipelines.get_bindless_resource_manager_mut(),
+                        scene.bindless,
                         Some(material),
                     );
                     mesh_builder.color3f([1.0, 1.0, 1.0]);
@@ -101,11 +105,15 @@ impl RendererState for State {
                     let mesh = mesh_builder.commit(
                         gpu.device(),
                         gpu.queue(),
-                        pipelines.get_mesh_manager(),
+                        scene.mesh_layout,
                     );
 
-                    pipelines.prepare_render_pass(gpu.device(), gpu.queue(), render_pass);
-                    render_pass.set_rasterizer_pipeline(pipelines.get_default_pipeline());
+                    scene.bind_globals(gpu.device(), gpu.queue(), render_pass);
+                    render_pass.set_rasterizer_pipeline(scene.pipelines.get_or_create(
+                        gpu.device(),
+                        PipelineKey::Default,
+                        VertexLayoutKey::BASIC,
+                    ));
                     mesh.draw(render_pass);
                 },
             );

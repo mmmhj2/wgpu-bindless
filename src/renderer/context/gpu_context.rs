@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use crate::renderer::pipeline::{bindless_resource_manager::MAX_TEXTURE_SLOTS, sampler_manager::MAX_SAMPLER_SLOTS};
+use crate::renderer::resources::bindless::{MAX_SAMPLER_SLOTS, MAX_TEXTURE_SLOTS};
 
 /// Abstraction over WGPU hardware related objects: Device and queue.
 pub struct GpuContext {
