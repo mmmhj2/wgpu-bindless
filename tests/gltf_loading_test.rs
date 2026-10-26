@@ -10,35 +10,22 @@ mod test {
             importer::gltf_importer::GltfImporter,
         },
         renderer::{
-            context::{
-                frame_context::Backbuffers, gpu_context::GpuContext,
-                surface_context::SurfaceContext,
-            },
             mesh::static_mesh_instance::StaticMeshInstance,
-            pipeline::pipeline_state::PipelineStates,
+            orchestrator::{RenderOrchestrator, RendererConfig},
             window::RendererState,
         },
     };
     use winit::{event_loop::EventLoop, window::Window};
 
     pub struct State {
-        window: Arc<Window>,
-        gpu: GpuContext,
-        surface: SurfaceContext<'static>,
-        backbuffers: Backbuffers,
-        pipeline: PipelineStates,
-        gltf_models: Vec<StaticMeshInstance>,
+        orchestrator: RenderOrchestrator,
+        _gltf_models: Vec<StaticMeshInstance>,
+        _asset_manager: AssetManager,
     }
 
-    impl RendererState<'static> for State {
+    impl RendererState for State {
         async fn new(window: Arc<Window>) -> Self {
-            let mut gpu = GpuContext::new();
-            let mut surface = SurfaceContext::new(gpu.instance(), window.clone()).unwrap();
-            gpu.create_device(Some(surface.surface())).await.unwrap();
-            surface.select_color_format(gpu.try_adapter().expect("adapter should be ready"), true);
-
-            let format = surface.get_color_format().expect("surface color format should be selected");
-            let mut pipeline = PipelineStates::prepare_default_pipelines(gpu.device(), gpu.queue(), format);
+            let mut orchestrator = RenderOrchestrator::new(window, RendererConfig::default()).await;
 
             let asset_manager = AssetManager::new();
             asset_manager.import(GltfImporter::new("resource/test_two_cubes.glb")).expect("import should succeed");
@@ -50,7 +37,8 @@ mod test {
                 let asset = asset_manager.get_asset(&scene_name).expect("gltf scene asset should be present");
                 let asset = asset.read().expect("failed to read gltf scene asset");
                 if let AssetData::SceneAssetType(scene) = asset.get_data() {
-                    StaticMeshInstance::create_from_scene_asset(gpu.device(), gpu.queue(), &mut pipeline, scene, &asset_manager)
+                    let (gpu, pipelines) = orchestrator.gpu_and_pipelines_mut();
+                    StaticMeshInstance::create_from_scene_asset(gpu.device(), gpu.queue(), pipelines, scene, &asset_manager)
                 } else {
                     panic!("asset '{scene_name}' is not a scene asset");
                 }
@@ -59,33 +47,18 @@ mod test {
             println!("Read {} models in total.", gltf_models.len());
 
             Self {
-                window,
-                gpu,
-                surface,
-                backbuffers: Backbuffers::new(wgpu::TextureFormat::Depth32Float),
-                pipeline,
-                gltf_models,
+                orchestrator,
+                _gltf_models: gltf_models,
+                _asset_manager: asset_manager,
             }
+        }
+
+        fn resize(&mut self, width: u32, height: u32) {
+            self.orchestrator.resize(width, height);
         }
 
         fn render(&mut self) -> Result<(), ()> {
             Err(())
-        }
-
-        fn gpu_context(&self) -> &GpuContext {
-            &self.gpu
-        }
-
-        fn surface_context(&self) -> &SurfaceContext<'static> {
-            &self.surface
-        }
-
-        fn surface_context_mut(&mut self) -> &mut SurfaceContext<'static> {
-            &mut self.surface
-        }
-
-        fn backbuffers_mut(&mut self) -> &mut Backbuffers {
-            &mut self.backbuffers
         }
     }
 

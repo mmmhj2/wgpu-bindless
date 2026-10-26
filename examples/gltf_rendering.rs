@@ -2,29 +2,27 @@ use std::{path::Path, sync::Arc};
 
 use cgmath::{InnerSpace, SquareMatrix, Transform};
 use rust_renderer::{
-    app::DefaultAppHandler, asset::{
+    asset::{
         asset_manager::AssetManager,
         asset_store::{ImportJob, ImportManifest, ManifestEntry},
         asset_types::{AssetData::{SceneAssetType, TextureAssetType}, GpuAssetType},
         importer::{gltf_importer::GltfImporter, image_file_importer::ColorSpace},
-    }, renderer::{
-        context::{
-            frame_context::Backbuffers, gpu_context::GpuContext, surface_context::SurfaceContext,
-        },
+    },
+    renderer::{
         mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance},
+        orchestrator::{RenderOrchestrator, RendererConfig},
         pipeline::{
-            camera::{Camera, CameraPerspective, CameraPerspectiveBuilder, HasViewMatrix, HasViewProjectionMatrix},
+            camera::{CameraPerspective, CameraPerspectiveBuilder, HasViewMatrix},
             pipeline_cache::PipelineKey,
             lighting::{Light, LightKindEnum},
-            pipeline_state::PipelineStates,
             rasterizer_pipeline::UseRasterizerPipeline,
             skybox::SkyboxManager
         },
         postfx::{
             bloom::BloomPass,
-            postfx_stack::{PostFxExtraInputs, PostFxInput, PostFxStack},
             tonemap::AcesTonemapPass
-        }, window::RendererState
+        },
+        window::RendererState
     },
 };
 use winit::{application::ApplicationHandler, event::{KeyEvent, WindowEvent}, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window};
@@ -32,13 +30,8 @@ use winit::{application::ApplicationHandler, event::{KeyEvent, WindowEvent}, eve
 const GLTF_PATH: &str = "resource/DamagedHelmet.glb";
 
 struct State {
-    window: Arc<Window>,
-    gpu: GpuContext,
-    surface: SurfaceContext<'static>,
-    backbuffers: Backbuffers,
-    pipeline: PipelineStates,
+    orchestrator: RenderOrchestrator,
     skybox: SkyboxManager,
-    postfx: PostFxStack,
     gltf_models: Vec<StaticMeshInstance>,
     camera: CameraPerspective,
     light: Light,
@@ -77,20 +70,32 @@ impl State {
     }
 }
 
-impl RendererState<'static> for State {
+impl RendererState for State {
     async fn new(window: Arc<Window>) -> Self {
-        let mut gpu = GpuContext::new();
-        let mut surface = SurfaceContext::new(gpu.instance(), window.clone()).unwrap();
-        gpu.create_device(Some(surface.surface())).await.unwrap();
-        surface.select_color_format(gpu.try_adapter().expect("adapter should be ready"), true);
-        surface.configure(gpu.device());
+        let mut orchestrator = RenderOrchestrator::new(
+            window,
+            RendererConfig {
+                request_srgb_surface: true,
+                depth_format: wgpu::TextureFormat::Depth32Float,
+                scene_format: Some(wgpu::TextureFormat::Rgba16Float),
+                enable_postfx: true,
+            },
+        ).await;
 
-        let surface_format = surface.get_color_format().expect("surface color format should be selected");
-        let mut pipeline = PipelineStates::prepare_default_pipelines(gpu.device(), gpu.queue(), wgpu::TextureFormat::Rgba16Float);
-        let mut skybox = SkyboxManager::new(gpu.device(), pipeline.get_camera_manager(), wgpu::TextureFormat::Rgba16Float, wgpu::TextureFormat::Depth32Float);
-        let mut postfx = PostFxStack::new(wgpu::TextureFormat::Rgba16Float, surface_format);
-        postfx.push_pass(Box::new(BloomPass::new(gpu.device(), wgpu::TextureFormat::Rgba16Float)));
-        postfx.push_pass(Box::new(AcesTonemapPass::new(gpu.device(), wgpu::TextureFormat::Rgba16Float, surface_format)));
+        let scene_format = orchestrator.scene_format();
+        let surface_format = orchestrator.surface_format();
+        let mut skybox = SkyboxManager::new(
+            orchestrator.device(),
+            orchestrator.pipelines().get_camera_manager(),
+            scene_format,
+            wgpu::TextureFormat::Depth32Float
+        );
+        {
+            let (device, postfx) = orchestrator.device_and_postfx_mut();
+            let postfx = postfx.expect("postfx should be enabled");
+            postfx.push_pass(Box::new(BloomPass::new(device, scene_format)));
+            postfx.push_pass(Box::new(AcesTonemapPass::new(device, scene_format, surface_format)));
+        }
 
         // Load through the import manifest: on the first run the jobs are
         // imported and persisted; later runs load the cached containers unless a
@@ -126,7 +131,8 @@ impl RendererState<'static> for State {
             let asset = asset_manager.get_asset(&scene_name).expect("gltf scene asset should be present");
             let asset = asset.read().expect("failed to read gltf scene asset");
             if let SceneAssetType(scene) = asset.get_data() {
-                StaticMeshInstance::create_from_scene_asset(gpu.device(), gpu.queue(), &mut pipeline, scene, &asset_manager)
+                let (gpu, pipelines) = orchestrator.gpu_and_pipelines_mut();
+                StaticMeshInstance::create_from_scene_asset(gpu.device(), gpu.queue(), pipelines, scene, &asset_manager)
             } else {
                 panic!("asset '{scene_name}' is not a scene asset");
             }
@@ -136,7 +142,7 @@ impl RendererState<'static> for State {
             let asset = asset_manager.get_asset("skybox").expect("skybox array asset should be present");
             let asset = asset.read().expect("failed to read skybox asset");
             if let TextureAssetType(texture) = asset.get_data() {
-                texture.upload("skybox", gpu.device(), gpu.queue())
+                texture.upload("skybox", orchestrator.device(), orchestrator.queue())
             } else {
                 panic!("skybox asset is not a texture asset");
             }
@@ -146,17 +152,12 @@ impl RendererState<'static> for State {
         let camera = CameraPerspectiveBuilder::new().set_origin(cgmath::point3(0.0, 0.0, 3.0)).build();
 
         // Scene lighting: a single directional light plus a faint ambient term.
-        pipeline.get_lighting_manager_mut().set_ambient([0.03, 0.03, 0.03]);
+        orchestrator.pipelines_mut().get_lighting_manager_mut().set_ambient([0.03, 0.03, 0.03]);
         let light = Light::directional(cgmath::vec3(1.0, 0.0, 0.0), [1.0, 0.95, 0.9], 3.0);
 
         Self {
-            window,
-            gpu,
-            surface,
-            backbuffers: Backbuffers::new(wgpu::TextureFormat::Depth32Float),
-            pipeline,
+            orchestrator,
             skybox,
-            postfx,
             gltf_models,
             camera,
             light,
@@ -164,96 +165,44 @@ impl RendererState<'static> for State {
         }
     }
 
+    fn resize(&mut self, width: u32, height: u32) {
+        self.orchestrator.resize(width, height);
+    }
+
     fn render(&mut self) -> Result<(), ()>{
-        self.window.request_redraw();
+        let camera = self.camera.clone();
+        let light = self.light.clone();
+        let skybox = &self.skybox;
+        let models = &self.gltf_models;
 
-        let Some(frame) = self.backbuffers.new_frame(self.gpu.device(), &mut self.surface) else {
-            return Ok(());
-        };
+        self.orchestrator.with_frame(|frame| {
+            frame.render_scene(
+                wgpu::Color {
+                    r: 0.1,
+                    g: 0.2,
+                    b: 0.3,
+                    a: 1.0,
+                },
+                |render_pass, gpu, pipelines| {
+                    pipelines.set_active_camera(camera);
+                    pipelines.get_lighting_manager().upload_lights(
+                        gpu.queue(),
+                        std::slice::from_ref(&light)
+                    );
+                    pipelines.prepare_render_pass(gpu.device(), gpu.queue(), render_pass);
+                    render_pass.set_rasterizer_pipeline(
+                        pipelines.query_pipeline(PipelineKey::CookTorrancePbr).expect("cook torrance pipeline not found")
+                    );
+                    for model in models {
+                        model.draw(render_pass);
+                    }
 
-        self.postfx.configure_with_size(self.gpu.device(), frame.get_size());
-
-        let mut encoder = self.gpu.device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
+                    skybox.draw_skybox(gpu.device(), render_pass);
+                },
+            );
         });
 
-        {
-            let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: self.postfx.scene_target(),
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: frame.get_depth_view(),
-                    depth_ops: Some(wgpu::Operations{
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard
-                    }),
-                    stencil_ops: None
-                }),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-                multiview_mask: None,
-            });
-
-            self.pipeline.set_active_camera(self.camera.clone());
-            self.pipeline.get_lighting_manager().upload_lights(
-                self.gpu.queue(),
-                std::slice::from_ref(&self.light)
-            );
-            self.pipeline.prepare_render_pass(self.gpu.device(), self.gpu.queue(), &mut rp);
-            rp.set_rasterizer_pipeline(self.pipeline.query_pipeline(PipelineKey::CookTorrancePbr).expect("cook torrance pipeline not found"));
-            for m in &self.gltf_models {
-                m.draw(&mut rp);
-            }
-
-            self.skybox.draw_skybox(self.gpu.device(), &mut rp);
-        }
-
-        let final_view = frame.get_color_view();
-
-        let inputs = PostFxExtraInputs::new()
-            .with(PostFxInput::Depth, frame.get_depth_view());
-
-        self.postfx.run(
-            self.gpu.device(),
-            self.pipeline.get_bindless_resource_manager_mut().get_samplers_mut(),
-            &mut encoder,
-            final_view,
-            &inputs
-        );
-
-        self.gpu.queue().submit(std::iter::once(encoder.finish()));
-        frame.present();
-
         Ok(())
-    }
-
-    fn gpu_context(&self) -> &GpuContext {
-        &self.gpu
-    }
-
-    fn surface_context(&self) -> &SurfaceContext<'static> {
-        &self.surface
-    }
-
-    fn surface_context_mut(&mut self) -> &mut SurfaceContext<'static> {
-        &mut self.surface
-    }
-
-    fn backbuffers_mut(&mut self) -> &mut Backbuffers {
-        &mut self.backbuffers
     }
 }
 

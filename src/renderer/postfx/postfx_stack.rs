@@ -236,6 +236,8 @@ impl PostFxStack {
 
     pub fn get_hdr_format(&self) -> wgpu::TextureFormat { self.hdr_format }
 
+    pub fn has_passes(&self) -> bool { !self.passes.is_empty() }
+
     /// The HDR texture the scene must be rendered into before [`PostFxStack::run`].
     pub fn scene_target(&self) -> &wgpu::TextureView {
         self.hdr_target.get_texture().expect("call configure_with_size first")

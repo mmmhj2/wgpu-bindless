@@ -6,93 +6,41 @@ mod test {
     use rust_renderer::{
         app::DefaultAppHandler,
         renderer::{
-            context::{
-                frame_context::Backbuffers, gpu_context::GpuContext,
-                surface_context::SurfaceContext,
-            },
+            orchestrator::{RenderOrchestrator, RendererConfig},
             window::RendererState,
         },
     };
     use winit::{event_loop::EventLoop, window::Window};
 
     pub struct State {
-        window: Arc<Window>,
-        gpu: GpuContext,
-        surface: SurfaceContext<'static>,
-        backbuffers: Backbuffers,
+        orchestrator: RenderOrchestrator,
     }
 
-    impl RendererState<'static> for State {
+    impl RendererState for State {
         async fn new(window: Arc<Window>) -> Self {
-            let mut gpu = GpuContext::new();
-            let mut surface = SurfaceContext::new(gpu.instance(), window.clone()).unwrap();
-            gpu.create_device(Some(surface.surface())).await.unwrap();
-            surface.select_color_format(gpu.try_adapter().expect("adapter should be ready"), true);
-            surface.configure(gpu.device());
-
             Self {
-                window,
-                gpu,
-                surface,
-                backbuffers: Backbuffers::new(wgpu::TextureFormat::Depth32Float),
+                orchestrator: RenderOrchestrator::new(window, RendererConfig::default()).await,
             }
+        }
+
+        fn resize(&mut self, width: u32, height: u32) {
+            self.orchestrator.resize(width, height);
         }
 
         fn render(&mut self) -> Result<(), ()> {
-            self.window.request_redraw();
-
-            let Some(frame) = self.backbuffers.new_frame(self.gpu.device(), &mut self.surface) else {
-                return Ok(());
-            };
-
-            let mut encoder = self.gpu.device().create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
+            self.orchestrator.with_frame(|frame| {
+                frame.render_scene(
+                    wgpu::Color {
+                        r: 0.1,
+                        g: 0.2,
+                        b: 0.3,
+                        a: 1.0,
+                    },
+                    |_, _, _| {},
+                );
             });
 
-            {
-                let _ = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("Render Pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: frame.get_color_view(),
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 0.1,
-                                g: 0.2,
-                                b: 0.3,
-                                a: 1.0,
-                            }),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    occlusion_query_set: None,
-                    timestamp_writes: None,
-                    multiview_mask: None,
-                });
-            }
-
-            self.gpu.queue().submit(std::iter::once(encoder.finish()));
-            frame.present();
-
             Ok(())
-        }
-
-        fn gpu_context(&self) -> &GpuContext {
-            &self.gpu
-        }
-
-        fn surface_context(&self) -> &SurfaceContext<'static> {
-            &self.surface
-        }
-
-        fn surface_context_mut(&mut self) -> &mut SurfaceContext<'static> {
-            &mut self.surface
-        }
-
-        fn backbuffers_mut(&mut self) -> &mut Backbuffers {
-            &mut self.backbuffers
         }
     }
 
