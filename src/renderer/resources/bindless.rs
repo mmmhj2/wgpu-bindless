@@ -1,4 +1,4 @@
-use std::{collections::HashMap, num::NonZeroU32};
+use std::{cell::RefCell, collections::HashMap, num::NonZeroU32};
 
 use crate::{
     asset::asset_types::{
@@ -62,6 +62,10 @@ pub struct BindlessResources {
     default_sampler: SamplerHandle,
 
     bind_group_layout: wgpu::BindGroupLayout,
+
+    // bind group is cached via interior mutability.
+    // Replace with mutex for multithreading.
+    cached_bind_group: RefCell<Option<wgpu::BindGroup>>
 }
 
 impl BindlessResources {
@@ -99,6 +103,7 @@ impl BindlessResources {
             default_mrao_texture: SampledTextureHandle(0),
             default_sampler: SamplerHandle(0),
             bind_group_layout: device.create_bind_group_layout(&Self::BGLD_BINDLESS),
+            cached_bind_group: RefCell::new(None)
         };
 
         let white_texture = TextureAsset::from_single_color_texel(
@@ -152,11 +157,13 @@ impl BindlessResources {
         &mut self,
         view: wgpu::TextureView,
     ) -> Result<SampledTextureHandle, BindlessError> {
+        self.cached_bind_group.replace(None);
         let index = self.sampled_textures.insert(view).ok_or(BindlessError::TableFull)?;
         Ok(SampledTextureHandle::from_index(index))
     }
 
     pub fn free_sampled_texture(&mut self, handle: SampledTextureHandle) {
+        self.cached_bind_group.replace(None);
         self.sampled_textures.remove(handle.index());
     }
 
@@ -168,7 +175,7 @@ impl BindlessResources {
         if let Some(handle) = self.sampler_by_desc.get(&desc) {
             return Ok(*handle);
         }
-
+        self.cached_bind_group.replace(None);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor::from(&desc));
         let index = self.samplers.insert(sampler).ok_or(BindlessError::TableFull)?;
         let handle = SamplerHandle::from_index(index);
@@ -176,7 +183,13 @@ impl BindlessResources {
         Ok(handle)
     }
 
+    /// Remove a sampler from the manager.
+    /// 
+    /// Removing samplers from the bindless manager should be rarely needed.
+    /// Sampler slots should be more than enough unless you are trying to mess
+    /// around with LOD clamps and bias, which is not supported yet nonetheless.
     pub fn free_sampler(&mut self, handle: SamplerHandle) {
+        self.cached_bind_group.replace(None);
         self.samplers.remove(handle.index());
         self.sampler_by_desc.retain(|_, v| *v != handle);
     }
@@ -208,6 +221,10 @@ impl BindlessResources {
         assert!(self.sampled_textures.len() > 0);
         assert!(self.samplers.len() > 0);
 
+        if self.cached_bind_group.borrow().is_some() {
+            return self.cached_bind_group.borrow().as_ref().unwrap().clone()
+        }
+
         let texture_fallback = self
             .sampled_textures
             .get(self.white_texture.index())
@@ -235,11 +252,14 @@ impl BindlessResources {
             },
         ];
 
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: self.get_bind_group_layout(),
             entries: &entries,
-        })
+        });
+
+        self.cached_bind_group.replace(Some(bg.clone()));
+        bg
     }
 
     /// Reserved for future bindless SSBO support.
@@ -247,6 +267,7 @@ impl BindlessResources {
     /// This intentionally does not add a storage binding to the bind group
     /// layout yet.
     pub fn create_storage_buffer(&mut self, _buffer: wgpu::Buffer) -> StorageBufferHandle {
+        self.cached_bind_group.replace(None);
         todo!("bindless storage buffers are not implemented yet")
     }
 }
