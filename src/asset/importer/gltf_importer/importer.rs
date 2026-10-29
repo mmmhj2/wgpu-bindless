@@ -1,6 +1,6 @@
-use std::{collections::{HashSet, VecDeque}, ffi::OsString, num::NonZeroU32, path::{Path, PathBuf}, sync::{Arc, RwLock}};
+use std::{collections::{HashMap, HashSet, VecDeque}, ffi::OsString, num::NonZeroU32, path::{Path, PathBuf}, sync::{Arc, RwLock}};
 
-use crate::asset::{asset_types::{Asset, AssetMetadata, scene_asset::{SceneAsset, SceneMeshInstanceAsset}, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat}, vertex::{VertexBufferOthers, VertexBufferPosition}}, error::ImportError, importer::{AssetImporter, ImporterContext, gltf_importer::{common::{GltfImageView, GltfImportError}, mrao::build_mrao_texture_asset}, vertex_reconditioner::{ReconditionerError, TangentRecalculator}}};
+use crate::asset::{asset_types::{Asset, AssetMetadata, scene_asset::{SceneAsset, SceneNodeAsset}, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat}, vertex::{VertexBufferOthers, VertexBufferPosition}}, error::ImportError, importer::{AssetImporter, ImporterContext, gltf_importer::{common::{GltfImageView, GltfImportError}, mrao::build_mrao_texture_asset}, vertex_reconditioner::{ReconditionerError, TangentRecalculator}}};
 
 pub struct GltfImporter {
     // Guard it by mutex if we want to parallelize it.
@@ -22,7 +22,7 @@ pub(super) struct MraoKey {
 
 impl AssetImporter for GltfImporter {
     const IMPORTER_ID: &'static str = "gltf";
-    const IMPORTER_VERSION: u32 = 2;
+    const IMPORTER_VERSION: u32 = 3;
 
     fn import(mut self, context: &ImporterContext) -> Result<(), ImportError> {
         if !self.path.is_file() {
@@ -173,7 +173,7 @@ pub(super) enum SubAssetType {
     /// GLTF primitive, which corresponds to mesh for our renderer.
     /// TODO: support multiple primitives per mesh. Maybe we should use `submesh` and map primitives to submeshes.
     Primitive { mesh: usize, primitive: usize },
-    /// A GLTF scene, flattened into a list of mesh instances with baked transforms.
+    /// A GLTF scene, preserved as a hierarchy of nodes with local transforms.
     Scene(usize),
     /// A renderer-layout MRAO texture derived from optional MR and AO textures.
     MraoTexture(MraoKey),
@@ -337,47 +337,74 @@ impl GltfImporter {
     }
 
     // Scene importer
-    /// Flatten a glTF scene into a list of mesh instances with baked world
-    /// transforms.
+    /// Import a glTF scene as a hierarchy of nodes with local transforms.
     ///
-    /// The scene graph is traversed breadth-first from the scene roots. Each
-    /// primitive of every encountered mesh produces one instance, so the
-    /// renderer never needs to re-parse the source glTF to walk the hierarchy.
+    /// Every reachable glTF node becomes a [`SceneNodeAsset`] carrying its
+    /// *local* transform and children. Primitive subasset names are attached to
+    /// the node that owns the mesh. No world matrix is baked here: the renderer
+    /// derives world transforms from the hierarchy at runtime.
     pub(crate) fn import_from_gltf_scene(
         gltf_file: &Path,
         document: &gltf::Document,
         scene: &gltf::Scene
     ) -> Result<SceneAsset, GltfImportError> {
-        let mut instances = Vec::new();
-
-        let mut transform_queue = VecDeque::<cgmath::Matrix4<f32>>::new();
-        let mut node_queue = VecDeque::<usize>::new();
+        // First pass: assign an arena index to every node reachable from the
+        // scene roots. BFS keeps the order deterministic and roots first.
+        let mut order = Vec::<usize>::new();
+        let mut index_of = HashMap::<usize, u32>::new();
+        let mut queue = VecDeque::<usize>::new();
 
         for root_node in scene.nodes() {
-            transform_queue.push_back(root_node.transform().matrix().into());
-            node_queue.push_back(root_node.index());
+            queue.push_back(root_node.index());
+        }
 
-            while let (Some(node_index), Some(current_transform)) = (node_queue.pop_front(), transform_queue.pop_front()) {
-                let current_node = document.nodes().nth(node_index)
-                    .ok_or(GltfImportError::IndexOutOfRange(node_index))?;
+        while let Some(node_index) = queue.pop_front() {
+            if index_of.contains_key(&node_index) {
+                continue;
+            }
 
-                if let Some(mesh) = current_node.mesh() {
-                    for primitive in mesh.primitives() {
-                        instances.push(SceneMeshInstanceAsset {
-                            world_matrix: *AsRef::<[f32; 16]>::as_ref(&current_transform),
-                            mesh_subasset_name: Self::primitive_subasset_name(gltf_file, mesh.index(), primitive.index())?,
-                        });
-                    }
-                }
+            let node = document.nodes().nth(node_index)
+                .ok_or(GltfImportError::IndexOutOfRange(node_index))?;
+            index_of.insert(node_index, order.len() as u32);
+            order.push(node_index);
 
-                for child in current_node.children() {
-                    transform_queue.push_back(current_transform * cgmath::Matrix4::from(child.transform().matrix()));
-                    node_queue.push_back(child.index());
-                }
+            for child in node.children() {
+                queue.push_back(child.index());
             }
         }
 
-        Ok(SceneAsset { instances })
+        // Second pass: build the arena now that every child index is known.
+        let mut nodes = Vec::with_capacity(order.len());
+        for gltf_index in order {
+            let node = document.nodes().nth(gltf_index)
+                .ok_or(GltfImportError::IndexOutOfRange(gltf_index))?;
+
+            let mesh_subasset_names = match node.mesh() {
+                Some(mesh) => mesh.primitives()
+                    .map(|primitive| Self::primitive_subasset_name(gltf_file, mesh.index(), primitive.index()))
+                    .collect::<Result<Vec<_>, _>>()?,
+                None => Vec::new(),
+            };
+
+            let children = node.children()
+                .map(|child| index_of.get(&child.index()).copied()
+                    .ok_or(GltfImportError::IndexOutOfRange(child.index())))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            nodes.push(SceneNodeAsset {
+                name: node.name().map(str::to_owned),
+                local_matrix: node.transform().matrix(),
+                mesh_subasset_names,
+                children,
+            });
+        }
+
+        let roots = scene.nodes()
+            .map(|node| index_of.get(&node.index()).copied()
+                .ok_or(GltfImportError::IndexOutOfRange(node.index())))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(SceneAsset { nodes, roots })
     }
 
     pub(crate) fn import_from_gltf_primitive(

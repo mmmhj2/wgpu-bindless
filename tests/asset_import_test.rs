@@ -32,11 +32,30 @@ use rust_renderer::asset::{asset_manager::AssetManager, asset_types::{Asset, Ass
         let asset = asset.read().unwrap();
         match asset.get_data() {
             AssetData::SceneAssetType(scene) => {
-                // Both cubes of the test scene must be baked as mesh instances.
-                assert!(!scene.instances.is_empty(), "scene asset should contain at least one mesh instance.");
-                for instance in &scene.instances {
-                    assert!(!instance.mesh_subasset_name.is_empty(), "mesh instance must reference a mesh subasset.");
+                // The test scene has two root nodes, each with one primitive.
+                assert_eq!(scene.nodes.len(), 2, "scene asset should preserve both glTF nodes.");
+                assert_eq!(scene.roots.len(), 2, "both test nodes are scene roots.");
+                assert!(
+                    scene.nodes.iter().all(|node| !node.mesh_subasset_names.is_empty()),
+                    "every test node should reference a mesh primitive."
+                );
+                for root in &scene.roots {
+                    assert!((*root as usize) < scene.nodes.len(), "scene roots must index into nodes.");
                 }
+                for node in &scene.nodes {
+                    for child in &node.children {
+                        assert!((*child as usize) < scene.nodes.len(), "scene children must index into nodes.");
+                    }
+                }
+
+                // Local transforms are preserved instead of being baked into a world matrix.
+                let translated = scene.nodes.iter()
+                    .find(|node| node.name.as_deref() == Some("cube_textured"))
+                    .expect("cube_textured node should be present.");
+                assert!(
+                    (translated.local_matrix[3][1] - 3.1607275).abs() < 1e-5,
+                    "cube_textured should keep its local Y translation."
+                );
             }
             _ => panic!("expected a scene asset, got another asset kind."),
         }
