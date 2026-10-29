@@ -10,7 +10,7 @@ mod test {
             importer::gltf_importer::GltfImporter,
         },
         renderer::{
-            mesh::static_mesh_batch::StaticMeshBatch,
+            drawable::static_mesh_batch::StaticMeshBatch,
             orchestrator::{RenderOrchestrator, RendererConfig},
             window::RendererState,
         },

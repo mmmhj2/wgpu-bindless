@@ -10,7 +10,7 @@ use crate::{
         },
     },
     renderer::{
-        mesh::static_mesh::StaticMesh,
+        drawable::static_mesh::StaticMesh,
         pipeline::pbr_material::PBRMaterial,
         resources::{
             bindless::{BindlessResources, SampledTextureHandle, SamplerHandle},

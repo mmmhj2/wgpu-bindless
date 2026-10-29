@@ -9,7 +9,7 @@ use rust_renderer::{
         importer::{gltf_importer::GltfImporter, image_file_importer::ColorSpace},
     },
     renderer::{
-        mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_batch::StaticMeshBatch},
+        drawable::{drawable_mesh_traits::DrawableMesh, static_mesh_batch::StaticMeshBatch},
         orchestrator::{RenderOrchestrator, RendererConfig},
         pipeline::{
             key::{PipelineKey, VertexLayoutKey},

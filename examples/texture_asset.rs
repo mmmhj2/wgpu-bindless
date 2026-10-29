@@ -9,7 +9,7 @@ use rust_renderer::{
         importer::image_file_importer::ColorSpace,
     },
     renderer::{
-        mesh::{drawable_mesh_traits::DrawableMesh, immediate_mesh::ImmediateMeshBuilder},
+        drawable::{drawable_mesh_traits::DrawableMesh, immediate_mesh::ImmediateMeshBuilder},
         orchestrator::{RenderOrchestrator, RendererConfig},
         pipeline::{
             key::{PipelineKey, VertexLayoutKey},

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::renderer::{
-    mesh::vertex_types::VertexType,
+    drawable::vertex_types::VertexType,
     pipeline::key::VertexLayoutKey,
 };
 

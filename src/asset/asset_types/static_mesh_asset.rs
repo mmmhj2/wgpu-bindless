@@ -24,7 +24,7 @@ pub struct StaticMeshAsset {
 /// GPU-resident geometry produced by uploading a [`StaticMeshAsset`].
 ///
 /// The vertex buffers are ordered to match the renderer's vertex buffer
-/// layouts (`renderer::mesh::vertex_types`): index 0 is the position stream,
+/// layouts (`renderer::drawable::vertex_types`): index 0 is the position stream,
 /// index 1 is the attribute stream.
 pub struct GpuStaticMesh {
     pub vertex_buffers: Vec<wgpu::Buffer>,

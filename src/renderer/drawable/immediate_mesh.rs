@@ -8,12 +8,9 @@ use crate::{
             TangentRecalculator, VertexReconditionable, VertexReconditionableAttributeWrite
         }
     }, renderer::{
-        mesh::drawable_mesh_traits::{
-            DrawableMesh,
-            ImmediateDrawableMesh
-        },
-        pipeline::pbr_material::PBRMaterial,
-        resources::{
+        drawable::drawable_mesh_traits::{
+            DrawableMesh, ImmediateDrawableMesh, Mesh
+        }, pipeline::pbr_material::PBRMaterial, resources::{
             bindless::BindlessResources,
             mesh_layout::MeshLayout,
         }
@@ -120,7 +117,7 @@ impl ImmediateMeshBuilder {
     }
 }
 
-impl super::Mesh for ImmediateMesh {
+impl Mesh for ImmediateMesh {
     fn get_vertex_buffer(&self) -> &[wgpu::Buffer] {
         &self.vertex_buffer_arr
     }

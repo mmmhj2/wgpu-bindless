@@ -1,11 +1,6 @@
 use crate::{
-    asset::asset_types::static_mesh_asset::GpuStaticMesh,
-    renderer::{
-        mesh::{
-            Mesh,
-            vertex_types::VertexType
-        },
-        pipeline::pbr_material::PBRMaterial,
+    asset::asset_types::static_mesh_asset::GpuStaticMesh, renderer::{
+        drawable::{drawable_mesh_traits::Mesh, vertex_types::VertexType}, pipeline::pbr_material::PBRMaterial,
     }
 };
 

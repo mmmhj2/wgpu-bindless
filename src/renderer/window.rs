@@ -3,7 +3,7 @@ use std::sync::Arc;
 use winit::window::Window;
 
 use crate::renderer::{
-    mesh::{drawable_mesh_traits::DrawableMesh, immediate_mesh::ImmediateMeshBuilder},
+    drawable::{drawable_mesh_traits::DrawableMesh, immediate_mesh::ImmediateMeshBuilder},
     orchestrator::{RenderOrchestrator, RendererConfig},
     pipeline::{
         key::{PipelineKey, VertexLayoutKey},
