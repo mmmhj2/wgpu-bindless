@@ -85,7 +85,6 @@ impl RendererState for State {
         ).await;
 
         let scene_format = orchestrator.scene_format();
-        let surface_format = orchestrator.surface_format();
         let camera_bgl = orchestrator.camera().get_bind_group_layout().clone();
         let mut skybox = {
             let (device, pipelines) = orchestrator.device_and_pipelines_mut();
@@ -98,10 +97,13 @@ impl RendererState for State {
             )
         };
         {
-            let (device, postfx) = orchestrator.device_and_postfx_mut();
-            let postfx = postfx.expect("postfx should be enabled");
-            postfx.push_pass(Box::new(BloomPass::new(device, scene_format)));
-            postfx.push_pass(Box::new(AcesTonemapPass::new(device, scene_format, surface_format)));
+            let mut postfx = orchestrator
+                .postfx_build_context()
+                .expect("postfx should be enabled");
+            let bloom = BloomPass::new(&mut postfx);
+            postfx.push_pass(bloom);
+            let tonemap = AcesTonemapPass::new(&mut postfx);
+            postfx.push_pass(tonemap);
         }
 
         // Load through the import manifest: on the first run the jobs are

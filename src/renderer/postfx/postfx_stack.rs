@@ -47,25 +47,34 @@ impl<'a> PostFxExtraInputs<'a> {
     }
 }
 
-/// Read-only view of the global sampled-texture table.
+/// Read-only view of the global sampled-texture and sampler tables.
 ///
-/// Post-processing passes may sample from this table, but must not register
-/// render targets in it.
+/// Post-processing passes sample from this table (the bind group is always
+/// bound at group 0), but must not register render targets in it.
 pub struct BindlessFrame<'a> {
     pub resources: &'a BindlessResources,
     pub bind_group: &'a wgpu::BindGroup,
-    pub group_index: u32,
 }
 
 /// Execution context handed to a single post-processing pass.
+///
+/// Bind group conventions:
+/// * group 0 = global bindless table (sampled textures and samplers);
+/// * group 1 = pass-local input textures.
+///
+/// Passes sample through `bindless_samplers[immediates.sampler_index]`, where
+/// the sampler handle is registered at build time through
+/// [`PostFxBuildContext::create_sampler`].
+///
+/// [`PostFxBuildContext::create_sampler`]: crate::renderer::postfx::build_context::PostFxBuildContext::create_sampler
 pub struct PostFxContext<'a> {
     pub device: &'a wgpu::Device,
     pub encoder: &'a mut wgpu::CommandEncoder,
     pub size: (u32, u32),
 
-    /// Optional read-only bindless resources for passes that sample global
-    /// textures. Render targets stay in the pass-owned framebuffers.
-    pub bindless: Option<&'a BindlessFrame<'a>>,
+    /// Read-only bindless resources. Render targets stay in the pass-owned
+    /// framebuffers.
+    pub bindless: &'a BindlessFrame<'a>,
 
     /// The chain's current input: the scene color for the first pass, and the
     /// previous pass's output afterwards.
@@ -188,12 +197,6 @@ pub trait PostFxPass {
     /// External inputs this pass reads, validated by the stack before execution.
     fn requires(&self) -> &'static [PostFxInput] { &[] }
 
-    /// Whether this pass samples the global bindless texture table.
-    ///
-    /// Render targets must never be registered there; only read-only sampled
-    /// textures are exposed through [`BindlessFrame`].
-    fn requires_bindless(&self) -> bool { false }
-
     /// How this pass writes its result.
     ///
     /// Defaults to [`OutputMode::separate`].
@@ -255,12 +258,10 @@ impl PostFxStack {
 
     pub fn get_hdr_format(&self) -> wgpu::TextureFormat { self.hdr_format }
 
-    pub fn has_passes(&self) -> bool { !self.passes.is_empty() }
+    /// Format the final pass must write to (usually the swapchain format).
+    pub fn get_output_format(&self) -> wgpu::TextureFormat { self.output_format }
 
-    /// Whether any registered pass needs the global bindless texture table.
-    pub fn requires_bindless(&self) -> bool {
-        self.passes.iter().any(|pass| pass.requires_bindless())
-    }
+    pub fn has_passes(&self) -> bool { !self.passes.is_empty() }
 
     /// The HDR texture the scene must be rendered into before [`PostFxStack::run`].
     pub fn scene_target(&self) -> &wgpu::TextureView {
@@ -319,7 +320,7 @@ impl PostFxStack {
         ce: &mut wgpu::CommandEncoder,
         final_view: &wgpu::TextureView,
         inputs: &PostFxExtraInputs<'_>,
-        bindless: Option<&BindlessFrame<'_>>,
+        bindless: &BindlessFrame<'_>,
     ) {
         let count = self.passes.len();
         assert!(count > 0, "PostFxStack has no passes to run.");

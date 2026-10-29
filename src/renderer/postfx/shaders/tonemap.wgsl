@@ -1,11 +1,18 @@
-@group(0) @binding(0)
+// HDR color produced by the scene pass. It is a pass-private framebuffer, so
+// it stays in the pass-local bind group (group 1) rather than the bindless
+// table. The sampler comes from the global bindless sampler table; its index
+// is supplied through the immediate block.
+@group(1) @binding(0)
 var hdr_input: texture_2d<f32>;
 // Average luminance of the scene, typically a 1x1 texture.
 // Unused for ACES tonemapping.
-@group(0) @binding(1)
+@group(1) @binding(1)
 var luminance_tx: texture_2d<f32>;
-@group(0) @binding(2)
-var hdr_input_sp: sampler;
+
+struct Immediates {
+    sampler_index: u32
+};
+var<immediate> immediates: Immediates;
 
 struct VertexOutput {
     @builtin(position) pos: vec4<f32>,
@@ -35,7 +42,7 @@ fn fs_aces(in: VertexOutput) -> @location(0) vec4<f32> {
     const D = 0.59f;
     const E = 0.14f;
 
-    var c = textureSample(hdr_input, hdr_input_sp, in.uv) * 0.6;
+    var c = textureSample(hdr_input, bindless_samplers[immediates.sampler_index], in.uv) * 0.6;
     var out = (c * (A * c + B)) / (c * (C * c + D) + E);
     return clamp(out, vec4<f32>(0.0), vec4<f32>(1.0)); 
 }

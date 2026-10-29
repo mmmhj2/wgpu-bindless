@@ -11,7 +11,10 @@ use crate::{
             surface_context::SurfaceContext,
         },
         pipeline::library::{PipelineLibrary, SceneBindGroupLayouts},
-        postfx::postfx_stack::{BindlessFrame, PostFxExtraInputs, PostFxInput, PostFxStack},
+        postfx::{
+            build_context::PostFxBuildContext,
+            postfx_stack::{BindlessFrame, PostFxExtraInputs, PostFxInput, PostFxStack},
+        },
         resources::{
             asset_cache::{GpuAssetCache, MeshUploadContext},
             bindless::BindlessResources,
@@ -179,9 +182,21 @@ impl RenderOrchestrator {
         (self.gpu.device(), &mut self.pipelines)
     }
 
-    /// Split the device from the mutable post-processing stack.
-    pub fn device_and_postfx_mut(&mut self) -> (&wgpu::Device, Option<&mut PostFxStack>) {
-        (self.gpu.device(), self.postfx.as_mut())
+    /// Build the borrowed context required to construct and register
+    /// post-processing passes.
+    ///
+    /// Returns `None` when PostFX was not enabled. The context bundles the
+    /// device, queue, global bindless table and the [`PostFxStack`], so pass
+    /// constructors can register their samplers and read the stack formats
+    /// without ad-hoc split-borrow helpers.
+    pub fn postfx_build_context(&mut self) -> Option<PostFxBuildContext<'_>> {
+        let stack = self.postfx.as_mut()?;
+        Some(PostFxBuildContext::new(
+            self.gpu.device(),
+            self.gpu.queue(),
+            &mut self.bindless,
+            stack,
+        ))
     }
 
     pub fn pipelines(&self) -> &PipelineLibrary { &self.pipelines }
@@ -372,20 +387,17 @@ impl Frame<'_> {
             if postfx.has_passes() {
                 let inputs = PostFxExtraInputs::new()
                     .with(PostFxInput::Depth, self.frame.get_depth_view());
-                let bindless_bind_group = postfx
-                    .requires_bindless()
-                    .then(|| self.bindless.get_bind_group(self.gpu.device()));
-                let bindless = bindless_bind_group.as_ref().map(|bind_group| BindlessFrame {
+                let bindless_bind_group = self.bindless.get_bind_group(self.gpu.device());
+                let bindless = BindlessFrame {
                     resources: &self.bindless,
-                    bind_group,
-                    group_index: 1,
-                });
+                    bind_group: &bindless_bind_group,
+                };
                 postfx.run(
                     self.gpu.device(),
                     &mut encoder,
                     self.frame.get_color_view(),
                     &inputs,
-                    bindless.as_ref(),
+                    &bindless,
                 );
             }
         }

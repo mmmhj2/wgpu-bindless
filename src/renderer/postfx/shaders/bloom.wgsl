@@ -2,17 +2,16 @@
 // Bloom shader adapted from https://learnopengl.com/Guest-Articles/2022/Phys.-Based-Bloom
 // which in turn is based on the ACM Siggraph 2014 presentation of Call of Duty.
 
-// Maybe we should not use binding array as it might confuse synchronization
-// because we need to use the source textures as render targets.
-@group(0) @binding(0)
+// The source texture is a pass-private framebuffer (it can be a render target),
+// so it stays in the pass-local bind group (group 1) instead of the global
+// bindless table. The sampler, however, comes from the bindless sampler table;
+// its index is supplied through the immediate block.
+@group(1) @binding(0)
 var source_tx: texture_2d<f32>;
 
-// This sampler is expected to be a bilinear, clamp-to-edge one.
-@group(0) @binding(1)
-var source_sp: sampler;
-
 struct Immediates {
-    blur_radius: f32
+    blur_radius: f32,
+    sampler_index: u32
 };
 var<immediate> immediates: Immediates;
 
@@ -20,6 +19,10 @@ struct VertexOutput {
     @builtin(position) pos: vec4f,
     @location(1) uv: vec2f
 };
+
+fn sample_source(uv: vec2f) -> vec4f {
+    return textureSample(source_tx, bindless_samplers[immediates.sampler_index], uv);
+}
 
 @vertex
 fn vs_main(
@@ -40,22 +43,22 @@ fn fs_downsample(
     var x = 1.0 / source_texels.x;
     var y = 1.0 / source_texels.y;
 
-    var a = textureSample(source_tx, source_sp, vec2(in.uv.x - 2*x, in.uv.y + 2*y)).rgb;
-    var b = textureSample(source_tx, source_sp, vec2(in.uv.x,       in.uv.y + 2*y)).rgb;
-    var c = textureSample(source_tx, source_sp, vec2(in.uv.x + 2*x, in.uv.y + 2*y)).rgb;
+    var a = sample_source(vec2(in.uv.x - 2*x, in.uv.y + 2*y)).rgb;
+    var b = sample_source(vec2(in.uv.x,       in.uv.y + 2*y)).rgb;
+    var c = sample_source(vec2(in.uv.x + 2*x, in.uv.y + 2*y)).rgb;
 
-    var d = textureSample(source_tx, source_sp, vec2(in.uv.x - 2*x, in.uv.y)).rgb;
-    var e = textureSample(source_tx, source_sp, vec2(in.uv.x,       in.uv.y)).rgb;
-    var f = textureSample(source_tx, source_sp, vec2(in.uv.x + 2*x, in.uv.y)).rgb;
+    var d = sample_source(vec2(in.uv.x - 2*x, in.uv.y)).rgb;
+    var e = sample_source(vec2(in.uv.x,       in.uv.y)).rgb;
+    var f = sample_source(vec2(in.uv.x + 2*x, in.uv.y)).rgb;
 
-    var g = textureSample(source_tx, source_sp, vec2(in.uv.x - 2*x, in.uv.y - 2*y)).rgb;
-    var h = textureSample(source_tx, source_sp, vec2(in.uv.x,       in.uv.y - 2*y)).rgb;
-    var i = textureSample(source_tx, source_sp, vec2(in.uv.x + 2*x, in.uv.y - 2*y)).rgb;
+    var g = sample_source(vec2(in.uv.x - 2*x, in.uv.y - 2*y)).rgb;
+    var h = sample_source(vec2(in.uv.x,       in.uv.y - 2*y)).rgb;
+    var i = sample_source(vec2(in.uv.x + 2*x, in.uv.y - 2*y)).rgb;
 
-    var j = textureSample(source_tx, source_sp, vec2(in.uv.x - x, in.uv.y + y)).rgb;
-    var k = textureSample(source_tx, source_sp, vec2(in.uv.x + x, in.uv.y + y)).rgb;
-    var l = textureSample(source_tx, source_sp, vec2(in.uv.x - x, in.uv.y - y)).rgb;
-    var m = textureSample(source_tx, source_sp, vec2(in.uv.x + x, in.uv.y - y)).rgb;
+    var j = sample_source(vec2(in.uv.x - x, in.uv.y + y)).rgb;
+    var k = sample_source(vec2(in.uv.x + x, in.uv.y + y)).rgb;
+    var l = sample_source(vec2(in.uv.x - x, in.uv.y - y)).rgb;
+    var m = sample_source(vec2(in.uv.x + x, in.uv.y - y)).rgb;
 
     var downsample = e*0.125;
     downsample += (a+c+g+i)*0.03125;
@@ -71,17 +74,17 @@ fn fs_upsample(
     var x = immediates.blur_radius;
     var y = immediates.blur_radius;
 
-    var a = textureSample(source_tx, source_sp, vec2(in.uv.x - x, in.uv.y + y)).rgb;
-    var b = textureSample(source_tx, source_sp, vec2(in.uv.x,     in.uv.y + y)).rgb;
-    var c = textureSample(source_tx, source_sp, vec2(in.uv.x + x, in.uv.y + y)).rgb;
+    var a = sample_source(vec2(in.uv.x - x, in.uv.y + y)).rgb;
+    var b = sample_source(vec2(in.uv.x,     in.uv.y + y)).rgb;
+    var c = sample_source(vec2(in.uv.x + x, in.uv.y + y)).rgb;
 
-    var d = textureSample(source_tx, source_sp, vec2(in.uv.x - x, in.uv.y)).rgb;
-    var e = textureSample(source_tx, source_sp, vec2(in.uv.x,     in.uv.y)).rgb;
-    var f = textureSample(source_tx, source_sp, vec2(in.uv.x + x, in.uv.y)).rgb;
+    var d = sample_source(vec2(in.uv.x - x, in.uv.y)).rgb;
+    var e = sample_source(vec2(in.uv.x,     in.uv.y)).rgb;
+    var f = sample_source(vec2(in.uv.x + x, in.uv.y)).rgb;
 
-    var g = textureSample(source_tx, source_sp, vec2(in.uv.x - x, in.uv.y - y)).rgb;
-    var h = textureSample(source_tx, source_sp, vec2(in.uv.x,     in.uv.y - y)).rgb;
-    var i = textureSample(source_tx, source_sp, vec2(in.uv.x + x, in.uv.y - y)).rgb;
+    var g = sample_source(vec2(in.uv.x - x, in.uv.y - y)).rgb;
+    var h = sample_source(vec2(in.uv.x,     in.uv.y - y)).rgb;
+    var i = sample_source(vec2(in.uv.x + x, in.uv.y - y)).rgb;
 
     var upsample = e*4.0;
     upsample += (b+d+f+h)*2.0;
@@ -96,5 +99,5 @@ fn fs_upsample(
 fn fs_composite(
     in: VertexOutput
 ) -> @location(0) vec4f {
-    return vec4f(textureSample(source_tx, source_sp, vec2(in.uv.x, in.uv.y)).rgb, 0.0);
+    return vec4f(sample_source(vec2(in.uv.x, in.uv.y)).rgb, 0.0);
 }

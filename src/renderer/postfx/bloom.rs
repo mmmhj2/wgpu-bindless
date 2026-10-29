@@ -1,9 +1,24 @@
 use std::num::NonZero;
 
 use crate::renderer::{
-    postfx::{framebuffers::FramebufferMipChain, postfx_stack::{OutputMode, PostFxContext, PostFxPass, PostFxResourceCache}},
-    resources::sampler::SamplerDescription,
+    pipeline::recipe::bindless_resources_shader_module,
+    postfx::{
+        build_context::{POSTFX_LINEAR_SAMPLER, PostFxBuildContext},
+        framebuffers::FramebufferMipChain,
+        postfx_stack::{OutputMode, PostFxContext, PostFxPass, PostFxResourceCache},
+    },
+    resources::bindless::SamplerHandle,
 };
+
+/// Push constants consumed by the bloom shaders.
+///
+/// Must match `Immediates` in `shaders/bloom.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct BloomImmediates {
+    blur_radius: f32,
+    sampler_index: u32,
+}
 
 /// Screen space bloom pass.
 ///
@@ -21,7 +36,8 @@ pub struct BloomPass {
     // Pipeline for final composition.
     ppl_bloom_composite: wgpu::RenderPipeline,
 
-    input_sampler: wgpu::Sampler,
+    /// Sampler registered in the global bindless sampler table.
+    sampler: SamplerHandle,
     internal_format: wgpu::TextureFormat,
     mip_chain: FramebufferMipChain
 }
@@ -43,34 +59,26 @@ impl BloomPass {
                     multisampled: false
                 },
                 count:None,
-            },
-            wgpu::BindGroupLayoutEntry{
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None
             }
         ]
     };
 
-    const INPUT_SAMPLER: SamplerDescription = SamplerDescription {
-        address_mode: [wgpu::AddressMode::ClampToEdge; 3],
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-        // For some big brain reason rust decide to not support a const default trait...
-        compare: None,
-        anisotropy_clamp: 1,
-        border_color: None,
-    };
-
-    pub fn new(device: &wgpu::Device, hdr_format: wgpu::TextureFormat) -> Self {
+    pub fn new(ctx: &mut PostFxBuildContext<'_>) -> Self {
+        let device = ctx.device;
         let bgl_bloom = device.create_bind_group_layout(&Self::DBGL_BLOOM);
 
-        let module = device.create_shader_module(wgpu::include_wgsl!("./shaders/bloom.wgsl"));
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(&bgl_bloom)], immediate_size: 4 });
+        let module = bindless_resources_shader_module(
+            device,
+            "Bloom shader",
+            include_str!("./shaders/bloom.wgsl"),
+        );
+        let layout = ctx.create_pipeline_layout(
+            "Bloom pipeline layout",
+            &bgl_bloom,
+            std::mem::size_of::<BloomImmediates>() as u32,
+        );
 
-        let internal_format = hdr_format;
+        let internal_format = ctx.hdr_format();
 
         let mut descriptor = wgpu::RenderPipelineDescriptor {
             label: Some("Bloom Downsample Pipeline"),
@@ -149,25 +157,24 @@ impl BloomPass {
         });
         let ppl_bloom_composite = device.create_render_pipeline(&descriptor);
 
-        let input_sampler = device.create_sampler(&wgpu::SamplerDescriptor::from(&Self::INPUT_SAMPLER));
+        let sampler = ctx.create_sampler(POSTFX_LINEAR_SAMPLER);
         Self {
             bgl_bloom,
             ppl_bloom_down,
             ppl_bloom_up,
             ppl_bloom_composite,
-            input_sampler,
+            sampler,
             internal_format,
             mip_chain: FramebufferMipChain::new(internal_format),
         }
     }
 
-    fn build_bind_group(&self, device: &wgpu::Device, tx: &wgpu::TextureView, sp: &wgpu::Sampler) -> wgpu::BindGroup {
+    fn build_bind_group(&self, device: &wgpu::Device, tx: &wgpu::TextureView) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &self.bgl_bloom,
             entries: &[
                 wgpu::BindGroupEntry{ binding: 0, resource: wgpu::BindingResource::TextureView(tx) },
-                wgpu::BindGroupEntry{ binding: 1, resource: wgpu::BindingResource::Sampler(sp)}
             ]
         })
     }
@@ -194,8 +201,13 @@ impl PostFxPass for BloomPass {
         let device = ctx.device;
         let input = ctx.input;
         let output = ctx.output;
+        let bindless = ctx.bindless;
 
-        let sampler = &self.input_sampler;
+        let immediates = BloomImmediates {
+            blur_radius: Self::BLOOM_RADIUS,
+            sampler_index: self.sampler.index() as u32,
+        };
+        let immediate_bytes = bytemuck::bytes_of(&immediates);
         let ce = &mut ctx.encoder;
 
         let mipchain = self.mip_chain.get_textures();
@@ -236,10 +248,11 @@ impl PostFxPass for BloomPass {
                 multiview_mask: None,
             });
 
-            let bg = self.build_bind_group(device, fb, sampler);
+            let bg = self.build_bind_group(device, fb);
             rp.set_pipeline(&self.ppl_bloom_down);
-            rp.set_immediates(0, bytemuck::cast_slice(&[Self::BLOOM_RADIUS]));
-            rp.set_bind_group(0, &bg, &[]);
+            rp.set_immediates(0, immediate_bytes);
+            rp.set_bind_group(0, bindless.bind_group, &[]);
+            rp.set_bind_group(1, &bg, &[]);
             rp.draw(0..3, 0..1);
         }
 
@@ -262,10 +275,11 @@ impl PostFxPass for BloomPass {
                 multiview_mask: None,
             });
 
-            let bg = self.build_bind_group(device, &mipchain[mip - 1], sampler);
+            let bg = self.build_bind_group(device, &mipchain[mip - 1]);
             rp.set_pipeline(&self.ppl_bloom_down);
-            rp.set_immediates(0, bytemuck::cast_slice(&[Self::BLOOM_RADIUS]));
-            rp.set_bind_group(0, &bg, &[]);
+            rp.set_immediates(0, immediate_bytes);
+            rp.set_bind_group(0, bindless.bind_group, &[]);
+            rp.set_bind_group(1, &bg, &[]);
             rp.draw(0..3, 0..1);
         }
 
@@ -289,10 +303,11 @@ impl PostFxPass for BloomPass {
                 multiview_mask: None,
             });
 
-            let bg = self.build_bind_group(device, &mipchain[mip], sampler);
+            let bg = self.build_bind_group(device, &mipchain[mip]);
             rp.set_pipeline(&self.ppl_bloom_up);
-            rp.set_immediates(0, bytemuck::cast_slice(&[Self::BLOOM_RADIUS]));
-            rp.set_bind_group(0, &bg, &[]);
+            rp.set_immediates(0, immediate_bytes);
+            rp.set_bind_group(0, bindless.bind_group, &[]);
+            rp.set_bind_group(1, &bg, &[]);
             rp.draw(0..3, 0..1);
         }
 
@@ -315,12 +330,31 @@ impl PostFxPass for BloomPass {
                 multiview_mask: None,
             });
 
-            let bg = self.build_bind_group(device, &mipchain[0], sampler);
+            let bg = self.build_bind_group(device, &mipchain[0]);
             rp.set_pipeline(&self.ppl_bloom_composite);
             rp.set_blend_constant(wgpu::Color{r: Self::BLOOM_STRENGTH, g: Self::BLOOM_STRENGTH, b: Self::BLOOM_STRENGTH, a: 1.0});
-            rp.set_immediates(0, bytemuck::cast_slice(&[Self::BLOOM_RADIUS]));
-            rp.set_bind_group(0, &bg, &[]);
+            rp.set_immediates(0, immediate_bytes);
+            rp.set_bind_group(0, bindless.bind_group, &[]);
+            rp.set_bind_group(1, &bg, &[]);
             rp.draw(0..3, 0..1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BloomImmediates;
+
+    #[test]
+    fn bloom_immediates_match_wgsl_layout() {
+        assert_eq!(std::mem::size_of::<BloomImmediates>(), 8);
+        assert_eq!(std::mem::offset_of!(BloomImmediates, blur_radius), 0);
+        assert_eq!(std::mem::offset_of!(BloomImmediates, sampler_index), 4);
+
+        let bytes = bytemuck::bytes_of(&BloomImmediates {
+            blur_radius: 0.5,
+            sampler_index: 7,
+        });
+        assert_eq!(bytes.len(), 8);
     }
 }
