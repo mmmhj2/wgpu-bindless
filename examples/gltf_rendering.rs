@@ -9,7 +9,7 @@ use rust_renderer::{
         importer::{gltf_importer::GltfImporter, image_file_importer::ColorSpace},
     },
     renderer::{
-        mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_instance::StaticMeshInstance},
+        mesh::{drawable_mesh_traits::DrawableMesh, static_mesh_batch::StaticMeshBatch},
         orchestrator::{RenderOrchestrator, RendererConfig},
         pipeline::{
             key::{PipelineKey, VertexLayoutKey},
@@ -34,7 +34,7 @@ const GLTF_PATH: &str = "resource/DamagedHelmet.glb";
 struct State {
     orchestrator: RenderOrchestrator,
     skybox: SkyboxManager,
-    gltf_models: Vec<StaticMeshInstance>,
+    gltf_models: Vec<StaticMeshBatch>,
     camera: CameraPerspective,
     light: Light,
     _asset_manager: AssetManager
@@ -141,11 +141,17 @@ impl RendererState for State {
             let asset = asset.read().expect("failed to read gltf scene asset");
             if let SceneAssetType(scene) = asset.get_data() {
                 let mut ctx = orchestrator.mesh_upload_context(&asset_manager);
-                StaticMeshInstance::create_from_scene_asset(&mut ctx, scene)
+                StaticMeshBatch::create_opaque_from_scene_asset(&mut ctx, scene)
             } else {
                 panic!("asset '{scene_name}' is not a scene asset");
             }
         };
+
+        log::info!(
+            "Loaded {} static mesh batches covering {} instances",
+            gltf_models.len(),
+            gltf_models.iter().map(StaticMeshBatch::instance_count).sum::<u32>()
+        );
 
         let skybox_texture = {
             let asset = asset_manager.get_asset("skybox").expect("skybox array asset should be present");

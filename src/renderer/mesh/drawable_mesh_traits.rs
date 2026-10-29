@@ -10,6 +10,12 @@ pub trait DrawableMesh : Mesh {
     /// the matrix directly with Rust array, it will be fine.
     fn get_model_matrix_bind_group(&self) -> &wgpu::BindGroup;
 
+    /// Range of instances passed to the draw call.
+    ///
+    /// The range start is the first instance index, and each draw's
+    /// `@builtin(instance_index)` indexes the bound model-matrix storage
+    /// buffer. A single-instance mesh returns `0..1`; a batch of N instances
+    /// returns `0..N`.
     fn get_instance_range(&self) -> Range<u32>;
 
     /// Get the material description of the mesh.

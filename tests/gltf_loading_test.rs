@@ -10,7 +10,7 @@ mod test {
             importer::gltf_importer::GltfImporter,
         },
         renderer::{
-            mesh::static_mesh_instance::StaticMeshInstance,
+            mesh::static_mesh_batch::StaticMeshBatch,
             orchestrator::{RenderOrchestrator, RendererConfig},
             window::RendererState,
         },
@@ -19,7 +19,7 @@ mod test {
 
     pub struct State {
         orchestrator: RenderOrchestrator,
-        _gltf_models: Vec<StaticMeshInstance>,
+        _gltf_models: Vec<StaticMeshBatch>,
         _asset_manager: AssetManager,
     }
 
@@ -38,13 +38,22 @@ mod test {
                 let asset = asset.read().expect("failed to read gltf scene asset");
                 if let AssetData::SceneAssetType(scene) = asset.get_data() {
                     let mut ctx = orchestrator.mesh_upload_context(&asset_manager);
-                    StaticMeshInstance::create_from_scene_asset(&mut ctx, scene)
+                    StaticMeshBatch::create_opaque_from_scene_asset(&mut ctx, scene)
                 } else {
                     panic!("asset '{scene_name}' is not a scene asset");
                 }
             };
 
-            println!("Read {} models in total.", gltf_models.len());
+            println!("Read {} batches in total.", gltf_models.len());
+            assert_eq!(
+                gltf_models.len(),
+                2,
+                "test_two_cubes has two distinct primitives"
+            );
+            assert!(
+                gltf_models.iter().all(|batch| batch.instance_count() == 1),
+                "test_two_cubes does not share meshes, so each batch should cover one instance"
+            );
 
             Self {
                 orchestrator,

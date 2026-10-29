@@ -3,7 +3,7 @@ use crate::renderer::mesh::vertex_types::VertexType;
 pub mod vertex_types;
 pub mod immediate_mesh;
 pub mod static_mesh;
-pub mod static_mesh_instance;
+pub mod static_mesh_batch;
 pub mod drawable_mesh_traits;
 
 pub trait Mesh {
