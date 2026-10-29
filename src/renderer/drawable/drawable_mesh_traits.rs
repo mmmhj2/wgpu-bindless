@@ -46,6 +46,13 @@ pub trait DrawableMesh : Mesh {
     /// Get the material description of the mesh.
     fn get_material(&self) -> &PBRMaterial;
 
+    /// Record draw calls into the given render pass.
+    /// 
+    /// Set up per-object bind groups and immediates, bind vertex and index
+    /// buffer, and record the draw call.
+    /// 
+    /// To actually get the draw call correct, you must bind correct pipelines
+    /// to the render pass before drawing the mesh proper.
     fn draw(&self, rp: &mut wgpu::RenderPass) -> () {
         rp.set_bind_group(3, Some(self.get_model_matrix_bind_group()), &[]);
         rp.set_immediates(0, &self.get_material().as_u8_arr());

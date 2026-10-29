@@ -26,6 +26,7 @@ pub struct StaticMeshAsset {
 /// The vertex buffers are ordered to match the renderer's vertex buffer
 /// layouts (`renderer::drawable::vertex_types`): index 0 is the position stream,
 /// index 1 is the attribute stream.
+#[derive(Debug)]
 pub struct GpuStaticMesh {
     pub vertex_buffers: Vec<wgpu::Buffer>,
     pub index_buffer: Option<wgpu::Buffer>,

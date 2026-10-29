@@ -5,6 +5,7 @@ use crate::{
 };
 
 /// Actual instanced mesh, whose data have already been pushed onto GPU.
+#[derive(Debug)]
 pub(crate) struct StaticMesh {
     geometry: GpuStaticMesh,
     material: PBRMaterial

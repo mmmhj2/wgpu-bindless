@@ -7,24 +7,17 @@ use rust_renderer::{
         asset_store::{ImportJob, ImportManifest, ManifestEntry},
         asset_types::{AssetData::{SceneAssetType, TextureAssetType}, GpuAssetType},
         importer::{gltf_importer::GltfImporter, image_file_importer::ColorSpace},
-    },
-    renderer::{
-        drawable::{drawable_mesh_traits::DrawableMesh, static_mesh_batch::StaticMeshBatch},
-        orchestrator::{RenderOrchestrator, RendererConfig},
-        pipeline::{
+    }, renderer::{
+        drawable::{draw_list::{DrawList, DrawableType}, drawable_mesh_traits::DrawableMesh, static_mesh_batch::StaticMeshBatch}, orchestrator::{RenderOrchestrator, RendererConfig}, pipeline::{
             key::{PipelineKey, VertexLayoutKey},
             rasterizer_pipeline::UseRasterizerPipeline,
-        },
-        resources::{
-            camera::{CameraPerspective, CameraPerspectiveBuilder, HasViewMatrix},
-            lighting::{Light, LightKindEnum},
-        },
-        scene::skybox::SkyboxManager,
-        postfx::{
+        }, postfx::{
             bloom::BloomPass,
             tonemap::AcesTonemapPass
-        },
-        window::RendererState
+        }, resources::{
+            camera::{CameraPerspective, CameraPerspectiveBuilder, HasViewMatrix},
+            lighting::{Light, LightKindEnum},
+        }, scene::{graph::SceneGraph, skybox::SkyboxManager}, window::RendererState
     },
 };
 use winit::{application::ApplicationHandler, event::{KeyEvent, WindowEvent}, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window};
@@ -34,7 +27,7 @@ const GLTF_PATH: &str = "resource/DamagedHelmet.glb";
 struct State {
     orchestrator: RenderOrchestrator,
     skybox: SkyboxManager,
-    gltf_models: Vec<StaticMeshBatch>,
+    draw_list: DrawList,
     camera: CameraPerspective,
     light: Light,
     _asset_manager: AssetManager
@@ -135,23 +128,19 @@ impl RendererState for State {
         }
         asset_manager.import_manifest(manifest_path).expect("failed to import manifest");
 
-        let gltf_models = {
+        let draw_list = {
             let scene_name = GltfImporter::scene_subasset_name(Path::new(GLTF_PATH), 0).expect("failed to resolve scene subasset name");
             let asset = asset_manager.get_asset(&scene_name).expect("gltf scene asset should be present");
             let asset = asset.read().expect("failed to read gltf scene asset");
             if let SceneAssetType(scene) = asset.get_data() {
                 let mut ctx = orchestrator.mesh_upload_context(&asset_manager);
-                StaticMeshBatch::create_opaque_from_scene_asset(&mut ctx, scene)
+                SceneGraph::from_asset(scene).into_draw_list(&mut ctx)
             } else {
                 panic!("asset '{scene_name}' is not a scene asset");
             }
         };
 
-        log::info!(
-            "Loaded {} static mesh batches covering {} instances",
-            gltf_models.len(),
-            gltf_models.iter().map(StaticMeshBatch::instance_count).sum::<u32>()
-        );
+        log::info!("Loaded {} static mesh batches.", draw_list.count(DrawableType::All));
 
         let skybox_texture = {
             let asset = asset_manager.get_asset("skybox").expect("skybox array asset should be present");
@@ -173,7 +162,7 @@ impl RendererState for State {
         Self {
             orchestrator,
             skybox,
-            gltf_models,
+            draw_list,
             camera,
             light,
             _asset_manager: asset_manager
@@ -188,7 +177,6 @@ impl RendererState for State {
         let camera = self.camera.clone();
         let light = self.light.clone();
         let skybox = &self.skybox;
-        let models = &self.gltf_models;
 
         self.orchestrator.with_frame(|frame| {
             frame.render_scene(
@@ -212,9 +200,7 @@ impl RendererState for State {
                             VertexLayoutKey::BASIC,
                         )
                     );
-                    for model in models {
-                        model.draw(render_pass);
-                    }
+                    self.draw_list.draw(DrawableType::Opaque, render_pass);
 
                     skybox.draw_skybox(gpu.device(), scene.pipelines, render_pass);
                 },
