@@ -9,11 +9,15 @@ use crate::{
             asset_cache::MeshUploadContext,
             mesh_layout::MeshLayout,
         },
+        scene::graph::SceneGraph,
     },
 };
 
-/// Instances of instanced mesh.
-/// Holds unique data for each instance such as model matrix, and a reference to the underlying mesh.
+/// One renderable instance of a static mesh.
+///
+/// Each instance owns a single model-matrix buffer.
+/// 
+/// TODO: Implement proper instancing
 #[derive(Clone)]
 pub struct StaticMeshInstance {
     mesh            : Arc<StaticMesh>,
@@ -39,20 +43,30 @@ impl StaticMeshInstance {
 
     /// Create instances from an imported scene asset.
     ///
-    /// The scene asset is typically imported via the asset importer, and
-    /// contains a list of mesh instances with their world matrices.
-    ///
-    /// The model matrix buffers for each instance will be created and uploaded to the GPU.
-    /// If the asset has not been uploaded to the GPU, it will be uploaded via
-    /// [`MeshUploadContext::static_mesh_from_asset()`] during this process.
+    /// Convenience wrapper that builds a read-only [`SceneGraph`] and delegates
+    /// to [`StaticMeshInstance::create_from_scene_graph`]. Callers that need to
+    /// inspect or retain the hierarchy should build the graph themselves.
     pub fn create_from_scene_asset(
         ctx: &mut MeshUploadContext<'_>,
         scene: &SceneAsset,
     ) -> Vec<Self> {
-        let mut ret = Vec::new();
+        let graph = SceneGraph::from_asset(scene);
+        Self::create_from_scene_graph(ctx, &graph)
+    }
 
-        for instance in &scene.instances {
-            let name = instance.mesh_subasset_name.as_str();
+    /// Create one instance per mesh primitive in `graph`.
+    ///
+    /// The model matrix buffer for each instance is created and uploaded here.
+    /// If a mesh has not been uploaded to the GPU yet, it is uploaded via
+    /// [`MeshUploadContext::static_mesh_from_asset()`] during this process.
+    pub fn create_from_scene_graph(
+        ctx: &mut MeshUploadContext<'_>,
+        graph: &SceneGraph,
+    ) -> Vec<Self> {
+        let mut ret = Vec::with_capacity(graph.mesh_instance_count());
+
+        for instance in graph.mesh_instances() {
+            let name = instance.mesh_subasset_name;
 
             let asset = ctx.assets.get_asset(name).unwrap_or_else(|| panic!("static mesh asset '{name}' not found."));
             let asset = asset.read().expect("failed to acquire read lock for static mesh asset.");
@@ -63,12 +77,12 @@ impl StaticMeshInstance {
 
             let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor{
                 label: Some("model matrix buffer"),
-                size: (std::mem::size_of::<f32>() * 16) as u64,
+                size: std::mem::size_of::<[[f32; 4]; 4]>() as u64,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             let bg = Self::generate_bind_group(ctx.device, ctx.mesh_layout, &buffer);
-            ctx.queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&instance.world_matrix));
+            ctx.queue.write_buffer(&buffer, 0, bytemuck::bytes_of(&instance.world_matrix));
 
             ret.push(
                 Self{
