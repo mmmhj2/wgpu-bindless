@@ -26,3 +26,15 @@ pub struct VertexBufferOthers {
     /// Texture coordinate channel 0
     pub uv0: [f32; 2]
 }
+
+/// Vertex attributes used for animation.
+/// 
+/// Note: These vertex attributes are not sent to the rasterizer pipeline.
+/// Instead, they should be preprocessed by a skinning compute shader to produce
+/// the actual vertex buffer every frame.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct VertexBufferAnimation {
+    pub bone_weights: [f32; 4],
+    pub bone_indices: [u32; 4]
+}

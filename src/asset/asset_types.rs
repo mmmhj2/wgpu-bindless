@@ -1,5 +1,7 @@
+pub mod animation_asset;
 pub mod scene_asset;
 pub mod static_mesh_asset;
+pub mod skinned_mesh_asset;
 pub mod texture_asset;
 pub mod vertex;
 
@@ -8,7 +10,7 @@ use std::{fs::File, io::{Read, Write}};
 use image::EncodableLayout;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::asset::{error::AssetIoError, asset_types::{scene_asset::SceneAsset, static_mesh_asset::StaticMeshAsset, texture_asset::TextureAsset}, provenance::ImportProvenance};
+use crate::asset::{asset_types::{scene_asset::SceneAsset, skinned_mesh_asset::SkinnedMeshAsset, static_mesh_asset::StaticMeshAsset, texture_asset::TextureAsset}, error::AssetIoError, provenance::ImportProvenance};
 
 /// Name of the ZIP entry holding the serialized [`AssetMetadata`].
 const METADATA_ENTRY: &str = "metadata";
@@ -47,7 +49,9 @@ impl AssetMetadata {
 pub enum AssetData {
     StaticMeshAssetType(StaticMeshAsset),
     TextureAssetType(TextureAsset),
-    SceneAssetType(SceneAsset)
+    SceneAssetType(SceneAsset),
+    SkinnedMeshAssetType(SkinnedMeshAsset),
+    SkinnedAnimationAssetType(())
 }
 
 impl AssetData {
@@ -57,6 +61,8 @@ impl AssetData {
             AssetData::StaticMeshAssetType(_) => AssetKind::StaticMesh,
             AssetData::TextureAssetType(_) => AssetKind::Texture,
             AssetData::SceneAssetType(_) => AssetKind::Scene,
+            AssetData::SkinnedMeshAssetType(_) => AssetKind::SkinnedMesh,
+            AssetData::SkinnedAnimationAssetType(_) => AssetKind::SkinnedAnimation,
         }
     }
 }
@@ -69,6 +75,8 @@ pub enum AssetKind {
     StaticMesh,
     Texture,
     Scene,
+    SkinnedMesh,
+    SkinnedAnimation
 }
 
 impl AssetKind {
@@ -78,6 +86,8 @@ impl AssetKind {
             AssetKind::StaticMesh => <StaticMeshAsset as ConcreteAssetType>::SCHEMA_VERSION,
             AssetKind::Texture => <TextureAsset as ConcreteAssetType>::SCHEMA_VERSION,
             AssetKind::Scene => <SceneAsset as ConcreteAssetType>::SCHEMA_VERSION,
+            AssetKind::SkinnedMesh => todo!(),
+            AssetKind::SkinnedAnimation => todo!()
         }
     }
 }
