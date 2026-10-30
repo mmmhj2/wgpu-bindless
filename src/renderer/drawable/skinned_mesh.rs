@@ -27,13 +27,16 @@ pub struct SkinnedAnimation {
 }
 
 impl SkinnedAnimation {
-    /// Resolve the frame index for a playback time, wrapping at the end.
-    pub fn frame_at(&self, time_seconds: f32) -> u32 {
+    /// Resolve the fractal frame index for a playback time, wrapping at the end.
+    pub fn frame_at(&self, time_seconds: f32) -> f32 {
         if self.fps <= 0.0 {
-            return 0;
+            panic!("the animation somehow has a negative FPS");
         }
-        let frames = self.frames.max(1);
-        ((time_seconds.max(0.0) * self.fps) as u32) % frames
+        if self.frames <= 0 {
+            panic!("the animation has no duration");
+        }
+        let duration = (self.frames as f32) / self.fps;
+        (time_seconds % duration) / duration * (self.frames as f32)
     }
 }
 

@@ -33,7 +33,7 @@ struct Immediate {
     // Packed texture and sampler index.
     anim_tex: u32,
     // frame id of the animation
-    frame: u32
+    frame: f32
 };
 var<immediate> imm : Immediate;
 
@@ -50,12 +50,15 @@ fn load_joint_matrix(joint: u32) -> mat4x4<f32> {
     // The immediate packs the texture index in the low half.
     let texture = bindless_textures[imm.anim_tex & 0xFFFFu];
     let x = i32(joint * 4u);
-    let y = i32(imm.frame);
+    let y1 = i32(floor(imm.frame));
+    let y2 = y1 + 1;
+    let alpha = fract(imm.frame);
+    // At 30 FPS the distortion from matrix lerp are most likely negligeable.
     return mat4x4<f32>(
-        textureLoad(texture, vec2<i32>(x, y), 0),
-        textureLoad(texture, vec2<i32>(x + 1, y), 0),
-        textureLoad(texture, vec2<i32>(x + 2, y), 0),
-        textureLoad(texture, vec2<i32>(x + 3, y), 0),
+        mix(textureLoad(texture, vec2<i32>(x + 0, y1), 0), textureLoad(texture, vec2<i32>(x + 0, y2), 0), alpha),
+        mix(textureLoad(texture, vec2<i32>(x + 1, y1), 0), textureLoad(texture, vec2<i32>(x + 1, y2), 0), alpha),
+        mix(textureLoad(texture, vec2<i32>(x + 2, y1), 0), textureLoad(texture, vec2<i32>(x + 2, y2), 0), alpha),
+        mix(textureLoad(texture, vec2<i32>(x + 3, y1), 0), textureLoad(texture, vec2<i32>(x + 3, y2), 0), alpha)
     );
 }
 
