@@ -1,7 +1,10 @@
 use std::{collections::{HashMap, HashSet, VecDeque}, ffi::OsString, num::NonZeroU32, path::{Path, PathBuf}, sync::{Arc, RwLock}};
 
-use crate::asset::{asset_types::{Asset, AssetMetadata, scene_asset::{SceneAsset, SceneNodeAsset}, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat}, vertex::{VertexBufferOthers, VertexBufferPosition}}, error::ImportError, importer::{AssetImporter, ImporterContext, gltf_importer::{common::{GltfImageView, GltfImportError}, mrao::build_mrao_texture_asset}, vertex_reconditioner::{ReconditionerError, TangentRecalculator}}};
+use crate::asset::{asset_types::{Asset, AssetData, AssetMetadata, scene_asset::{SceneAsset, SceneNodeAsset}, skin_asset::{SkinAsset, SkinJoint}, skinned_mesh_asset::SkinnedMeshAsset, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat}, vertex::{VertexBufferOthers, VertexBufferPosition, VertexBufferSkinning}}, error::ImportError, importer::{AssetImporter, ImporterContext, gltf_importer::{common::{GltfImageView, GltfImportError}, mrao::build_mrao_texture_asset}, vertex_reconditioner::{ReconditionerError, TangentRecalculator}}};
 
+/// glTF importer class.
+/// 
+/// TODO: Asset import impl is too large. Try splitting it into smaller trunks.
 pub struct GltfImporter {
     // Guard it by mutex if we want to parallelize it.
     color_textures: HashSet<usize>,
@@ -22,7 +25,8 @@ pub(super) struct MraoKey {
 
 impl AssetImporter for GltfImporter {
     const IMPORTER_ID: &'static str = "gltf";
-    const IMPORTER_VERSION: u32 = 3;
+    /// 4: imports skins and skinned primitives (`.skpr_*` / `.skin_*`).
+    const IMPORTER_VERSION: u32 = 4;
 
     fn import(mut self, context: &ImporterContext) -> Result<(), ImportError> {
         if !self.path.is_file() {
@@ -47,25 +51,49 @@ impl AssetImporter for GltfImporter {
             }
         }
 
+        // glTF only associates a skin with *nodes*, so the skin <-> mesh mapping
+        // must be resolved from the scene graph before any mesh is imported.
+        let skin_usage = Self::resolve_skin_usage(&document);
+        let mut mesh_skin: HashMap<usize, usize> = HashMap::new();
+        for (skin, usage) in &skin_usage {
+            mesh_skin.entry(usage.mesh).or_insert(*skin);
+        }
+        let unskinned_meshes = Self::meshes_used_unskinned(&document);
+
         for mesh in document.meshes() {
             log::info!("Found mesh {} with {} primitives, importing...", mesh.index(), mesh.primitives().len());
 
+            let skin_index = mesh_skin.get(&mesh.index()).copied();
+            // A mesh that is also placed on a skinless node keeps its static
+            // asset, so both variants exist and neither is orphaned.
+            let needs_static = skin_index.is_none() || unskinned_meshes.contains(&mesh.index());
+
             for primitive in mesh.primitives() {
-                let asset_type = SubAssetType::Primitive { mesh: mesh.index(), primitive: primitive.index() };
-                let subasset_path = Self::generate_subasset_filename(path, asset_type)?;
-                let subasset_name = Self::generate_subasset_name(path, asset_type)?.into_string()
-                    .map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
-                let imported_mesh = Self::import_from_gltf_primitive(&mut self, &primitive, &buffers)?;
-                let imported_asset = Arc::from(
-                    RwLock::from(Asset::new(
-                        AssetMetadata::new(
-                            subasset_name.clone(),
-                            Some(subasset_path.into_boxed_path())
-                        ),
-                        crate::asset::asset_types::AssetData::StaticMeshAssetType(imported_mesh)
-                    ))
-                );
-                context.asset_batch.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(subasset_name, imported_asset);
+                let skinnable = Self::has_skinning_attributes(&primitive);
+
+                if needs_static || !skinnable {
+                    let asset_type = SubAssetType::Primitive { mesh: mesh.index(), primitive: primitive.index() };
+                    let subasset_path = Self::generate_subasset_filename(path, asset_type)?;
+                    let subasset_name = Self::generate_subasset_name(path, asset_type)?.into_string()
+                        .map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
+                    let imported_mesh = Self::import_from_gltf_primitive(&mut self, &primitive, &buffers)?;
+                    Self::queue_asset(context, subasset_name, subasset_path, AssetData::StaticMeshAssetType(imported_mesh));
+                }
+
+                if let (Some(skin_index), true) = (skin_index, skinnable) {
+                    let usage = skin_usage[&skin_index];
+                    let skin_name = Self::generate_subasset_name(
+                        path,
+                        SubAssetType::Skin { scene: usage.scene, skin: skin_index }
+                    )?.into_string().map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
+
+                    let asset_type = SubAssetType::SkinnedPrimitive { mesh: mesh.index(), primitive: primitive.index() };
+                    let subasset_path = Self::generate_subasset_filename(path, asset_type)?;
+                    let subasset_name = Self::generate_subasset_name(path, asset_type)?.into_string()
+                        .map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
+                    let imported_mesh = Self::import_skinned_from_gltf_primitive(&mut self, &primitive, &buffers, skin_name)?;
+                    Self::queue_asset(context, subasset_name, subasset_path, AssetData::SkinnedMeshAssetType(imported_mesh));
+                }
             }
         }
 
@@ -153,6 +181,29 @@ impl AssetImporter for GltfImporter {
             context.asset_batch.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(subasset_name, imported_asset);
         }
 
+        // Skins are scoped to the scene that uses them, so that `scene_node`
+        // indices can point into that scene's node arena. Importing them after
+        // the scenes keeps the log order readable; the arena indices come from
+        // the shared `build_scene_index_map`, not from the imported asset.
+        let mut skin_indices: Vec<usize> = skin_usage.keys().copied().collect();
+        skin_indices.sort_unstable();
+        for skin_index in skin_indices {
+            let usage = skin_usage[&skin_index];
+            let scene = document.scenes().nth(usage.scene)
+                .ok_or(GltfImportError::IndexOutOfRange(usage.scene))?;
+            let skin = document.skins().nth(skin_index)
+                .ok_or(GltfImportError::IndexOutOfRange(skin_index))?;
+
+            let asset_type = SubAssetType::Skin { scene: usage.scene, skin: skin_index };
+            let subasset_path = Self::generate_subasset_filename(path, asset_type)?;
+            let subasset_name = Self::generate_subasset_name(path, asset_type)?.into_string()
+                .map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
+            log::info!("Found skin {} with {} joints.", subasset_name, skin.joints().count());
+
+            let imported_skin = Self::import_from_gltf_skin(path, &document, &scene, &skin, &buffers)?;
+            Self::queue_asset(context, subasset_name, subasset_path, AssetData::SkinAssetType(imported_skin));
+        }
+
         Ok(())
     }
 }
@@ -173,11 +224,35 @@ pub(super) enum SubAssetType {
     /// GLTF primitive, which corresponds to mesh for our renderer.
     /// TODO: support multiple primitives per mesh. Maybe we should use `submesh` and map primitives to submeshes.
     Primitive { mesh: usize, primitive: usize },
+    /// GLTF primitive bound to a skin, i.e. carrying `JOINTS_0` / `WEIGHTS_0`.
+    ///
+    /// Kept separate from [`SubAssetType::Primitive`] because both variants may
+    /// exist for the same primitive when the mesh is also placed on a skinless
+    /// node.
+    SkinnedPrimitive { mesh: usize, primitive: usize },
+    /// A GLTF skin, scoped to the scene that uses it.
+    Skin { scene: usize, skin: usize },
     /// A GLTF scene, preserved as a hierarchy of nodes with local transforms.
     Scene(usize),
     /// A renderer-layout MRAO texture derived from optional MR and AO textures.
     MraoTexture(MraoKey),
 }
+
+/// Where a skin is used: the scene that references it and the mesh it deforms.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct SkinUsage {
+    pub scene: usize,
+    pub mesh: usize,
+}
+
+/// Column-major identity matrix, used when a skin omits its inverse bind
+/// matrices.
+const IDENTITY_MATRIX: [[f32; 4]; 4] = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0],
+];
 
 impl Into<AddressMode> for gltf::texture::WrappingMode {
     fn into(self) -> AddressMode {
@@ -212,6 +287,8 @@ impl GltfImporter {
             SubAssetType::Texture(index) => format!(".tex_{}", index),
             SubAssetType::Mesh(index) => format!(".mesh_{}", index),
             SubAssetType::Primitive { mesh, primitive } => format!(".prim_{}_{}", mesh, primitive),
+            SubAssetType::SkinnedPrimitive { mesh, primitive } => format!(".skpr_{}_{}", mesh, primitive),
+            SubAssetType::Skin { scene, skin } => format!(".skin_{}_{}", scene, skin),
             SubAssetType::Scene(index) => format!(".scene_{}", index),
             SubAssetType::MraoTexture(key) => {
                 fn source_label(prefix: &str, index: Option<usize>) -> String {
@@ -254,6 +331,90 @@ impl GltfImporter {
         Self::generate_subasset_name(&gltf_file, SubAssetType::Scene(scene_index))?
             .into_string()
             .map_err(|_| GltfImportError::InvalidSubresourceName(gltf_file.as_ref().to_path_buf()))
+    }
+
+    /// Resolve the subasset name of a skinned primitive.
+    pub fn skinned_primitive_subasset_name(gltf_file: impl AsRef<Path>, mesh_index: usize, primitive_index: usize) -> Result<String, GltfImportError> {
+        Self::generate_subasset_name(&gltf_file, SubAssetType::SkinnedPrimitive { mesh: mesh_index, primitive: primitive_index })?
+            .into_string()
+            .map_err(|_| GltfImportError::InvalidSubresourceName(gltf_file.as_ref().to_path_buf()))
+    }
+
+    /// Resolve the subasset name of a skin, scoped to the scene that uses it.
+    pub fn skin_subasset_name(gltf_file: impl AsRef<Path>, scene_index: usize, skin_index: usize) -> Result<String, GltfImportError> {
+        Self::generate_subasset_name(&gltf_file, SubAssetType::Skin { scene: scene_index, skin: skin_index })?
+            .into_string()
+            .map_err(|_| GltfImportError::InvalidSubresourceName(gltf_file.as_ref().to_path_buf()))
+    }
+
+    /// Register a produced asset into the importer's batch.
+    fn queue_asset(context: &ImporterContext, subasset_name: String, subasset_path: PathBuf, data: AssetData) {
+        let imported_asset = Arc::from(
+            RwLock::from(Asset::new(
+                AssetMetadata::new(
+                    subasset_name.clone(),
+                    Some(subasset_path.into_boxed_path())
+                ),
+                data
+            ))
+        );
+        context.asset_batch.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(subasset_name, imported_asset);
+    }
+
+    /// Walk every scene and resolve each skin to the first node that uses it.
+    ///
+    /// glTF skins are referenced from *nodes*, so the association only exists in
+    /// the scene graph. First occurrence wins, which keeps the mapping
+    /// deterministic for skins shared by several nodes.
+    pub(super) fn resolve_skin_usage(document: &gltf::Document) -> HashMap<usize, SkinUsage> {
+        let mut usage = HashMap::new();
+        for scene in document.scenes() {
+            let mut stack: Vec<gltf::Node> = scene.nodes().collect();
+            while let Some(node) = stack.pop() {
+                stack.extend(node.children());
+                let (Some(skin), Some(mesh)) = (node.skin(), node.mesh()) else { continue };
+                usage.entry(skin.index()).or_insert(SkinUsage {
+                    scene: scene.index(),
+                    mesh: mesh.index(),
+                });
+            }
+        }
+        usage
+    }
+
+    /// Meshes that are placed on at least one node without a skin.
+    ///
+    /// Such meshes need a static asset in addition to (or instead of) a skinned
+    /// one, otherwise the skinless placement would render nothing.
+    pub(super) fn meshes_used_unskinned(document: &gltf::Document) -> HashSet<usize> {
+        let mut meshes = HashSet::new();
+        for scene in document.scenes() {
+            let mut stack: Vec<gltf::Node> = scene.nodes().collect();
+            while let Some(node) = stack.pop() {
+                stack.extend(node.children());
+                if let Some(mesh) = node.mesh() {
+                    if node.skin().is_none() {
+                        meshes.insert(mesh.index());
+                    }
+                }
+            }
+        }
+        meshes
+    }
+
+    /// Whether a primitive carries the skinning attributes the compute shader
+    /// consumes.
+    pub(super) fn has_skinning_attributes(primitive: &gltf::Primitive) -> bool {
+        let mut joints = false;
+        let mut weights = false;
+        for (semantic, _) in primitive.attributes() {
+            match semantic {
+                gltf::Semantic::Joints(0) => joints = true,
+                gltf::Semantic::Weights(0) => weights = true,
+                _ => {}
+            }
+        }
+        joints && weights
     }
 
     // Primitive importer
@@ -337,19 +498,15 @@ impl GltfImporter {
     }
 
     // Scene importer
-    /// Import a glTF scene as a hierarchy of nodes with local transforms.
+    /// Assign an arena index to every node reachable from the scene roots.
     ///
-    /// Every reachable glTF node becomes a [`SceneNodeAsset`] carrying its
-    /// *local* transform and children. Primitive subasset names are attached to
-    /// the node that owns the mesh. No world matrix is baked here: the renderer
-    /// derives world transforms from the hierarchy at runtime.
-    pub(crate) fn import_from_gltf_scene(
-        gltf_file: &Path,
+    /// BFS keeps the order deterministic and roots first. Shared by the scene
+    /// importer (which emits the nodes) and the skin importer (which needs the
+    /// arena indices of the joint nodes).
+    pub(super) fn build_scene_index_map(
         document: &gltf::Document,
-        scene: &gltf::Scene
-    ) -> Result<SceneAsset, GltfImportError> {
-        // First pass: assign an arena index to every node reachable from the
-        // scene roots. BFS keeps the order deterministic and roots first.
+        scene: &gltf::Scene,
+    ) -> Result<(Vec<usize>, HashMap<usize, u32>), GltfImportError> {
         let mut order = Vec::<usize>::new();
         let mut index_of = HashMap::<usize, u32>::new();
         let mut queue = VecDeque::<usize>::new();
@@ -373,15 +530,91 @@ impl GltfImporter {
             }
         }
 
+        Ok((order, index_of))
+    }
+
+    /// Import a glTF skin as a [`SkinAsset`].
+    ///
+    /// Joints are expressed as indices into the owning scene's node arena, so
+    /// the skin does not duplicate the hierarchy: local rest transforms and the
+    /// parent links stay in [`SceneAsset`], and the runtime can derive joint
+    /// world transforms from `SceneGraph`.
+    pub(crate) fn import_from_gltf_skin(
+        gltf_file: &Path,
+        document: &gltf::Document,
+        scene: &gltf::Scene,
+        skin: &gltf::Skin,
+        buffers: &[gltf::buffer::Data],
+    ) -> Result<SkinAsset, GltfImportError> {
+        let (_, index_of) = Self::build_scene_index_map(document, scene)?;
+        let scene_name = Self::generate_subasset_name(gltf_file, SubAssetType::Scene(scene.index()))?
+            .into_string()
+            .map_err(|_| GltfImportError::InvalidSubresourceName(gltf_file.to_path_buf()))?;
+
+        let joint_nodes: Vec<gltf::Node> = skin.joints().collect();
+        let inverse_bind_matrices: Vec<[[f32; 4]; 4]> =
+            match skin.reader(|buffer| Some(&buffers[buffer.index()])).read_inverse_bind_matrices() {
+                Some(iter) => iter.collect(),
+                // glTF allows omitting the accessor, in which case the identity
+                // matrix is implied for every joint.
+                None => vec![IDENTITY_MATRIX; joint_nodes.len()],
+            };
+
+        if inverse_bind_matrices.len() != joint_nodes.len() {
+            return Err(GltfImportError::SkinJointCountMismatch {
+                joints: joint_nodes.len(),
+                matrices: inverse_bind_matrices.len(),
+            });
+        }
+
+        let joints = joint_nodes
+            .iter()
+            .zip(inverse_bind_matrices)
+            .map(|(node, inverse_bind_matrix)| {
+                let scene_node = index_of.get(&node.index()).copied()
+                    .ok_or(GltfImportError::IndexOutOfRange(node.index()))?;
+                Ok(SkinJoint { scene_node: scene_node as usize, inverse_bind_matrix })
+            })
+            .collect::<Result<Vec<_>, GltfImportError>>()?;
+
+        Ok(SkinAsset { scene: scene_name, joints })
+    }
+
+    /// Import a glTF scene as a hierarchy of nodes with local transforms.
+    ///
+    /// Every reachable glTF node becomes a [`SceneNodeAsset`] carrying its
+    /// *local* transform and children. Primitive subasset names are attached to
+    /// the node that owns the mesh. No world matrix is baked here: the renderer
+    /// derives world transforms from the hierarchy at runtime.
+    pub(crate) fn import_from_gltf_scene(
+        gltf_file: &Path,
+        document: &gltf::Document,
+        scene: &gltf::Scene
+    ) -> Result<SceneAsset, GltfImportError> {
+        // First pass: assign an arena index to every node reachable from the
+        // scene roots. BFS keeps the order deterministic and roots first.
+        let (order, index_of) = Self::build_scene_index_map(document, scene)?;
+
         // Second pass: build the arena now that every child index is known.
         let mut nodes = Vec::with_capacity(order.len());
         for gltf_index in order {
             let node = document.nodes().nth(gltf_index)
                 .ok_or(GltfImportError::IndexOutOfRange(gltf_index))?;
 
+            // A node carrying a skin references the skinned variant of each
+            // primitive, so the renderer can tell both apart by asset kind.
+            let skinned = node.skin().is_some();
             let mesh_subasset_names = match node.mesh() {
                 Some(mesh) => mesh.primitives()
-                    .map(|primitive| Self::primitive_subasset_name(gltf_file, mesh.index(), primitive.index()))
+                    .map(|primitive| {
+                        let asset_type = if skinned && Self::has_skinning_attributes(&primitive) {
+                            SubAssetType::SkinnedPrimitive { mesh: mesh.index(), primitive: primitive.index() }
+                        } else {
+                            SubAssetType::Primitive { mesh: mesh.index(), primitive: primitive.index() }
+                        };
+                        Self::generate_subasset_name(gltf_file, asset_type)?.into_string()
+                            .map_err(|_| GltfImportError::InvalidSubresourceName(gltf_file.to_path_buf()))
+                    })
                     .collect::<Result<Vec<_>, _>>()?,
                 None => Vec::new(),
             };
@@ -515,6 +748,82 @@ impl GltfImporter {
         ret.recondition();
 
         Ok(ret)
+    }
+
+    /// Import a primitive as a [`SkinnedMeshAsset`].
+    ///
+    /// The rest pose is imported exactly like a static primitive.
+    pub(crate) fn import_skinned_from_gltf_primitive(
+        importer: &mut GltfImporter,
+        primitive: &gltf::Primitive,
+        buffers: &[gltf::buffer::Data],
+        skin_name: String,
+    ) -> Result<SkinnedMeshAsset, GltfImportError> {
+        let restpose = Self::import_from_gltf_primitive(importer, primitive, buffers)?;
+
+        let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+        let joints: Vec<[u16; 4]> = reader.read_joints(0)
+            .ok_or(GltfImportError::MissingSkinningAttributes)?
+            .into_u16()
+            .collect();
+        let weights: Vec<[f32; 4]> = reader.read_weights(0)
+            .ok_or(GltfImportError::MissingSkinningAttributes)?
+            .into_f32()
+            .collect();
+
+        assert_eq!(
+            joints.len(),
+            weights.len(),
+            "JOINTS_0 and WEIGHTS_0 must have the same element count."
+        );
+        assert_eq!(
+            joints.len(),
+            restpose.vp.len(),
+            "skinning attributes must have one entry per vertex."
+        );
+
+        let animation = joints
+            .iter()
+            .zip(weights.iter())
+            .map(|(indices, weights)| Self::normalize_skinning_weights(indices, weights))
+            .collect();
+
+        Ok(SkinnedMeshAsset { skin: skin_name, restpose, animation })
+    }
+
+    /// Keep the four strongest influences and renormalize their weights.
+    ///
+    /// glTF allows more than four influences per vertex, but the compute shader
+    /// only reads four. Renormalizing after the cut keeps the deformation from
+    /// shrinking the mesh.
+    fn normalize_skinning_weights(indices: &[u16; 4], weights: &[f32; 4]) -> VertexBufferSkinning {
+        let mut influences: [(u32, f32); 4] = [
+            (indices[0] as u32, weights[0].max(0.0)),
+            (indices[1] as u32, weights[1].max(0.0)),
+            (indices[2] as u32, weights[2].max(0.0)),
+            (indices[3] as u32, weights[3].max(0.0)),
+        ];
+        influences.sort_by(|a, b| b.1.total_cmp(&a.1));
+
+        let sum: f32 = influences.iter().map(|(_, weight)| weight).sum();
+        if sum <= f32::EPSILON {
+            // Degenerate input: bind the vertex to the first joint instead of
+            // letting it collapse to the origin.
+            return VertexBufferSkinning {
+                bone_indices: [0; 4],
+                bone_weights: [1.0, 0.0, 0.0, 0.0],
+            };
+        }
+
+        let mut skinning = VertexBufferSkinning {
+            bone_indices: [0; 4],
+            bone_weights: [0.0; 4],
+        };
+        for (slot, (index, weight)) in influences.iter().enumerate() {
+            skinning.bone_indices[slot] = *index;
+            skinning.bone_weights[slot] = weight / sum;
+        }
+        skinning
     }
 
     fn warn_unsupported_material_factors(importer: &mut GltfImporter, material: &gltf::Material) {

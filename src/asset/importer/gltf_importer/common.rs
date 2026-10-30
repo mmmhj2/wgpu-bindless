@@ -53,6 +53,12 @@ pub enum GltfImportError {
 
     #[error("failed to import MRAO image")]
     BadMraoTexture(#[from] GltfImageImportError),
+
+    #[error("skinned primitive is missing JOINTS_0 / WEIGHTS_0")]
+    MissingSkinningAttributes,
+
+    #[error("skin has {joints} joints but {matrices} inverse bind matrices")]
+    SkinJointCountMismatch { joints: usize, matrices: usize },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
