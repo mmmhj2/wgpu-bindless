@@ -1,5 +1,7 @@
 pub mod builtin;
 pub mod key;
+pub mod compute_library;
+pub mod compute_recipe;
 pub mod library;
 pub mod pbr_material;
 pub mod rasterizer_pipeline;

@@ -74,6 +74,7 @@ impl RendererState for State {
                 depth_format: wgpu::TextureFormat::Depth32Float,
                 scene_format: Some(wgpu::TextureFormat::Rgba16Float),
                 enable_postfx: true,
+                ..Default::default()
             },
         ).await;
 

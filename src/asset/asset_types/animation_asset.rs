@@ -20,7 +20,8 @@ impl GpuAssetType for AnimationAsset {
     /// hardware to automatically do linear interpolation over time.
     /// 
     /// It is possible to either:
-    /// - directly bake vertex positions into the texture which is known as Vertex Attribute Texture (VAT),
+    /// - directly bake vertex positions into the texture which is known as
+    /// Vertex Attribute Texture (VAT),
     /// - or just bake the transform sequences (e.g. quaternions, translation
     /// vectors or matrices).
     /// 
