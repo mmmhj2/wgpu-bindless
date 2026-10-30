@@ -251,7 +251,7 @@ impl RenderOrchestrator {
             mesh_layout: &self.mesh_layout,
             assets: &mut self.assets,
             pipelines: &mut self.pipelines,
-            compute_pipelines: &mut self.compute_pipelines,
+            compute_pipelines: &self.compute_pipelines,
             postfx: self.postfx.as_mut(),
             frame,
             encoder: Some(encoder),
@@ -287,13 +287,13 @@ pub struct Frame<'a> {
     mesh_layout: &'a MeshLayout,
     assets: &'a mut GpuAssetCache,
     pipelines: &'a mut PipelineLibrary,
-    compute_pipelines: &'a mut ComputePipelineLibrary,
+    compute_pipelines: &'a ComputePipelineLibrary,
     postfx: Option<&'a mut PostFxStack>,
     frame: FrameContext,
     encoder: Option<wgpu::CommandEncoder>,
 }
 
-impl Frame<'_> {
+impl<'a> Frame<'a> {
     pub fn size(&self) -> (u32, u32) {
         let (width, height) = self.frame.get_size();
         (width.get(), height.get())
@@ -303,6 +303,18 @@ impl Frame<'_> {
     pub fn queue(&self) -> &wgpu::Queue { self.gpu.queue() }
     pub fn pipelines(&self) -> &PipelineLibrary { self.pipelines }
     pub fn pipelines_mut(&mut self) -> &mut PipelineLibrary { self.pipelines }
+
+    /// Compute pipeline library, valid for the whole frame.
+    ///
+    /// The returned reference is not borrowed from `self`, so a pipeline can be
+    /// kept alive across a later [`Self::encoder`] call.
+    /// 
+    /// TODO: Getting around this lifetime problem is awful. 
+    /// Maybe we should redesign the interface around `Frame` and pipelines.
+    pub fn compute_pipelines(&self) -> &'a ComputePipelineLibrary { self.compute_pipelines }
+
+    /// Read-only bindless resources, for passes that need the bind group.
+    pub fn bindless(&self) -> &BindlessResources { self.bindless }
 
     pub fn encoder(&mut self) -> &mut wgpu::CommandEncoder {
         self.encoder
