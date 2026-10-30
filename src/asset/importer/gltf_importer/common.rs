@@ -33,9 +33,6 @@ pub enum GltfImportError {
         source: gltf::Error,
     },
 
-    #[error("this gltf file depends on an external resource '{0}'.")]
-    ExternalResourceUnavailable(String),
-
     #[error("generated subresource name '{0}' is invalid.")]
     InvalidSubresourceName(PathBuf),
 
@@ -59,6 +56,12 @@ pub enum GltfImportError {
 
     #[error("skin has {joints} joints but {matrices} inverse bind matrices")]
     SkinJointCountMismatch { joints: usize, matrices: usize },
+
+    #[error("the world transform of the skinned mesh node is not invertible")]
+    NonInvertibleMeshTransform,
+
+    #[error("the glTF file has a unsupported feature enabled: {0}")]
+    UnsupportedFeature(&'static str)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

@@ -1,3 +1,4 @@
+mod animation;
 mod common;
 mod importer;
 mod mrao;

@@ -4,7 +4,7 @@ mod test {
 
     use rust_renderer::asset::{
         asset_manager::AssetManager,
-        asset_types::AssetData,
+        asset_types::{AssetData, texture_asset::TextureFormat},
         importer::gltf_importer::GltfImporter,
     };
 
@@ -12,6 +12,7 @@ mod test {
     /// one skin with 24 joints and three animations.
     const SOURCE_GLTF: &str = "resource/Fox.glb";
     const JOINT_COUNT: usize = 24;
+    const ANIMATION_COUNT: usize = 3;
 
     /// Copy the skinned test model into an isolated temp workspace.
     ///
@@ -131,5 +132,50 @@ mod test {
             panic!("'{skinned_name}' is not a skinned mesh asset");
         };
         assert_eq!(mesh.animation.len(), mesh.restpose.vp.len());
+    }
+
+    #[test]
+    fn imports_baked_animations() {
+        let dir = temp_workspace("animations");
+        let glb = dir.join("Fox.glb");
+        let manager = AssetManager::new();
+        manager.import(GltfImporter::new(&glb)).expect("skinned glTF import should succeed");
+
+        let skin_name = GltfImporter::skin_subasset_name(&glb, 0, 0)
+            .expect("skin name should resolve");
+
+        for animation_index in 0..ANIMATION_COUNT {
+            let name = GltfImporter::animation_subasset_name(&glb, 0, animation_index)
+                .expect("animation name should resolve");
+            let asset = manager.get_asset(&name)
+                .unwrap_or_else(|| panic!("animation '{name}' should be imported"));
+            let asset = asset.read().unwrap();
+            let AssetData::SkinnedAnimationAssetType(animation) = asset.get_data() else {
+                panic!("'{name}' is not a skinned animation asset");
+            };
+
+            assert_eq!(animation.skin, skin_name);
+            assert_eq!(animation.fps, 30.0);
+            assert!(animation.frames > 1, "'{name}' should span more than one frame");
+
+            // Four texels per joint, one row per frame, `Rgba16Float`.
+            assert_eq!(animation.texture.format, TextureFormat::Rgba16Float);
+            assert_eq!(animation.texture.width.get(), JOINT_COUNT as u32 * 4);
+            assert_eq!(animation.texture.height.unwrap().get(), animation.frames);
+
+            let texels = match &animation.texture.texels {
+                rust_renderer::asset::asset_types::texture_asset::TexelData::Plain(texels) => texels,
+                _ => panic!("baked animation must be a plain texture"),
+            };
+            let frame_bytes = animation.texture.width.get() as usize * 8;
+            assert_eq!(texels.len(), frame_bytes * animation.frames as usize);
+
+            // The bake must actually vary over time. Looping animations repeat
+            // the first pose at the end, so compare against the middle frame.
+            let middle_frame = animation.frames as usize / 2;
+            let first = &texels[..frame_bytes];
+            let middle = &texels[middle_frame * frame_bytes..(middle_frame + 1) * frame_bytes];
+            assert_ne!(first, middle, "'{name}' looks static around the middle frame");
+        }
     }
 }

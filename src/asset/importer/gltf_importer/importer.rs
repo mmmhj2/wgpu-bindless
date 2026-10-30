@@ -1,6 +1,6 @@
 use std::{collections::{HashMap, HashSet, VecDeque}, ffi::OsString, num::NonZeroU32, path::{Path, PathBuf}, sync::{Arc, RwLock}};
 
-use crate::asset::{asset_types::{Asset, AssetData, AssetMetadata, scene_asset::{SceneAsset, SceneNodeAsset}, skin_asset::{SkinAsset, SkinJoint}, skinned_mesh_asset::SkinnedMeshAsset, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat}, vertex::{VertexBufferOthers, VertexBufferPosition, VertexBufferSkinning}}, error::ImportError, importer::{AssetImporter, ImporterContext, gltf_importer::{common::{GltfImageView, GltfImportError}, mrao::build_mrao_texture_asset}, vertex_reconditioner::{ReconditionerError, TangentRecalculator}}};
+use crate::asset::{asset_types::{Asset, AssetData, AssetMetadata, scene_asset::{SceneAsset, SceneNodeAsset}, skin_asset::{SkinAsset, SkinJoint}, skinned_mesh_asset::SkinnedMeshAsset, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat}, vertex::{VertexBufferOthers, VertexBufferPosition, VertexBufferSkinning}}, error::ImportError, importer::{AssetImporter, ImporterContext, gltf_importer::{animation::{bake_animation, BAKE_FPS}, common::{GltfImageView, GltfImportError}, mrao::build_mrao_texture_asset}, vertex_reconditioner::{ReconditionerError, TangentRecalculator}}};
 
 /// glTF importer class.
 /// 
@@ -41,13 +41,13 @@ impl AssetImporter for GltfImporter {
             .map_err(|source| GltfImportError::Read { path: path.to_path_buf(), source })?;
 
         for b in document.buffers() {
-            if let gltf::buffer::Source::Uri(uri) = b.source() {
-                return Err(Box::new(GltfImportError::ExternalResourceUnavailable(String::from(uri))))
+            if let gltf::buffer::Source::Uri(_) = b.source() {
+                return Err(Box::new(GltfImportError::UnsupportedFeature("external resource")))
             }
         }
         for i in document.images() {
-            if let gltf::image::Source::Uri { uri, mime_type: _ } = i.source() {
-                return Err(Box::new(GltfImportError::ExternalResourceUnavailable(String::from(uri))))
+            if let gltf::image::Source::Uri { uri: _, mime_type: _ } = i.source() {
+                return Err(Box::new(GltfImportError::UnsupportedFeature("external resource")))
             }
         }
 
@@ -185,6 +185,7 @@ impl AssetImporter for GltfImporter {
         // indices can point into that scene's node arena. Importing them after
         // the scenes keeps the log order readable; the arena indices come from
         // the shared `build_scene_index_map`, not from the imported asset.
+        let mut skin_inverse_bind_matrices: HashMap<usize, Vec<[[f32; 4]; 4]>> = HashMap::new();
         let mut skin_indices: Vec<usize> = skin_usage.keys().copied().collect();
         skin_indices.sort_unstable();
         for skin_index in skin_indices {
@@ -201,7 +202,59 @@ impl AssetImporter for GltfImporter {
             log::info!("Found skin {} with {} joints.", subasset_name, skin.joints().count());
 
             let imported_skin = Self::import_from_gltf_skin(path, &document, &scene, &skin, &buffers)?;
+            skin_inverse_bind_matrices.insert(
+                skin_index,
+                imported_skin.joints.iter().map(|joint| joint.inverse_bind_matrix).collect(),
+            );
             Self::queue_asset(context, subasset_name, subasset_path, AssetData::SkinAssetType(imported_skin));
+        }
+
+        // Animations are baked right away: every frame is sampled on the CPU and
+        // packed into a joint-matrix texture, so the runtime only has to pick a
+        // row per draw.
+        for animation in document.animations() {
+            let Some(skin_index) = Self::find_animation_skin(&animation, &document) else {
+                log::info!(
+                    "Skipping animation '{}': no skin targets its nodes.",
+                    animation.name().unwrap_or("<unnamed>")
+                );
+                continue;
+            };
+            let Some(inverse_bind_matrices) = skin_inverse_bind_matrices.get(&skin_index) else {
+                log::warn!(
+                    "Skipping animation '{}': skin {} was not imported.",
+                    animation.name().unwrap_or("<unnamed>"),
+                    skin_index
+                );
+                continue;
+            };
+            let skin = document.skins().nth(skin_index)
+                .ok_or(GltfImportError::IndexOutOfRange(skin_index))?;
+            let usage = skin_usage[&skin_index];
+
+            let asset_type = SubAssetType::Animation { scene: usage.scene, animation: animation.index() };
+            let subasset_path = Self::generate_subasset_filename(path, asset_type)?;
+            let subasset_name = Self::generate_subasset_name(path, asset_type)?.into_string()
+                .map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
+            log::info!(
+                "Baking animation '{}' as {}.",
+                animation.name().unwrap_or("<unnamed>"),
+                subasset_name
+            );
+
+            let skin_name = Self::generate_subasset_name(path, SubAssetType::Skin { scene: usage.scene, skin: skin_index })?
+                .into_string().map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
+            let baked = bake_animation(
+                &document,
+                &buffers,
+                &animation,
+                &skin,
+                inverse_bind_matrices,
+                usage.node,
+                skin_name,
+                BAKE_FPS,
+            )?;
+            Self::queue_asset(context, subasset_name, subasset_path, AssetData::SkinnedAnimationAssetType(baked));
         }
 
         Ok(())
@@ -232,16 +285,20 @@ pub(super) enum SubAssetType {
     SkinnedPrimitive { mesh: usize, primitive: usize },
     /// A GLTF skin, scoped to the scene that uses it.
     Skin { scene: usize, skin: usize },
+    /// A GLTF animation baked into joint-matrix texture, scoped to its scene.
+    Animation { scene: usize, animation: usize },
     /// A GLTF scene, preserved as a hierarchy of nodes with local transforms.
     Scene(usize),
     /// A renderer-layout MRAO texture derived from optional MR and AO textures.
     MraoTexture(MraoKey),
 }
 
-/// Where a skin is used: the scene that references it and the mesh it deforms.
+/// Where a skin is used: the scene that references it, the node carrying it and
+/// the mesh it deforms.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SkinUsage {
     pub scene: usize,
+    pub node: usize,
     pub mesh: usize,
 }
 
@@ -289,6 +346,7 @@ impl GltfImporter {
             SubAssetType::Primitive { mesh, primitive } => format!(".prim_{}_{}", mesh, primitive),
             SubAssetType::SkinnedPrimitive { mesh, primitive } => format!(".skpr_{}_{}", mesh, primitive),
             SubAssetType::Skin { scene, skin } => format!(".skin_{}_{}", scene, skin),
+            SubAssetType::Animation { scene, animation } => format!(".anim_{}_{}", scene, animation),
             SubAssetType::Scene(index) => format!(".scene_{}", index),
             SubAssetType::MraoTexture(key) => {
                 fn source_label(prefix: &str, index: Option<usize>) -> String {
@@ -347,6 +405,13 @@ impl GltfImporter {
             .map_err(|_| GltfImportError::InvalidSubresourceName(gltf_file.as_ref().to_path_buf()))
     }
 
+    /// Resolve the subasset name of a baked animation, scoped to its scene.
+    pub fn animation_subasset_name(gltf_file: impl AsRef<Path>, scene_index: usize, animation_index: usize) -> Result<String, GltfImportError> {
+        Self::generate_subasset_name(&gltf_file, SubAssetType::Animation { scene: scene_index, animation: animation_index })?
+            .into_string()
+            .map_err(|_| GltfImportError::InvalidSubresourceName(gltf_file.as_ref().to_path_buf()))
+    }
+
     /// Register a produced asset into the importer's batch.
     fn queue_asset(context: &ImporterContext, subasset_name: String, subasset_path: PathBuf, data: AssetData) {
         let imported_asset = Arc::from(
@@ -375,11 +440,32 @@ impl GltfImporter {
                 let (Some(skin), Some(mesh)) = (node.skin(), node.mesh()) else { continue };
                 usage.entry(skin.index()).or_insert(SkinUsage {
                     scene: scene.index(),
+                    node: node.index(),
                     mesh: mesh.index(),
                 });
             }
         }
         usage
+    }
+
+    /// Find the skin an animation belongs to.
+    ///
+    /// glTF animations target nodes rather than skins, so the association is
+    /// derived from the skin's joint set: the first skin that owns at least one
+    /// animated node wins.
+    pub(super) fn find_animation_skin(animation: &gltf::Animation, document: &gltf::Document) -> Option<usize> {
+        let targets: HashSet<usize> = animation
+            .channels()
+            .map(|channel| channel.target().node().index())
+            .collect();
+        if targets.is_empty() {
+            return None;
+        }
+
+        document
+            .skins()
+            .find(|skin| skin.joints().any(|joint| targets.contains(&joint.index())))
+            .map(|skin| skin.index())
     }
 
     /// Meshes that are placed on at least one node without a skin.
@@ -459,7 +545,7 @@ impl GltfImporter {
                 attribute_buffer[i].normal = n;
             }
         } else {
-            log::warn!("Imported mesh does not vertex have normal.")
+            log::warn!("Imported mesh does not have vertex normal.")
         }
 
         if let Some(iter) = reader.read_tex_coords(0) {
