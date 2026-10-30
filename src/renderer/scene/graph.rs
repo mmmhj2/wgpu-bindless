@@ -5,11 +5,11 @@
 //! accessors. Any scene change requires rebuilding the graph (and the renderer
 //! instances derived from it).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cgmath::Matrix4;
 
-use crate::{asset::asset_types::scene_asset::SceneAsset, renderer::{drawable::{draw_list::DrawList, static_mesh_batch::StaticMeshBatch}, resources::asset_cache::MeshUploadContext}};
+use crate::{asset::asset_types::{AssetData, AssetKind, scene_asset::SceneAsset}, renderer::{drawable::{draw_list::DrawList, skinned_mesh::SkinnedMesh, static_mesh_batch::StaticMeshBatch}, resources::asset_cache::MeshUploadContext}};
 
 /// One node of the runtime scene graph.
 #[derive(Debug)]
@@ -61,11 +61,19 @@ struct BatchPlan<'a> {
 }
 
 /// Group mesh instances by primitive name, preserving the extraction order.
-fn plan_batches<'a>(graph: &'a SceneGraph) -> Vec<BatchPlan<'a>> {
+///
+/// `can_batch` predicate determines whether a given asset can be batched.
+fn plan_batches<'a>(
+    graph: &'a SceneGraph,
+    can_batch: impl Fn(&str) -> bool,
+) -> Vec<BatchPlan<'a>> {
     let mut plans: Vec<BatchPlan<'a>> = Vec::new();
     let mut index_of: HashMap<&'a str, usize> = HashMap::new();
 
     for instance in graph.mesh_instances() {
+        if !can_batch(instance.mesh_subasset_name) {
+            continue;
+        }
         let index = match index_of.get(instance.mesh_subasset_name) {
             Some(&index) => index,
             None => {
@@ -224,14 +232,24 @@ impl SceneGraph {
         self,
         ctx: &mut MeshUploadContext<'_>,
     ) -> DrawList {
-        let plans = plan_batches(&self);
+        // Skinned meshes are never instanced and bypass `plan_batches` entirely.
+        let mut skinned_instances: Vec<(String, [[f32; 4]; 4])> = Vec::new();
+        let mut skinned_names: HashSet<&str> = HashSet::new();
+        for instance in self.mesh_instances() {
+            if ctx.asset_kind(instance.mesh_subasset_name) == Some(AssetKind::SkinnedMesh) {
+                skinned_names.insert(instance.mesh_subasset_name);
+                skinned_instances.push((instance.mesh_subasset_name.to_owned(), instance.world_matrix));
+            }
+        }
+
+        let plans = plan_batches(&self, |name| !skinned_names.contains(name));
         log::info!(
-            "Building {} static mesh batches from {} mesh instances",
+            "Building {} static mesh batches and {} skinned meshes from {} mesh instances",
             plans.len(),
+            skinned_instances.len(),
             self.mesh_instance_count()
         );
 
-        // TODO: handle skinned mesh uploads and animation.
         let static_opaque_batch = plans
             .into_iter()
             .map(|plan| {
@@ -244,7 +262,21 @@ impl SceneGraph {
             })
             .collect();
 
-        DrawList::new(static_opaque_batch, vec![])
+        let mut skinned_opaque = Vec::with_capacity(skinned_instances.len());
+        for (name, world_matrix) in skinned_instances {
+            let asset = ctx.assets.get_asset(&name)
+                .unwrap_or_else(|| panic!("skinned mesh asset '{name}' not found."));
+            let asset = asset.read().expect("failed to acquire read lock for skinned mesh asset.");
+            let AssetData::SkinnedMeshAssetType(mesh_asset) = asset.get_data() else {
+                panic!("asset '{name}' is not a skinned mesh asset.");
+            };
+
+            let geometry = ctx.skinned_mesh_from_asset(&name, mesh_asset);
+            let material = ctx.material_from_asset(&mesh_asset.restpose.material);
+            skinned_opaque.push(SkinnedMesh::new(ctx, geometry, material, world_matrix));
+        }
+
+        DrawList::new(static_opaque_batch, skinned_opaque)
     }
 }
 
@@ -303,7 +335,7 @@ mod test {
         };
         let graph = SceneGraph::from_asset(&asset);
 
-        let plans = plan_batches(&graph);
+        let plans = plan_batches(&graph, |_| true);
         assert_eq!(plans.len(), 2);
 
         assert_eq!(plans[0].mesh_subasset_name, "mesh.a");
@@ -327,7 +359,7 @@ mod test {
         };
         let graph = SceneGraph::from_asset(&asset);
 
-        let plans = plan_batches(&graph);
+        let plans = plan_batches(&graph, |_| true);
         assert_eq!(plans.len(), 2);
         assert_eq!(plans[0].mesh_subasset_name, "mesh.z");
         assert_eq!(plans[1].mesh_subasset_name, "mesh.a");
@@ -346,7 +378,7 @@ mod test {
         };
         let graph = SceneGraph::from_asset(&asset);
 
-        let plans = plan_batches(&graph);
+        let plans = plan_batches(&graph, |_| true);
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].world_matrices.len(), 2);
         assert_eq!(plans[0].world_matrices[0], plans[0].world_matrices[1]);
@@ -360,7 +392,7 @@ mod test {
         };
         let graph = SceneGraph::from_asset(&asset);
 
-        assert!(plan_batches(&graph).is_empty());
+        assert!(plan_batches(&graph, |_| true).is_empty());
     }
 
     #[test]
@@ -376,7 +408,7 @@ mod test {
         };
         let graph = SceneGraph::from_asset(&asset);
 
-        let plans = plan_batches(&graph);
+        let plans = plan_batches(&graph, |_| true);
         assert_eq!(
             plans
                 .iter()

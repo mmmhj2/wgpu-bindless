@@ -5,6 +5,7 @@ use crate::{
         asset_manager::AssetManager,
         asset_types::{
             AssetData,
+            AssetKind,
             GpuAssetType,
             animation_asset::SkinnedAnimationAsset,
             skinned_mesh_asset::{GpuSkinnedMesh, SkinnedMeshAsset},
@@ -66,6 +67,16 @@ pub struct MeshUploadContext<'a> {
 }
 
 impl MeshUploadContext<'_> {
+    /// Concrete kind of an asset in the database, if it is present.
+    ///
+    /// Used by the scene extractor to tell static and skinned meshes apart
+    /// without locking the asset for the whole extraction.
+    pub(crate) fn asset_kind(&self, name: &str) -> Option<AssetKind> {
+        let asset = self.assets.get_asset(name)?;
+        let asset = asset.read().ok()?;
+        Some(asset.get_data().kind())
+    }
+
     /// Resolve a texture asset (by name) to its bindless texture/sampler
     /// handles, uploading it at most once.
     fn texture_binding(&mut self, name: &str) -> (SampledTextureHandle, SamplerHandle) {
