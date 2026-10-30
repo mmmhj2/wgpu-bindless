@@ -2,7 +2,7 @@ use std::{fs::File, io::Write};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::asset::{asset_types::{ConcreteAssetType, GpuAssetType, vertex::{VertexBufferOthers, VertexBufferPosition}}, importer::vertex_reconditioner::{TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite}};
+use crate::asset::{asset_types::{ConcreteAssetType, GpuAssetType, vertex::{VertexBufferOthers, VertexBufferPosition}}, importer::vertex_reconditioner::{NormalRecalculator, TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite}};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StaticMeshMaterial {
@@ -106,4 +106,5 @@ impl VertexReconditionableAttributeWrite for StaticMeshAsset {
     fn get_attribute_buffer_mut(&mut self) -> &mut Vec<VertexBufferOthers> { &mut self.va }
 }
 impl TangentRecalculator for StaticMeshAsset {}
+impl NormalRecalculator for StaticMeshAsset {}
 impl VertexColorApplyScale for StaticMeshAsset {}

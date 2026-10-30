@@ -1,6 +1,6 @@
 use std::{collections::{HashMap, HashSet, VecDeque}, ffi::OsString, num::NonZeroU32, path::{Path, PathBuf}, sync::{Arc, RwLock}};
 
-use crate::asset::{asset_types::{Asset, AssetData, AssetMetadata, scene_asset::{SceneAsset, SceneNodeAsset}, skin_asset::{SkinAsset, SkinJoint}, skinned_mesh_asset::SkinnedMeshAsset, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat}, vertex::{VertexBufferOthers, VertexBufferPosition, VertexBufferSkinning}}, error::ImportError, importer::{AssetImporter, ImporterContext, gltf_importer::{animation::{bake_animation, BAKE_FPS}, common::{GltfImageView, GltfImportError}, mrao::build_mrao_texture_asset}, vertex_reconditioner::{ReconditionerError, TangentRecalculator}}};
+use crate::asset::{asset_types::{Asset, AssetData, AssetMetadata, scene_asset::{SceneAsset, SceneNodeAsset}, skin_asset::{SkinAsset, SkinJoint}, skinned_mesh_asset::SkinnedMeshAsset, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, texture_asset::{AddressMode, FilterMode, Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat}, vertex::{VertexBufferOthers, VertexBufferPosition, VertexBufferSkinning}}, error::ImportError, importer::{AssetImporter, ImporterContext, gltf_importer::{animation::{bake_animation, BAKE_FPS}, common::{GltfImageView, GltfImportError}, mrao::build_mrao_texture_asset}, vertex_reconditioner::{NormalRecalculator, ReconditionerError, TangentRecalculator}}};
 
 /// glTF importer class.
 /// 
@@ -25,8 +25,9 @@ pub(super) struct MraoKey {
 
 impl AssetImporter for GltfImporter {
     const IMPORTER_ID: &'static str = "gltf";
-    /// 4: imports skins and skinned primitives (`.skpr_*` / `.skin_*`).
-    const IMPORTER_VERSION: u32 = 4;
+    /// 4: imports skins, skinned primitives and baked animations.
+    /// 5: recomputes missing vertex normals from the triangle winding.
+    const IMPORTER_VERSION: u32 = 5;
 
     fn import(mut self, context: &ImporterContext) -> Result<(), ImportError> {
         if !self.path.is_file() {
@@ -520,11 +521,15 @@ impl GltfImporter {
         position_buffer
     }
 
+    /// Build the non-position vertex stream.
+    ///
+    /// Returns `(attributes, needs_normals, needs_tangents)`: missing normals and
+    /// tangents are recomputed by the importer afterwards, normals first.
     fn construct_attribute_buffer (
         primitive: &gltf::Primitive,
         buffers: &[gltf::buffer::Data],
         vertices: usize
-    ) -> (Vec<VertexBufferOthers>, bool) {
+    ) -> (Vec<VertexBufferOthers>, bool, bool) {
         let mut attribute_buffer = Vec::new();
         attribute_buffer.resize(
             vertices,
@@ -540,13 +545,18 @@ impl GltfImporter {
             log::warn!("Imported mesh does not have vertex color, or the vertex color is not located at set 0.")
         }
 
-        if let Some(iter) = reader.read_normals() {
-            for (i, n) in iter.enumerate() {
-                attribute_buffer[i].normal = n;
+        let needs_normals = match reader.read_normals() {
+            Some(iter) => {
+                for (i, n) in iter.enumerate() {
+                    attribute_buffer[i].normal = n;
+                }
+                false
             }
-        } else {
-            log::warn!("Imported mesh does not have vertex normal.")
-        }
+            None => {
+                log::warn!("Imported mesh does not have vertex normal. It will be recalculated from the triangle winding.");
+                true
+            }
+        };
 
         if let Some(iter) = reader.read_tex_coords(0) {
             for (i, uv) in iter.into_f32().enumerate() {
@@ -556,16 +566,20 @@ impl GltfImporter {
             log::warn!("Imported mesh does not have texture coordinate, or the texcoord is not located at set 0.")
         }
 
-        if let Some(iter) = reader.read_tangents() {
-            for (i, n) in iter.enumerate() {
-                attribute_buffer[i].tangent = n;
+        let needs_tangents = match reader.read_tangents() {
+            Some(iter) => {
+                for (i, n) in iter.enumerate() {
+                    attribute_buffer[i].tangent = n;
+                }
+                false
             }
+            None => {
+                log::info!("Imported mesh does not vertex have tangent. It will be automatically calculated on upload.");
+                true
+            }
+        };
 
-            (attribute_buffer, false)
-        } else {
-            log::info!("Imported mesh does not vertex have tangent. It will be automatically calculated on upload.");
-            (attribute_buffer, true)
-        }
+        (attribute_buffer, needs_normals, needs_tangents)
     }
 
     fn construct_index_buffer (
@@ -732,7 +746,7 @@ impl GltfImporter {
         buffers: &[gltf::buffer::Data]
     ) -> Result<StaticMeshAsset, GltfImportError> {
         let position_buffer = Self::construct_position_buffer(primitive, buffers);
-        let (attribute_buffer, calculate_tangent) = Self::construct_attribute_buffer(primitive, buffers, position_buffer.len());
+        let (attribute_buffer, calculate_normal, calculate_tangent) = Self::construct_attribute_buffer(primitive, buffers, position_buffer.len());
         let index_buffer = Self::construct_index_buffer(primitive, buffers);
         let vertex_draw_count = match index_buffer.as_ref() {
             Some(b) => b.len(),
@@ -826,6 +840,11 @@ impl GltfImporter {
             );
         }
 
+        // Normals must exist before tangents: the tangent solver orthogonalizes
+        // against the vertex normal.
+        if calculate_normal {
+            ret.recalculate_normals()?;
+        }
         if calculate_tangent {
             ret.recalculate_tangents()?;
         }

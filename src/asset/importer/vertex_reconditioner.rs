@@ -1,4 +1,4 @@
-use cgmath::Zero;
+use cgmath::{InnerSpace, Zero};
     use crate::asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition};
 
 /// Errors from recalculating vertex tangents.
@@ -175,6 +175,60 @@ pub trait VertexColorApplyScale : VertexReconditionable + VertexReconditionableA
     }
 }
 
+pub trait NormalRecalculator : VertexReconditionable + VertexReconditionableAttributeWrite {
+    /// Recompute normalized vertex normals from the triangle winding.
+    ///
+    /// Face normals are weighted by their triangle surface.
+    /// Vertices that no triangle references keep their existing normal.
+    ///
+    /// Triangles are assumed to be wound counterclockwise.
+    fn recalculate_normals(&mut self) -> Result<(), ReconditionerError> {
+        let positions: Vec<cgmath::Vector3<f32>> = self
+            .get_position_buffer()
+            .iter()
+            .map(|vertex| vertex.position.into())
+            .collect();
+
+        let triangles: Vec<[usize; 3]> = match self.get_index_buffer() {
+            Some(indices) => {
+                if indices.len() % 3 != 0 {
+                    return Err(ReconditionerError::NonTriangularIndices(indices.len()));
+                }
+                indices
+                    .chunks_exact(3)
+                    .map(|triangle| [triangle[0] as usize, triangle[1] as usize, triangle[2] as usize])
+                    .collect()
+            }
+            None => {
+                if positions.len() % 3 != 0 {
+                    return Err(ReconditionerError::NonTriangularPositions(positions.len()));
+                }
+                (0..positions.len())
+                    .collect::<Vec<_>>()
+                    .chunks_exact(3)
+                    .map(|triangle| [triangle[0], triangle[1], triangle[2]])
+                    .collect()
+            }
+        };
+
+        let mut accumulated = vec![cgmath::Vector3::<f32>::zero(); positions.len()];
+        for [a, b, c] in triangles {
+            let face = (positions[b] - positions[a]).cross(positions[c] - positions[a]);
+            accumulated[a] += face;
+            accumulated[b] += face;
+            accumulated[c] += face;
+        }
+
+        for (attribute, normal) in self.get_attribute_buffer_mut().iter_mut().zip(accumulated) {
+            if normal.magnitude2() > 0.0 {
+                attribute.normal = normal.normalize().into();
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod test {
 use crate::asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition};
@@ -204,6 +258,7 @@ use crate::asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition
         }
     }
     impl TangentRecalculator for Dummy {}
+    impl NormalRecalculator for Dummy {}
 
     #[test]
     fn test_tangent_recalculator_unindexed () {
@@ -248,5 +303,70 @@ use crate::asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition
         assert_eq!(d.va[0].tangent, [0.0, 1.0, 0.0, 1.0]);
         assert_eq!(d.va[1].tangent, [0.0, 1.0, 0.0, 1.0]);
         assert_eq!(d.va[2].tangent, [0.0, 1.0, 0.0, 1.0]);
+    }
+
+    fn dummy_triangle(vi: Option<Vec<u32>>) -> Dummy {
+        Dummy {
+            vp: vec![
+                VertexBufferPosition { position: [0.0, 0.0, 0.0] },
+                VertexBufferPosition { position: [1.0, 0.0, 0.0] },
+                VertexBufferPosition { position: [0.0, 1.0, 0.0] },
+            ],
+            va: vec![
+                VertexBufferOthers { color: [1.0; 4], normal: [0.0; 3], tangent: [0.0; 4], uv0: [0.0, 0.0] },
+                VertexBufferOthers { color: [1.0; 4], normal: [0.0; 3], tangent: [0.0; 4], uv0: [1.0, 0.0] },
+                VertexBufferOthers { color: [1.0; 4], normal: [0.0; 3], tangent: [0.0; 4], uv0: [0.0, 1.0] },
+            ],
+            vi,
+        }
+    }
+
+    #[test]
+    fn test_normal_recalculator_unindexed() {
+        let mut d = dummy_triangle(None);
+        d.recalculate_normals().expect("normal recalculation should succeed");
+
+        // Counterclockwise in the XY plane faces +Z.
+        for vertex in &d.va {
+            assert_eq!(vertex.normal, [0.0, 0.0, 1.0]);
+        }
+    }
+
+    #[test]
+    fn test_normal_recalculator_indexed() {
+        let mut d = dummy_triangle(Some(vec![0, 1, 2]));
+        d.recalculate_normals().expect("normal recalculation should succeed");
+
+        for vertex in &d.va {
+            assert_eq!(vertex.normal, [0.0, 0.0, 1.0]);
+        }
+    }
+
+    #[test]
+    fn test_normal_recalculator_weights_by_area() {
+        // Two triangles sharing vertex 0: one large (+Z), one small (-Z).
+        // The shared vertex must keep the +Z normal because the large face wins.
+        let mut d = Dummy {
+            vp: vec![
+                VertexBufferPosition { position: [0.0, 0.0, 0.0] },
+                VertexBufferPosition { position: [2.0, 0.0, 0.0] },
+                VertexBufferPosition { position: [0.0, 2.0, 0.0] },
+                VertexBufferPosition { position: [0.5, 0.0, 0.0] },
+                VertexBufferPosition { position: [0.0, 0.5, 0.0] },
+            ],
+            va: vec![
+                VertexBufferOthers { color: [1.0; 4], normal: [0.0; 3], tangent: [0.0; 4], uv0: [0.0, 0.0] },
+                VertexBufferOthers { color: [1.0; 4], normal: [0.0; 3], tangent: [0.0; 4], uv0: [0.0, 0.0] },
+                VertexBufferOthers { color: [1.0; 4], normal: [0.0; 3], tangent: [0.0; 4], uv0: [0.0, 0.0] },
+                VertexBufferOthers { color: [1.0; 4], normal: [0.0; 3], tangent: [0.0; 4], uv0: [0.0, 0.0] },
+                VertexBufferOthers { color: [1.0; 4], normal: [0.0; 3], tangent: [0.0; 4], uv0: [0.0, 0.0] },
+            ],
+            vi: Some(vec![0, 1, 2, 0, 4, 3]),
+        };
+
+        d.recalculate_normals().expect("normal recalculation should succeed");
+
+        assert_eq!(d.va[0].normal, [0.0, 0.0, 1.0], "the large face must dominate the shared vertex");
+        assert_eq!(d.va[3].normal, [0.0, 0.0, -1.0], "the small face still faces -Z");
     }
 }
