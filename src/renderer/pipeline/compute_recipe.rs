@@ -119,6 +119,9 @@ impl GpuSkinningComputeRecipe {
 
         Self { bgl }
     }
+
+    /// Layout of the per-dispatch bind group (pipeline layout group 1).
+    pub fn bind_group_layout(&self) -> &wgpu::BindGroupLayout { &self.bgl }
 }
 
 impl ComputeRecipe for GpuSkinningComputeRecipe {

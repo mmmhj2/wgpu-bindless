@@ -39,5 +39,17 @@ var<immediate> imm : Immediate;
 
 @compute @workgroup_size(64, 1, 1)
 fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    // TODO...
+    let index = global_id.x;
+    if (index >= arrayLength(&position_out)) {
+        return;
+    }
+
+    // NOTE: identity pass-through for now. It keeps the compute path (buffers,
+    // bind group, dispatch, barriers) verifiable before the skinning math lands.
+    position_out[index].position = position_in[index].position;
+
+    attribute_out[index]._color = attribute_in[index]._color;
+    attribute_out[index].normal = attribute_in[index].normal;
+    attribute_out[index].tangent = attribute_in[index].tangent;
+    attribute_out[index]._uv0 = attribute_in[index]._uv0;
 }
