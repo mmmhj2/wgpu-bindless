@@ -14,7 +14,8 @@ pub enum TextureFormat {
     R8Unorm,
     Rg8Unorm,
     R16Unorm,
-    Rg16Unorm
+    Rg16Unorm,
+    Rgba16Float
 }
 
 impl Into<wgpu::TextureFormat> for TextureFormat {
@@ -28,6 +29,7 @@ impl Into<wgpu::TextureFormat> for TextureFormat {
             TextureFormat::Rg8Unorm => wgpu::TextureFormat::Rg8Unorm,
             TextureFormat::R16Unorm => wgpu::TextureFormat::R16Unorm,
             TextureFormat::Rg16Unorm => wgpu::TextureFormat::Rg16Unorm,
+            TextureFormat::Rgba16Float => wgpu::TextureFormat::Rgba16Float,
         }
     }
 }
@@ -179,7 +181,8 @@ impl TextureAsset {
 }
 
 impl ConcreteAssetType for TextureAsset {
-    const SCHEMA_VERSION: u32 = 1;
+    /// 2: added [`TextureFormat::Rgba16Float`].
+    const SCHEMA_VERSION: u32 = 2;
 }
 
 impl GpuAssetType for TextureAsset {

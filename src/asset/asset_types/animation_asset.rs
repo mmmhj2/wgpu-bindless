@@ -1,39 +1,45 @@
 use serde::{Deserialize, Serialize};
 
-use crate::asset::asset_types::{ConcreteAssetType, GpuAssetType};
+use crate::asset::asset_types::{ConcreteAssetType, GpuAssetType, texture_asset::TextureAsset};
 
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SkinnedAnimationAsset {
     /// Name of the skin asset that this animation applies to.
-    pub skin: String
+    pub skin: String,
+    /// Number of baked frames, i.e. the height of [`Self::texture`].
+    pub frames: u32,
+    /// Playback rate the frames were baked at.
+    pub fps: f32,
+    /// Baked joint matrices.
+    ///
+    /// `width == joint_count * 4` and `height == frames`. Each joint owns four
+    /// consecutive texels holding the four *columns* of its object-space
+    /// skinning matrix, so a joint matrix can be rebuilt with four `textureLoad`
+    /// calls.
+    pub texture: TextureAsset
 }
 
 impl ConcreteAssetType for SkinnedAnimationAsset {
-    const SCHEMA_VERSION: u32 = todo!();
+    const SCHEMA_VERSION: u32 = 1;
 }
 
 impl GpuAssetType for SkinnedAnimationAsset {
     type GpuObjectType = wgpu::Texture;
     
-    /// Upload the animation onto the GPU.
+    /// Upload the baked animation texture onto the GPU.
     /// 
-    /// Joint animations should be baked into a 2D texture. This leverages GPU
-    /// hardware to automatically do linear interpolation over time.
+    /// Joint animations are baked into a 2D texture at import time, one row per
+    /// frame. The skinning compute shader reads the row selected by the `frame`
+    /// immediate with `textureLoad`, so no sampling or filtering is involved.
     /// 
-    /// It is possible to either:
-    /// - directly bake vertex positions into the texture which is known as
-    /// Vertex Attribute Texture (VAT),
-    /// - or just bake the transform sequences (i.e. matrices).
+    /// The texture has the format of RGBA16 by default. It should provide more
+    /// than enough precision. If bandwidth is a problem, RGBA8 may be used in
+    /// the future.
     /// 
-    /// Needs to decide which to use. The latter one is often implemented with
-    /// texel buffers, but that is not available for WebGPU. Further, hardware
-    /// interpolation might not be useful for matrices (unless we can tolerate
-    /// some artefacts).
-    /// 
-    /// Whichever route is chosen, all transform data uploaded onto the GPU must
-    /// be *in model space*, to be directly used in the compute shader.
+    /// All transform data is baked *in model space*, to be directly used in the
+    /// compute shader.
     fn upload(&self, name: &str, device: &wgpu::Device, queue: &wgpu::Queue) -> Self::GpuObjectType {
-        todo!()
+        self.texture.upload(name, device, queue)
     }
 }

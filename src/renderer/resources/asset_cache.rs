@@ -6,6 +6,8 @@ use crate::{
         asset_types::{
             AssetData,
             GpuAssetType,
+            animation_asset::SkinnedAnimationAsset,
+            skinned_mesh_asset::{GpuSkinnedMesh, SkinnedMeshAsset},
             static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial},
         },
     }, renderer::{
@@ -26,6 +28,13 @@ pub struct GpuAssetCache {
     texture_bindings: HashMap<String, (SampledTextureHandle, SamplerHandle)>,
     /// Mesh subasset name -> uploaded, material-resolved mesh.
     mesh_cache: HashMap<String, Arc<StaticMesh>>,
+    /// Skinned mesh subasset name -> uploaded rest pose + skinning attributes.
+    ///
+    /// Shared across instances: only the deformed vertex buffers are
+    /// per-instance, the rest pose geometry is immutable.
+    skinned_geometry_cache: HashMap<String, Arc<GpuSkinnedMesh>>,
+    /// Animation subasset name -> baked animation texture in the bindless table.
+    skinned_animation_cache: HashMap<String, SampledTextureHandle>,
 }
 
 impl GpuAssetCache {
@@ -33,6 +42,8 @@ impl GpuAssetCache {
         Self {
             texture_bindings: HashMap::new(),
             mesh_cache: HashMap::new(),
+            skinned_geometry_cache: HashMap::new(),
+            skinned_animation_cache: HashMap::new(),
         }
     }
 }
@@ -83,7 +94,7 @@ impl MeshUploadContext<'_> {
     }
 
     /// Build a `PBRMaterial` from a static mesh asset's material description.
-    fn material_from_asset(&mut self, material: &StaticMeshMaterial) -> PBRMaterial {
+    pub(crate) fn material_from_asset(&mut self, material: &StaticMeshMaterial) -> PBRMaterial {
         let default_sampler = self.bindless.get_default_sampler();
 
         let (diffuse_tx, diffuse_sp) = match &material.diffuse_texture_name {
@@ -125,5 +136,40 @@ impl MeshUploadContext<'_> {
         let uploaded = Arc::new(StaticMesh::new(geometry, material));
         self.cache.mesh_cache.insert(name.to_string(), uploaded.clone());
         uploaded
+    }
+
+    /// Upload a skinned mesh's rest pose and skinning attributes.
+    ///
+    /// Only the immutable part is cached. Per-instance deformed buffers are
+    /// created by [`crate::renderer::drawable::skinned_mesh::SkinnedMesh`].
+    pub(crate) fn skinned_mesh_from_asset(&mut self, name: &str, mesh: &SkinnedMeshAsset) -> Arc<GpuSkinnedMesh> {
+        if let Some(cached) = self.cache.skinned_geometry_cache.get(name) {
+            return cached.clone();
+        }
+
+        let uploaded = Arc::new(mesh.upload(name, self.device, self.queue));
+        self.cache.skinned_geometry_cache.insert(name.to_string(), uploaded.clone());
+        uploaded
+    }
+
+    /// Upload a baked animation texture and register it in the bindless table.
+    ///
+    /// `GpuAssetType::upload` cannot do the bindless registration itself, since
+    /// the trait signature has no access to [`BindlessResources`].
+    /// 
+    /// TODO: Re-think and refactor the texture upload route. MeshUploadContext
+    /// is a good way to look at. Or we can use OnceCell to do deferred
+    /// construction.
+    pub(crate) fn skinned_animation_texture(&mut self, name: &str, animation: &SkinnedAnimationAsset) -> SampledTextureHandle {
+        if let Some(cached) = self.cache.skinned_animation_cache.get(name) {
+            return *cached;
+        }
+
+        let texture = animation.upload(name, self.device, self.queue);
+        let handle = self.bindless
+            .create_sampled_texture(texture.create_view(&Default::default()))
+            .expect("failed to push animation texture to bindless resources.");
+        self.cache.skinned_animation_cache.insert(name.to_string(), handle);
+        handle
     }
 }

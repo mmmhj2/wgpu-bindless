@@ -29,5 +29,5 @@ pub struct SkinAsset {
 }
 
 impl ConcreteAssetType for SkinAsset {
-    const SCHEMA_VERSION: u32 = todo!();
+    const SCHEMA_VERSION: u32 = 1;
 }
