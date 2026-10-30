@@ -54,13 +54,18 @@ impl AssetImporter for GltfImporter {
             .map_err(|source| GltfImportError::Read { path: path.to_path_buf(), source })?;
 
         for b in document.buffers() {
-            if let gltf::buffer::Source::Uri(_) = b.source() {
-                return Err(Box::new(GltfImportError::UnsupportedFeature("external resource")))
+            if let gltf::buffer::Source::Uri(uri) = b.source() {
+                // Allow embedded Base64 data in URI
+                if !uri.starts_with("data") {
+                    return Err(Box::new(GltfImportError::UnsupportedFeature("external resource")))
+                }
             }
         }
         for i in document.images() {
-            if let gltf::image::Source::Uri { uri: _, mime_type: _ } = i.source() {
-                return Err(Box::new(GltfImportError::UnsupportedFeature("external resource")))
+            if let gltf::image::Source::Uri { uri, mime_type: _ } = i.source() {
+                if !uri.starts_with("data") {
+                    return Err(Box::new(GltfImportError::UnsupportedFeature("external resource")))
+                }
             }
         }
 
