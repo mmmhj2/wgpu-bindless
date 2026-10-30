@@ -48,4 +48,14 @@ impl DrawList {
             DrawableType::OpaqueSkinned => self.skinned_opaque.len(),
         }
     }
+
+    /// Get a list of skinned meshes in this draw call.
+    /// 
+    /// Useful to produce immediate vertex buffers used for the draw proper.
+    /// 
+    /// TODO: this API design kind of smells. Figure out an improvement after
+    /// skinning animation is actually working.
+    pub fn get_skinned_meshes(&self) -> &[SkinnedMesh] {
+        &self.skinned_opaque
+    }
 }

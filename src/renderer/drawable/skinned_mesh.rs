@@ -27,6 +27,11 @@ impl SkinnedMesh {
         Self { geometry, deformed_position, material, draw_buffers: OnceCell::new() }
     }
 
+    /// Perform skinning to produce the immediate vertex buffer used for rendering.
+    pub fn skin_with(&self, anim_texture: u32, frame: u32) {
+        todo!()
+    }
+
     pub fn get_material(&self) -> &PBRMaterial { &self.material }
 }
 

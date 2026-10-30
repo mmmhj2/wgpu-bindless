@@ -28,6 +28,9 @@ impl GpuAssetType for SkinnedAnimationAsset {
     /// 
     /// Needs to decide which to use. The latter one is often implemented with
     /// texel buffers, but that is not available for WebGPU.
+    /// 
+    /// Whichever route is chosen, all transform data uploaded onto the GPU must
+    /// be *in model space*, to be directly used in the compute shader.
     fn upload(&self, name: &str, device: &wgpu::Device, queue: &wgpu::Queue) -> Self::GpuObjectType {
         todo!()
     }
