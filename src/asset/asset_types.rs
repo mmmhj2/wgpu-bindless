@@ -1,16 +1,27 @@
 pub mod animation_asset;
 pub mod scene_asset;
 pub mod static_mesh_asset;
+pub mod skin_asset;
 pub mod skinned_mesh_asset;
 pub mod texture_asset;
 pub mod vertex;
 
 use std::{fs::File, io::{Read, Write}};
 
-use image::EncodableLayout;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::asset::{asset_types::{scene_asset::SceneAsset, skinned_mesh_asset::SkinnedMeshAsset, static_mesh_asset::StaticMeshAsset, texture_asset::TextureAsset}, error::AssetIoError, provenance::ImportProvenance};
+use crate::asset::{
+    asset_types::{
+        animation_asset::SkinnedAnimationAsset,
+        scene_asset::SceneAsset,
+        skin_asset::SkinAsset,
+        skinned_mesh_asset::SkinnedMeshAsset,
+        static_mesh_asset::StaticMeshAsset,
+        texture_asset::TextureAsset
+    },
+    error::AssetIoError,
+    provenance::ImportProvenance
+};
 
 /// Name of the ZIP entry holding the serialized [`AssetMetadata`].
 const METADATA_ENTRY: &str = "metadata";
@@ -51,7 +62,8 @@ pub enum AssetData {
     TextureAssetType(TextureAsset),
     SceneAssetType(SceneAsset),
     SkinnedMeshAssetType(SkinnedMeshAsset),
-    SkinnedAnimationAssetType(())
+    SkinnedAnimationAssetType(SkinnedAnimationAsset),
+    SkinAssetType(SkinAsset)
 }
 
 impl AssetData {
@@ -63,6 +75,7 @@ impl AssetData {
             AssetData::SceneAssetType(_) => AssetKind::Scene,
             AssetData::SkinnedMeshAssetType(_) => AssetKind::SkinnedMesh,
             AssetData::SkinnedAnimationAssetType(_) => AssetKind::SkinnedAnimation,
+            AssetData::SkinAssetType(_) => AssetKind::Skin
         }
     }
 }
@@ -76,7 +89,8 @@ pub enum AssetKind {
     Texture,
     Scene,
     SkinnedMesh,
-    SkinnedAnimation
+    SkinnedAnimation,
+    Skin
 }
 
 impl AssetKind {
@@ -86,8 +100,9 @@ impl AssetKind {
             AssetKind::StaticMesh => <StaticMeshAsset as ConcreteAssetType>::SCHEMA_VERSION,
             AssetKind::Texture => <TextureAsset as ConcreteAssetType>::SCHEMA_VERSION,
             AssetKind::Scene => <SceneAsset as ConcreteAssetType>::SCHEMA_VERSION,
-            AssetKind::SkinnedMesh => todo!(),
-            AssetKind::SkinnedAnimation => todo!()
+            AssetKind::SkinnedMesh => <SkinnedMeshAsset as ConcreteAssetType>::SCHEMA_VERSION,
+            AssetKind::SkinnedAnimation => <SkinnedAnimationAsset as ConcreteAssetType>::SCHEMA_VERSION,
+            AssetKind::Skin => <SkinAsset as ConcreteAssetType>::SCHEMA_VERSION,
         }
     }
 }

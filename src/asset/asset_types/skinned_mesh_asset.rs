@@ -4,6 +4,7 @@ use crate::asset::asset_types::{ConcreteAssetType, GpuAssetType, static_mesh_ass
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SkinnedMeshAsset {
+    pub skin: String,
     pub restpose: StaticMeshAsset,
     pub animation : Vec<VertexBufferSkinning>,
 }
@@ -21,7 +22,7 @@ pub struct GpuSkinnedMesh {
 }
 
 impl ConcreteAssetType for SkinnedMeshAsset {
-    const SCHEMA_VERSION: u32 = 1;
+    const SCHEMA_VERSION: u32 = todo!();
 }
 
 impl GpuAssetType for SkinnedMeshAsset {

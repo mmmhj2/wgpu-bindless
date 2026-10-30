@@ -4,14 +4,16 @@ use crate::asset::asset_types::{ConcreteAssetType, GpuAssetType};
 
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct AnimationAsset {
+pub struct SkinnedAnimationAsset {
+    /// Name of the skin asset that this animation applies to.
+    pub skin: String
 }
 
-impl ConcreteAssetType for AnimationAsset {
-    const SCHEMA_VERSION: u32 = 1;
+impl ConcreteAssetType for SkinnedAnimationAsset {
+    const SCHEMA_VERSION: u32 = todo!();
 }
 
-impl GpuAssetType for AnimationAsset {
+impl GpuAssetType for SkinnedAnimationAsset {
     type GpuObjectType = wgpu::Texture;
     
     /// Upload the animation onto the GPU.
