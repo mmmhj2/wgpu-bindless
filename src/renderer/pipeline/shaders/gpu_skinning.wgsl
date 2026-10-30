@@ -51,6 +51,7 @@ fn load_joint_matrix(joint: u32) -> mat4x4<f32> {
     let texture = bindless_textures[imm.anim_tex & 0xFFFFu];
     let x = i32(joint * 4u);
     let y1 = i32(floor(imm.frame));
+    // Wrapping around should be handled by animation asset importer
     let y2 = y1 + 1;
     let alpha = fract(imm.frame);
     // At 30 FPS the distortion from matrix lerp are most likely negligeable.

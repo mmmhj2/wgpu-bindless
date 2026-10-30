@@ -347,13 +347,38 @@ pub(super) fn bake_animation(
             }
         }
     }
+    // Append a final frame 0 for wrapping around gracefully
+    {
+        let time = 0 as f32 / fps;
+        // Start from the rest pose and override the animated properties.
+        let mut pose = rest.clone();
+        for channel in &channels {
+            let target = &mut pose[channel.node];
+            match channel.sample(time) {
+                Sample::Translation(value) => target.translation = value,
+                Sample::Rotation(value) => target.rotation = value,
+                Sample::Scale(value) => target.scale = value,
+            }
+        }
+
+        let locals: Vec<Matrix4<f32>> = pose.iter().map(|transform| transform.to_matrix()).collect();
+        let matrices = bake_frame(&locals, &parents, &joint_indices, inverse_bind_matrices, &inverse_mesh_world);
+
+        for matrix in matrices {
+            for column in matrix {
+                for channel in column {
+                    texels.extend_from_slice(&f32_to_f16_bits(channel).to_le_bytes());
+                }
+            }
+        }
+    }
 
     let texture = TextureAsset {
         format: TextureFormat::Rgba16Float,
         dimension: D2,
         width: NonZero::new((joint_count * 4) as u32)
             .ok_or(GltfImportError::MissingSkinningAttributes)?,
-        height: Some(NonZero::new(frame_count).ok_or(GltfImportError::MissingSkinningAttributes)?),
+        height: Some(NonZero::new(frame_count + 1).ok_or(GltfImportError::MissingSkinningAttributes)?),
         depth_or_array_slice: None,
         sampler: Sampler::default(),
         texels: TexelData::Plain(texels.into_boxed_slice()),

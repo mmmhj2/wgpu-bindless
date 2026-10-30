@@ -39,7 +39,8 @@ impl AssetImporter for GltfImporter {
     const IMPORTER_ID: &'static str = "gltf";
     /// 4: imports skins, skinned primitives and baked animations.
     /// 5: recomputes missing vertex normals from the triangle winding.
-    const IMPORTER_VERSION: u32 = 5;
+    /// 6: wrapping around for animation texture
+    const IMPORTER_VERSION: u32 = 6;
 
     fn import(mut self, context: &ImporterContext) -> Result<(), ImportError> {
         if !self.path.is_file() {
