@@ -72,7 +72,7 @@ impl BindlessResources {
     pub const BGL_BINDLESS: [wgpu::BindGroupLayoutEntry; 2] = [
         wgpu::BindGroupLayoutEntry {
             binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            visibility: wgpu::ShaderStages::all(),
             ty: wgpu::BindingType::Texture {
                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
                 view_dimension: wgpu::TextureViewDimension::D2,
@@ -82,7 +82,7 @@ impl BindlessResources {
         },
         wgpu::BindGroupLayoutEntry {
             binding: 1,
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            visibility: wgpu::ShaderStages::all(),
             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
             count: Some(NonZeroU32::new(MAX_SAMPLER_SLOTS as u32).unwrap()),
         },

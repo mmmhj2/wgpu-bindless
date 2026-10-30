@@ -22,10 +22,10 @@ impl GpuAssetType for AnimationAsset {
     /// It is possible to either:
     /// - directly bake vertex positions into the texture which is known as
     /// Vertex Attribute Texture (VAT),
-    /// - or just bake the transform sequences (e.g. quaternions, translation
-    /// vectors or matrices).
+    /// - or just bake the transform sequences (i.e. matrices).
     /// 
-    /// Needs to decide which to use.
+    /// Needs to decide which to use. The latter one is often implemented with
+    /// texel buffers, but that is not available for WebGPU.
     fn upload(&self, name: &str, device: &wgpu::Device, queue: &wgpu::Queue) -> Self::GpuObjectType {
         todo!()
     }

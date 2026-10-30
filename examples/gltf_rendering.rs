@@ -141,7 +141,7 @@ impl RendererState for State {
             }
         };
 
-        log::info!("Loaded {} static mesh batches.", draw_list.count(DrawableType::All));
+        log::info!("Loaded {} static mesh batches.", draw_list.count(DrawableType::OpaqueStatic));
 
         let skybox_texture = {
             let asset = asset_manager.get_asset("skybox").expect("skybox array asset should be present");
@@ -201,7 +201,7 @@ impl RendererState for State {
                             VertexLayoutKey::BASIC,
                         )
                     );
-                    self.draw_list.draw(DrawableType::Opaque, render_pass);
+                    self.draw_list.draw(DrawableType::OpaqueStatic, render_pass);
 
                     skybox.draw_skybox(gpu.device(), scene.pipelines, render_pass);
                 },

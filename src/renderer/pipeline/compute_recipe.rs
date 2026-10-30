@@ -19,7 +19,7 @@ pub(super) trait ComputeRecipe {
         let mut bgl = vec![Some(bindless_layout)];
         bgl.extend_from_slice(&self.get_extra_bind_groups());
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some(Self::SHADER_STRING),
+            label: Some(Self::LABEL),
             bind_group_layouts: &bgl,
             immediate_size: Self::IMMEDIATE_SIZE
         });
@@ -51,7 +51,7 @@ impl GpuSkinningComputeRecipe {
     /// 
     /// Note: Texture with baked animation can use bindless slots (if 2D only, recommended)
     /// or go here (if is 2D array or 3D).
-    const BGL_SKINNING: [wgpu::BindGroupLayoutEntry; 2] = [
+    const BGL_SKINNING: [wgpu::BindGroupLayoutEntry; 3] = [
         // Vertex position input
         wgpu::BindGroupLayoutEntry{
             binding: 0,
@@ -69,6 +69,17 @@ impl GpuSkinningComputeRecipe {
             visibility: wgpu::ShaderStages::COMPUTE,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None
+            },
+            count: None,
+        },
+        // Bone indices and weights
+        wgpu::BindGroupLayoutEntry{
+            binding: 3,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
                 has_dynamic_offset: false,
                 min_binding_size: None
             },

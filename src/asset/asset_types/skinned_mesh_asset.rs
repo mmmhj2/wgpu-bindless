@@ -1,23 +1,18 @@
 use serde::{Serialize, Deserialize};
 
-use crate::asset::asset_types::{ConcreteAssetType, GpuAssetType, static_mesh_asset::StaticMeshMaterial, vertex::{VertexBufferAnimation, VertexBufferOthers, VertexBufferPosition}};
+use crate::asset::asset_types::{ConcreteAssetType, GpuAssetType, static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial}, vertex::{VertexBufferSkinning, VertexBufferOthers, VertexBufferPosition}};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SkinnedMeshAsset {
-    pub position : Vec<VertexBufferPosition>,
-    pub attribute : Vec<VertexBufferOthers>,
-    pub animation : Vec<VertexBufferAnimation>,
-    pub index  : Option<Vec<u32>>,
-    pub material : StaticMeshMaterial,
-    pub vertex_draw_count : u32,
-    pub vertex_color_scale: [f32; 4]
+    pub restpose: StaticMeshAsset,
+    pub animation : Vec<VertexBufferSkinning>,
 }
 
 /// GPU-resident geometry produced by uploading a [`SkinnedMeshAsset`].
 ///
 /// The `restpose_vertex_buffer` are feed to the skinning compute buffer, and
 /// then consumed by the rasterizer. These buffers are assumed to have
-/// storage (UAV) usages instead of vertex usages enabled.
+/// storage (UAV) and vertex usages enabled.
 #[derive(Debug)]
 pub struct GpuSkinnedMesh {
     pub restpose_vertex_buffer: Vec<wgpu::Buffer>,

@@ -36,7 +36,10 @@ impl ComputePipelineLibrary {
     /// Get the compute pipeline.
     /// 
     /// TODO: add a `get_or_create` variant.
-    pub fn get(&self, k: ComputePipelineKey) -> Option<&ComputePipeline> {
+    pub fn get_pipeline(&self, k: ComputePipelineKey) -> Option<&ComputePipeline> {
         self.cache.get(&k).map(|x| &x.1)
+    }
+    pub fn get_layout(&self, k: ComputePipelineKey) -> Option<&PipelineLayout> {
+        self.cache.get(&k).map(|x| &x.0)
     }
 }

@@ -34,7 +34,7 @@ pub struct VertexBufferOthers {
 /// the actual vertex buffer every frame.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct VertexBufferAnimation {
+pub struct VertexBufferSkinning {
     pub bone_weights: [f32; 4],
     pub bone_indices: [u32; 4]
 }
