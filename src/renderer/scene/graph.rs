@@ -231,6 +231,7 @@ impl SceneGraph {
             self.mesh_instance_count()
         );
 
+        // TODO: handle skinned mesh uploads and animation.
         let static_opaque_batch = plans
             .into_iter()
             .map(|plan| {
@@ -243,7 +244,7 @@ impl SceneGraph {
             })
             .collect();
 
-        DrawList::new(static_opaque_batch)
+        DrawList::new(static_opaque_batch, vec![])
     }
 }
 

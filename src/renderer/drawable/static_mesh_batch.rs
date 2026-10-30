@@ -17,8 +17,8 @@ const MODEL_MATRIX_SIZE: u64 = std::mem::size_of::<[[f32; 4]; 4]>() as u64;
 /// buffer and are indexed by `@builtin(instance_index)`.
 ///
 /// Only opaque and alpha-mask primitives may use this type. Alpha-blended
-/// transparent instances must not be grouped into a batch: they require a
-/// global back-to-front draw order (see `docs/instancing_design.md`).
+/// transparent instances must not be grouped into a batch and must be sorted
+/// independently.
 #[derive(Debug, Clone)]
 pub struct StaticMeshBatch {
     mesh: Arc<StaticMesh>,
