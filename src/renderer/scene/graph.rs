@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use cgmath::Matrix4;
 
-use crate::{asset::asset_types::{AssetData, AssetKind, scene_asset::SceneAsset}, renderer::{drawable::{draw_list::DrawList, skinned_mesh::SkinnedMesh, static_mesh_batch::StaticMeshBatch}, resources::asset_cache::MeshUploadContext}};
+use crate::{asset::asset_types::{AssetData, AssetKind, scene_asset::SceneAsset}, renderer::{drawable::{draw_list::DrawList, skinned_mesh::{SkinnedAnimation, SkinnedMesh}, static_mesh_batch::StaticMeshBatch}, resources::asset_cache::MeshUploadContext}};
 
 /// One node of the runtime scene graph.
 #[derive(Debug)]
@@ -262,6 +262,10 @@ impl SceneGraph {
             })
             .collect();
 
+        // Resolve which baked animation drives each skin once, before any GPU
+        // resource is created.
+        let animations = ctx.animations_by_skin();
+
         let mut skinned_opaque = Vec::with_capacity(skinned_instances.len());
         for (name, world_matrix) in skinned_instances {
             let asset = ctx.assets.get_asset(&name)
@@ -273,7 +277,16 @@ impl SceneGraph {
 
             let geometry = ctx.skinned_mesh_from_asset(&name, mesh_asset);
             let material = ctx.material_from_asset(&mesh_asset.restpose.material);
-            skinned_opaque.push(SkinnedMesh::new(ctx, geometry, material, world_matrix));
+            let animation = animations
+                .get(&mesh_asset.skin)
+                .and_then(|(animation_name, frames, fps)| {
+                    ctx.skinned_animation_texture(animation_name).map(|texture| SkinnedAnimation {
+                        texture,
+                        frames: *frames,
+                        fps: *fps,
+                    })
+                });
+            skinned_opaque.push(SkinnedMesh::new(ctx, geometry, material, world_matrix, animation));
         }
 
         DrawList::new(static_opaque_batch, skinned_opaque)

@@ -171,16 +171,43 @@ impl MeshUploadContext<'_> {
     /// TODO: Re-think and refactor the texture upload route. MeshUploadContext
     /// is a good way to look at. Or we can use OnceCell to do deferred
     /// construction.
-    pub(crate) fn skinned_animation_texture(&mut self, name: &str, animation: &SkinnedAnimationAsset) -> SampledTextureHandle {
+    pub(crate) fn skinned_animation_texture(&mut self, name: &str) -> Option<SampledTextureHandle> {
         if let Some(cached) = self.cache.skinned_animation_cache.get(name) {
-            return *cached;
+            return Some(*cached);
         }
+
+        let asset = self.assets.get_asset(name)?;
+        let asset = asset.read().ok()?;
+        let AssetData::SkinnedAnimationAssetType(animation) = asset.get_data() else { return None };
 
         let texture = animation.upload(name, self.device, self.queue);
         let handle = self.bindless
             .create_sampled_texture(texture.create_view(&Default::default()))
             .expect("failed to push animation texture to bindless resources.");
         self.cache.skinned_animation_cache.insert(name.to_string(), handle);
-        handle
+        Some(handle)
+    }
+
+    /// Map every skin asset name to the animation that drives it.
+    ///
+    /// Returns `(animation asset name, frames, fps)`. Several animations may
+    /// target the same skin; the lexicographically first asset name wins so the
+    /// choice is deterministic instead of depending on hash iteration order.
+    pub(crate) fn animations_by_skin(&self) -> HashMap<String, (String, u32, f32)> {
+        let database = self.assets.get_database();
+        let mut candidates: Vec<(String, String, u32, f32)> = Vec::new();
+
+        for (name, asset) in database.iter() {
+            let Ok(asset) = asset.read() else { continue };
+            let AssetData::SkinnedAnimationAssetType(animation) = asset.get_data() else { continue };
+            candidates.push((animation.skin.clone(), name.clone(), animation.frames, animation.fps));
+        }
+        candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+        let mut by_skin = HashMap::new();
+        for (skin, name, frames, fps) in candidates {
+            by_skin.entry(skin).or_insert((name, frames, fps));
+        }
+        by_skin
     }
 }
