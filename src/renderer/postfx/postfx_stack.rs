@@ -296,13 +296,15 @@ impl PostFxStack {
     /// first free buffer and the pool stabilises at two entries.
     /// 
     /// TODO: Support more varieties of scratch textures (halfres, etc.)
-    fn acquire_scratch(&mut self, exclude: Option<usize>) -> usize {
+    fn acquire_scratch(&mut self, device: &wgpu::Device, exclude: Option<usize>) -> usize {
         for i in 0..self.scratch.len() {
             if Some(i) != exclude {
                 return i;
             }
         }
         self.scratch.push(Framebuffer::new(self.hdr_format, "PostFx scratch"));
+        let (width, height) = self.size.expect("call configure_with_size first");
+        self.scratch.last_mut().unwrap().create_texture(device, width, height);
         self.scratch.len() - 1
     }
 
@@ -376,7 +378,7 @@ impl PostFxStack {
                 None
             } else {
                 match mode {
-                    OutputMode::Separate => Some(self.acquire_scratch(current)),
+                    OutputMode::Separate => Some(self.acquire_scratch(device, current)),
                     OutputMode::InPlace => current,
                 }
             };
