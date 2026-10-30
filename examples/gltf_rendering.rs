@@ -8,7 +8,7 @@ use rust_renderer::{
         asset_types::{AssetData::{SceneAssetType, TextureAssetType}, GpuAssetType},
         importer::{gltf_importer::GltfImporter, image_file_importer::ColorSpace},
     }, renderer::{
-        drawable::{draw_list::{DrawList, DrawableType}, drawable_mesh_traits::DrawableMesh, static_mesh_batch::StaticMeshBatch}, orchestrator::{RenderOrchestrator, RendererConfig}, pipeline::{
+        drawable::draw_list::{DrawList, DrawableType}, orchestrator::{RenderOrchestrator, RendererConfig}, pipeline::{
             key::{PipelineKey, VertexLayoutKey},
             rasterizer_pipeline::UseRasterizerPipeline,
         }, postfx::{

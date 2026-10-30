@@ -1,6 +1,4 @@
-use std::{fs::File, io::Write};
-
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 
 use crate::asset::{asset_types::{ConcreteAssetType, GpuAssetType, vertex::{VertexBufferOthers, VertexBufferPosition}}, importer::vertex_reconditioner::{NormalRecalculator, TangentRecalculator, VertexColorApplyScale, VertexReconditionable, VertexReconditionableAttributeWrite}};
 

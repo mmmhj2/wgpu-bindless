@@ -1,8 +1,8 @@
-use std::{collections::HashMap, num::NonZero, sync::Arc};
+use std::{num::NonZero, sync::Arc};
 
 use crate::{
-    asset::asset_types::{AssetData, scene_asset::SceneAsset}, renderer::{
-        drawable::{drawable_mesh_traits::{Mesh, DrawableMesh}, static_mesh::StaticMesh}, pipeline::pbr_material::PBRMaterial, resources::{asset_cache::MeshUploadContext, mesh_layout::MeshLayout}, scene::graph::SceneGraph,
+    asset::asset_types::AssetData, renderer::{
+        drawable::{drawable_mesh_traits::{Mesh, DrawableMesh}, static_mesh::StaticMesh}, pipeline::pbr_material::PBRMaterial, resources::{asset_cache::MeshUploadContext, mesh_layout::MeshLayout},
     },
 };
 

@@ -7,7 +7,6 @@ use crate::{
             AssetData,
             AssetKind,
             GpuAssetType,
-            animation_asset::SkinnedAnimationAsset,
             skinned_mesh_asset::{GpuSkinnedMesh, SkinnedMeshAsset},
             static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial},
         },

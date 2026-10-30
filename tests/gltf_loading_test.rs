@@ -8,7 +8,7 @@ mod test {
             asset_manager::AssetManager, asset_types::AssetData,
             importer::gltf_importer::GltfImporter,
         }, renderer::{
-            drawable::{draw_list::{DrawList, DrawableType}, static_mesh_batch::StaticMeshBatch},
+            drawable::draw_list::{DrawList, DrawableType},
             orchestrator::{RenderOrchestrator, RendererConfig}, scene::graph::SceneGraph, window::RendererState,
         },
     };

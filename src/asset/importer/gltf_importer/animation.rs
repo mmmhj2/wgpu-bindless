@@ -8,7 +8,7 @@
 
 use std::num::NonZero;
 
-use cgmath::{InnerSpace, Matrix4, Quaternion, Rotation, SquareMatrix, Vector3};
+use cgmath::{InnerSpace, Matrix4, Quaternion, SquareMatrix, Vector3};
 
 use crate::asset::asset_types::{
     animation_asset::SkinnedAnimationAsset,

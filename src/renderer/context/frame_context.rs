@@ -6,6 +6,7 @@ use crate::renderer::context::surface_context::SurfaceContext;
 /// Unified manager for color and depth render targets.
 pub struct Backbuffers {
     /// Color back buffer for headless mode. Currently unused.
+    #[allow(dead_code)]
     color: Option<wgpu::Texture>,
     depth_format: wgpu::TextureFormat,
     depth: Option<wgpu::Texture>
