@@ -41,9 +41,9 @@ mod test {
                 }
             };
 
-            println!("Read {} batches in total.", draw_list.count(DrawableType::All));
+            println!("Read {} batches in total.", draw_list.count(DrawableType::OpaqueStatic));
             assert_eq!(
-                draw_list.count(DrawableType::All),
+                draw_list.count(DrawableType::OpaqueStatic),
                 2,
                 "test_two_cubes has two distinct primitives"
             );

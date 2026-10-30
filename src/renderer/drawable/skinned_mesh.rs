@@ -1,6 +1,6 @@
 use std::cell::OnceCell;
 
-use crate::{asset::asset_types::skinned_mesh_asset::GpuSkinnedMesh, renderer::{drawable::{drawable_mesh_traits::{DrawableMesh, Mesh}, vertex_types::VertexType}, pipeline::pbr_material::PBRMaterial}};
+use crate::{asset::asset_types::skinned_mesh_asset::GpuSkinnedMesh, renderer::{drawable::{drawable_mesh_traits::{DrawableMesh, Mesh}, vertex_types::VertexType}, pipeline::pbr_material::PBRMaterial, resources::asset_cache::MeshUploadContext}};
 
 /// Skinned animated mesh.
 /// 
@@ -11,24 +11,51 @@ use crate::{asset::asset_types::skinned_mesh_asset::GpuSkinnedMesh, renderer::{d
 #[derive(Debug)]
 pub struct SkinnedMesh {
     geometry: GpuSkinnedMesh,
-    deformed_position: wgpu::Buffer,
+    temp_buffer: Vec<wgpu::Buffer>,
     material: PBRMaterial,
-    draw_buffers: OnceCell<Vec<wgpu::Buffer>>
+
+    model_matrix_buffer: wgpu::Buffer,
+    model_matrix_bg: wgpu::BindGroup,
+    skinning_dispatch_bg: wgpu::BindGroup
 }
 
 impl SkinnedMesh {
-    pub(crate) fn new(device: &wgpu::Device, geometry: GpuSkinnedMesh, material: PBRMaterial) -> Self {
-        let deformed_position = device.create_buffer(&wgpu::BufferDescriptor{
+
+    pub(crate) fn new(ctx: &mut MeshUploadContext<'_>, geometry: GpuSkinnedMesh, material: PBRMaterial) -> Self {
+        let deformed_position = ctx.device.create_buffer(&wgpu::BufferDescriptor{
             label: None,
             size: todo!(),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
             mapped_at_creation: false
         });
-        Self { geometry, deformed_position, material, draw_buffers: OnceCell::new() }
+        let deformed_attribute = ctx.device.create_buffer(&wgpu::BufferDescriptor{
+            label: None,
+            size: todo!(),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
+            mapped_at_creation: false
+        });
+        let temp_buffer = vec![deformed_position, deformed_attribute];
+
+        Self {
+            geometry,
+            temp_buffer,
+            material,
+            model_matrix_buffer: todo!(),
+            model_matrix_bg: todo!(),
+            skinning_dispatch_bg: todo!()
+        }
     }
 
     /// Perform skinning to produce the immediate vertex buffer used for rendering.
-    pub fn skin_with(&self, anim_texture: u32, frame: u32) {
+    /// 
+    /// This method assumes that the compute pass is set up correctly:
+    /// - Bindless bind group (group 0) is correctly bound to the pipeline;
+    /// - Corresponding compute pipeline is correctly setup.
+    /// 
+    /// This method will mutate the first bind group for input to the compute shader.
+    /// 
+    /// TODO: revisit this API design after Skinning animation is actually running.
+    pub fn skin_with(&self, cp: &mut wgpu::ComputePass, anim_texture: u32, frame: u32) {
         todo!()
     }
 
@@ -36,14 +63,7 @@ impl SkinnedMesh {
 }
 
 impl Mesh for SkinnedMesh {
-    fn get_vertex_buffer(&self) -> &[wgpu::Buffer] {
-        self.draw_buffers.get_or_init(|| {
-            // Just swap out the position buffer is sufficient now.
-            let mut buffers: Vec<wgpu::Buffer> = self.geometry.restpose_vertex_buffer.iter().cloned().collect();
-            buffers[0] = self.deformed_position.clone();
-            buffers
-        })
-    }
+    fn get_vertex_buffer(&self) -> &[wgpu::Buffer] { &self.temp_buffer }
     fn get_vertex_draw_count(&self) -> u32 { self.geometry.vertex_draw_count }
     fn get_index_buffer(&self) -> Option<&wgpu::Buffer> { self.geometry.index_buffer.as_ref() }
     fn get_vertex_type(&self) -> VertexType { VertexType::Basic }

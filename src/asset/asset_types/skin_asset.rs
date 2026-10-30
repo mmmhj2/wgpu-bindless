@@ -6,11 +6,11 @@ use crate::asset::asset_types::ConcreteAssetType;
 /// Skin joint modeled after glTF specification.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SkinJoint {
-    pub children: Vec<u32>,
-    /// Rest pose matrix in column-major (as in cgmath or OpenGL) of this bone.
+    /// Corresponding scene node index of the joint.
     /// 
-    /// This transform is relative to its parent (or origin if it is the root).
-    pub rest_pose_matrix: [[f32; 4]; 4],
+    /// Local rest pose matrices and the hierarchy can be found in the scene
+    /// node.
+    pub scene_node: usize,
     /// Inverse bind matrix in column-major (as in cgmath or OpenGL).
     /// 
     /// Inverse bind matrix is actually the inverse of the rest post matrix in
@@ -24,6 +24,7 @@ pub struct SkinJoint {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SkinAsset {
+    pub scene: String,
     pub joints: Vec<SkinJoint>,
 }
 

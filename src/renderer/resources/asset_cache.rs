@@ -8,11 +8,8 @@ use crate::{
             GpuAssetType,
             static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial},
         },
-    },
-    renderer::{
-        drawable::static_mesh::StaticMesh,
-        pipeline::pbr_material::PBRMaterial,
-        resources::{
+    }, renderer::{
+        drawable::static_mesh::StaticMesh, pipeline::{compute_library::ComputePipelineLibrary, pbr_material::PBRMaterial}, resources::{
             bindless::{BindlessResources, SampledTextureHandle, SamplerHandle},
             mesh_layout::MeshLayout,
         },
@@ -50,6 +47,9 @@ pub struct MeshUploadContext<'a> {
     pub queue: &'a wgpu::Queue,
     pub bindless: &'a mut BindlessResources,
     pub mesh_layout: &'a MeshLayout,
+    // Upload context requiring compute library is not a good design.
+    // Figure out some other way to pass compute pipeline layout to asset uploading (i.e. `OnceCell`` for mesh bind groups?)
+    pub compute_pipeline: &'a ComputePipelineLibrary,
     pub cache: &'a mut GpuAssetCache,
     pub assets: &'a AssetManager,
 }

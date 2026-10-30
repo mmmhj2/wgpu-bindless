@@ -27,7 +27,9 @@ impl GpuAssetType for SkinnedAnimationAsset {
     /// - or just bake the transform sequences (i.e. matrices).
     /// 
     /// Needs to decide which to use. The latter one is often implemented with
-    /// texel buffers, but that is not available for WebGPU.
+    /// texel buffers, but that is not available for WebGPU. Further, hardware
+    /// interpolation might not be useful for matrices (unless we can tolerate
+    /// some artefacts).
     /// 
     /// Whichever route is chosen, all transform data uploaded onto the GPU must
     /// be *in model space*, to be directly used in the compute shader.

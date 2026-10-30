@@ -33,8 +33,6 @@ pub struct RendererConfig {
     pub scene_format: Option<wgpu::TextureFormat>,
     /// Allocate an HDR target and enable the post-processing stack.
     pub enable_postfx: bool,
-    /// Enable compute pipeline management for the renderer.
-    pub enable_compute: bool
 }
 
 impl Default for RendererConfig {
@@ -43,8 +41,7 @@ impl Default for RendererConfig {
             request_srgb_surface: true,
             depth_format: wgpu::TextureFormat::Depth32Float,
             scene_format: None,
-            enable_postfx: false,
-            enable_compute: true
+            enable_postfx: false
         }
     }
 }
@@ -65,7 +62,7 @@ pub struct RenderOrchestrator {
     mesh_layout: MeshLayout,
     assets: GpuAssetCache,
     pipelines: PipelineLibrary,
-    compute_pipelines: Option<ComputePipelineLibrary>,
+    compute_pipelines: ComputePipelineLibrary,
     postfx: Option<PostFxStack>,
     gpu: GpuContext,
     surface_format: wgpu::TextureFormat,
@@ -115,9 +112,7 @@ impl RenderOrchestrator {
             scene_format,
             config.depth_format,
         );
-        let compute_pipelines = config
-            .enable_compute
-            .then(|| ComputePipelineLibrary::new(gpu.device(), bindless.get_bind_group_layout()));
+        let compute_pipelines = ComputePipelineLibrary::new(gpu.device(), bindless.get_bind_group_layout());
         let postfx = config
             .enable_postfx
             .then(|| PostFxStack::new(scene_format, surface_format));
@@ -174,6 +169,7 @@ impl RenderOrchestrator {
             device: gpu.device(),
             queue: gpu.queue(),
             bindless: &mut self.bindless,
+            compute_pipeline: &self.compute_pipelines,
             mesh_layout: &self.mesh_layout,
             cache: &mut self.assets,
             assets,
@@ -204,8 +200,8 @@ impl RenderOrchestrator {
 
     pub fn pipelines(&self) -> &PipelineLibrary { &self.pipelines }
     pub fn pipelines_mut(&mut self) -> &mut PipelineLibrary { &mut self.pipelines }
-    pub fn compute_pipelines(&self) -> Option<&ComputePipelineLibrary> { self.compute_pipelines.as_ref() }
-    pub fn compute_pipelines_mut(&mut self) -> Option<&mut ComputePipelineLibrary> { self.compute_pipelines.as_mut() }
+    pub fn compute_pipelines(&self) -> &ComputePipelineLibrary { &self.compute_pipelines }
+    pub fn compute_pipelines_mut(&mut self) -> &mut ComputePipelineLibrary { &mut self.compute_pipelines }
     pub fn postfx(&self) -> Option<&PostFxStack> { self.postfx.as_ref() }
     pub fn postfx_mut(&mut self) -> Option<&mut PostFxStack> { self.postfx.as_mut() }
     pub fn surface_format(&self) -> wgpu::TextureFormat { self.surface_format }
@@ -255,6 +251,7 @@ impl RenderOrchestrator {
             mesh_layout: &self.mesh_layout,
             assets: &mut self.assets,
             pipelines: &mut self.pipelines,
+            compute_pipelines: &mut self.compute_pipelines,
             postfx: self.postfx.as_mut(),
             frame,
             encoder: Some(encoder),
@@ -290,6 +287,7 @@ pub struct Frame<'a> {
     mesh_layout: &'a MeshLayout,
     assets: &'a mut GpuAssetCache,
     pipelines: &'a mut PipelineLibrary,
+    compute_pipelines: &'a mut ComputePipelineLibrary,
     postfx: Option<&'a mut PostFxStack>,
     frame: FrameContext,
     encoder: Option<wgpu::CommandEncoder>,
