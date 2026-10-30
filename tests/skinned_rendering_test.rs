@@ -4,6 +4,9 @@
 //! list, records the skinning compute pass and renders a few frames. Any wgpu
 //! validation error along the way aborts the test.
 
+#[cfg(target_os = "windows")]
+mod common;
+
 #[cfg(test)]
 #[cfg(target_os = "windows")]
 mod test {
@@ -13,7 +16,7 @@ mod test {
         app::DefaultAppHandler,
         asset::{
             asset_manager::AssetManager,
-            asset_types::AssetData,
+            asset_types::{AssetData, GpuAssetType},
             importer::gltf_importer::GltfImporter,
         },
         renderer::{
@@ -38,6 +41,9 @@ mod test {
     /// than once (the second frame reuses the already-written deformed buffers).
     const FRAMES_TO_RENDER: u32 = 3;
 
+    /// `resource/Fox.glb` has a single skin with 24 joints.
+    const JOINT_COUNT: usize = 24;
+
     /// Copy the skinned test model into an isolated temp workspace.
     ///
     /// Importers persist assets next to their source and `resource/` is not
@@ -57,6 +63,8 @@ mod test {
         draw_list: DrawList,
         camera: CameraPerspective,
         light: Light,
+        /// Bindless index of the bind-pose animation texture.
+        animation_texture: u32,
         rendered_frames: u32,
         _asset_manager: AssetManager,
     }
@@ -95,6 +103,20 @@ mod test {
             orchestrator.lighting_mut().set_ambient([0.05, 0.05, 0.05]);
             let light = Light::directional(cgmath::vec3(1.0, -1.0, 1.0), [1.0, 1.0, 1.0], 3.0);
 
+            // Phase 3 has no animation baking yet, so drive the shader with a
+            // one-frame texture holding identity matrices: the mesh must come
+            // out in its bind pose.
+            let animation_texture = {
+                let texture = crate::common::rest_pose_texture(JOINT_COUNT)
+                    .upload("rest pose animation", orchestrator.device(), orchestrator.queue());
+                let view = texture.create_view(&Default::default());
+                orchestrator
+                    .bindless_mut()
+                    .create_sampled_texture(view)
+                    .expect("rest pose texture should fit in the bindless table")
+                    .index() as u32
+            };
+
             // The Fox model is ~150 units long, so the camera has to sit far
             // away; its bounding box is roughly y in [0, 79], z in [-88, 67].
             let camera = CameraPerspectiveBuilder::new()
@@ -107,6 +129,7 @@ mod test {
                 draw_list,
                 camera,
                 light,
+                animation_texture,
                 rendered_frames: 0,
                 _asset_manager: asset_manager,
             }
@@ -124,6 +147,7 @@ mod test {
 
             let camera = self.camera.clone();
             let light = self.light.clone();
+            let animation_texture = self.animation_texture;
             let draw_list = &self.draw_list;
 
             self.orchestrator.with_frame(|frame| {
@@ -141,9 +165,8 @@ mod test {
                     cp.set_pipeline(pipeline);
                     cp.set_bind_group(0, Some(&bindless_bg), &[]);
                     for mesh in draw_list.get_skinned_meshes() {
-                        // Phase 2 runs the identity skinning shader, so the
-                        // animation texture and frame index are placeholders.
-                        mesh.skin_with(&mut cp, 0, 0);
+                        // Bind pose: frame 0 of the identity animation texture.
+                        mesh.skin_with(&mut cp, animation_texture, 0);
                     }
                 }
 

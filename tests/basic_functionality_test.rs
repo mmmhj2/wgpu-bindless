@@ -44,6 +44,7 @@ mod test {
         }
     }
 
+    /// NOTE: this test loops forever! This is not good for CI or regression.
     #[test]
     fn basic_functionality_test() {
         env_logger::init();
