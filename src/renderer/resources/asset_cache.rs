@@ -35,6 +35,8 @@ use crate::{
     },
 };
 
+pub struct AnimationTable(HashMap<String, HashMap<String, (u32, f32)>>);
+
 /// Owns every GPU-resident resource uploaded from the asset database.
 ///
 /// This is the single cache between the asset database and the drawables. An
@@ -287,12 +289,17 @@ impl GpuAssetStore {
     }
 
     /// Create one skinned mesh instance, with its baked animation if it has one.
+    /// 
+    /// For skins with multiple animations, an indeterminate one is uploaded
+    /// and bound to the mesh.
+    /// 
+    /// TODO: Address the above problem.
     fn skinned_instance(
         &mut self,
         ctx: &mut SceneUploadContext<'_>,
         name: &str,
         world_matrix: [[f32; 4]; 4],
-        animations: &HashMap<String, (String, u32, f32)>,
+        animations: &AnimationTable,
     ) -> Result<SkinnedMesh, UploadError> {
         let asset = ctx.asset(name)?;
         let asset = asset.read().map_err(|_| UploadError::AssetLockPoisoned(name.to_string()))?;
@@ -307,11 +314,18 @@ impl GpuAssetStore {
         let geometry = self.skinned_mesh(ctx, name, mesh)?;
         let material = self.material(ctx, &mesh.restpose.material)?;
 
-        let animation = match animations.get(&mesh.skin) {
-            Some((animation_name, frames, fps)) => self
+        let animation = match animations.0.get(&mesh.skin) {
+            Some(table) => {
+                let (animation_name, (frames, fps)) = table.iter().next().expect("animation table should have at least one entry");
+                // TODO: upload all animations, and select on run time.
+                self
                 .animation_texture(ctx, animation_name)?
-                .map(|texture| SkinnedAnimation { texture, frames: *frames, fps: *fps }),
-            None => None,
+                .map(|texture| SkinnedAnimation { texture, frames: *frames, fps: *fps })
+            },
+            None => {
+                log::warn!("Mesh {name} does not have animations attached to it.");
+                None
+            },
         };
 
         SkinnedMesh::new(
@@ -332,11 +346,7 @@ impl Default for GpuAssetStore {
 }
 
 /// Map every skin asset name to the animation that drives it.
-///
-/// Returns `(animation asset name, frames, fps)`. Several animations may target
-/// the same skin. In case of a collision, the lexicographically first asset
-/// name wins.
-fn animations_by_skin(assets: &AssetManager) -> HashMap<String, (String, u32, f32)> {
+fn animations_by_skin(assets: &AssetManager) -> AnimationTable {
     let database = assets.get_database();
     let mut candidates: Vec<(String, String, u32, f32)> = Vec::new();
 
@@ -345,13 +355,16 @@ fn animations_by_skin(assets: &AssetManager) -> HashMap<String, (String, u32, f3
         let AssetData::SkinnedAnimationAssetType(animation) = asset.get_data() else { continue };
         candidates.push((animation.skin.clone(), name.clone(), animation.frames, animation.fps));
     }
-    candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
 
     let mut by_skin = HashMap::new();
     for (skin, name, frames, fps) in candidates {
-        by_skin.entry(skin).or_insert((name, frames, fps));
+        log::debug!("Found animation {name} for skin {skin} with {frames} frames at {fps} fps.");
+        let table = by_skin.entry(skin.clone()).or_insert(HashMap::new());
+        if let Some(_) = table.insert(name.clone(), (frames, fps)) {
+            log::warn!("Replacing animation {name} for skin {skin}.");
+        }
     }
-    by_skin
+    AnimationTable(by_skin)
 }
 
 /// Everything the upload phase needs besides the asset data itself.
