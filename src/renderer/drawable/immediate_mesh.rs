@@ -1,5 +1,4 @@
 use bytemuck::Zeroable;
-use wgpu::{BufferDescriptor, BufferUsages};
 
 use crate::{
     asset::{
@@ -13,7 +12,7 @@ use crate::{
         }, pipeline::pbr_material::PBRMaterial, resources::{
             bindless::BindlessResources,
             mesh_layout::MeshLayout,
-        }
+        }, upload::buffer::upload_buffer,
     }
 };
 
@@ -95,24 +94,26 @@ impl ImmediateMeshBuilder {
     pub fn commit(self, device: &wgpu::Device, queue: &wgpu::Queue, mmgr: &MeshLayout) -> ImmediateMesh {
         assert_eq!(self.position.len(), self.attributes.len());
 
-        let pb = device.create_buffer(&BufferDescriptor{
-            label: None,
-            mapped_at_creation: false,
-            size: (self.position.len() as u64) * (std::mem::size_of::<VertexBufferPosition>() as u64),
-            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST
-        });
+        let pb = upload_buffer(
+            device,
+            queue,
+            "immediate mesh position",
+            wgpu::BufferUsages::VERTEX,
+            self.position.as_slice(),
+        )
+        .expect("failed to upload the immediate mesh position buffer");
 
-        let ab = device.create_buffer(&BufferDescriptor{
-            label: None,
-            mapped_at_creation: false,
-            size: (self.attributes.len() as u64) * (std::mem::size_of::<VertexBufferOthers>() as u64),
-            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST
-        });
+        let ab = upload_buffer(
+            device,
+            queue,
+            "immediate mesh attribute",
+            wgpu::BufferUsages::VERTEX,
+            self.attributes.as_slice(),
+        )
+        .expect("failed to upload the immediate mesh attribute buffer");
 
         let bg = self.build_immediate_model_matrix(device, queue, mmgr);
 
-        queue.write_buffer(&pb, 0, bytemuck::cast_slice(self.position.as_slice()));
-        queue.write_buffer(&ab, 0, bytemuck::cast_slice(self.attributes.as_slice()));
         ImmediateMesh::new(self.position.len() as u32, pb, ab, self.material, bg)
     }
 }

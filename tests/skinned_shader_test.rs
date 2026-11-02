@@ -14,7 +14,6 @@ mod test {
 
     use rust_renderer::{
         asset::asset_types::{
-            GpuAssetType,
             texture_asset::TextureAsset,
             vertex::{VertexBufferOthers, VertexBufferPosition, VertexBufferSkinning},
         },
@@ -22,6 +21,7 @@ mod test {
             context::gpu_context::GpuContext,
             pipeline::compute_library::{ComputePipelineKey, ComputePipelineLibrary},
             resources::bindless::BindlessResources,
+            upload::UploadContext,
         },
     };
 
@@ -73,10 +73,15 @@ mod test {
         let position_bytes = std::mem::size_of_val(positions);
         let attribute_bytes = std::mem::size_of_val(attributes);
 
-        let texture = animation.upload("test joint matrices", device, queue);
-        let animation_handle = bindless
-            .create_sampled_texture(texture.create_view(&Default::default()))
-            .expect("animation texture should fit in the bindless table");
+        // Scoped so the mutable bindless borrow ends before the bind group is
+        // built below.
+        let animation_handle = {
+            let mut upload = UploadContext::new(device, queue, bindless);
+            upload
+                .upload_texture("test joint matrices", animation)
+                .expect("animation texture should fit in the bindless table")
+                .handle
+        };
 
         let position_in = storage_buffer(device, queue, "test position in", positions, wgpu::BufferUsages::empty());
         let attribute_in = storage_buffer(device, queue, "test attribute in", attributes, wgpu::BufferUsages::empty());

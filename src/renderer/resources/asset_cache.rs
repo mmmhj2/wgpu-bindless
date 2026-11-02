@@ -14,7 +14,7 @@ use crate::{
         drawable::static_mesh::StaticMesh, pipeline::{compute_library::ComputePipelineLibrary, pbr_material::PBRMaterial}, resources::{
             bindless::{BindlessResources, SampledTextureHandle, SamplerHandle},
             mesh_layout::MeshLayout,
-        },
+        }, upload::context::UploadContext,
     },
 };
 
@@ -66,6 +66,14 @@ pub struct MeshUploadContext<'a> {
 }
 
 impl MeshUploadContext<'_> {
+    /// Split the fields this context shares with the upload entry point.
+    ///
+    /// The borrow ends with the returned value, so callers can keep using
+    /// [`Self::cache`] afterwards.
+    fn upload(&mut self) -> UploadContext<'_> {
+        UploadContext::new(self.device, self.queue, self.bindless)
+    }
+
     /// Concrete kind of an asset in the database, if it is present.
     ///
     /// Used by the scene extractor to tell static and skinned meshes apart
@@ -90,15 +98,12 @@ impl MeshUploadContext<'_> {
             _ => panic!("asset '{name}' is not a texture asset."),
         };
 
-        let uploaded = texture.upload(name, self.device, self.queue);
-        let tx = self.bindless
-            .create_sampled_texture(uploaded.create_view(&Default::default()))
-            .expect("failed to push sampled texture to bindless resources.");
-        let sp = self.bindless
-            .create_sampler(self.device, texture.sampler.clone().into())
-            .expect("failed to push sampler to bindless resources.");
+        let uploaded = self
+            .upload()
+            .upload_texture(name, texture)
+            .expect("failed to upload the texture asset to the GPU");
 
-        let binding = (tx, sp);
+        let binding = (uploaded.handle, uploaded.sampler);
         self.cache.texture_bindings.insert(name.to_string(), binding);
         binding
     }
@@ -164,12 +169,11 @@ impl MeshUploadContext<'_> {
 
     /// Upload a baked animation texture and register it in the bindless table.
     ///
-    /// `GpuAssetType::upload` cannot do the bindless registration itself, since
-    /// the trait signature has no access to [`BindlessResources`].
-    /// 
-    /// TODO: Re-think and refactor the texture upload route. MeshUploadContext
-    /// is a good way to look at. Or we can use OnceCell to do deferred
-    /// construction.
+    /// The animation asset only carries a [`TextureAsset`]. The slot and sampler
+    /// registration are handled by [`UploadContext::upload_texture`], shared by
+    /// other texture assets.
+    ///
+    /// [`TextureAsset`]: crate::asset::asset_types::texture_asset::TextureAsset
     pub(crate) fn skinned_animation_texture(&mut self, name: &str) -> Option<SampledTextureHandle> {
         if let Some(cached) = self.cache.skinned_animation_cache.get(name) {
             return Some(*cached);
@@ -179,10 +183,11 @@ impl MeshUploadContext<'_> {
         let asset = asset.read().ok()?;
         let AssetData::SkinnedAnimationAssetType(animation) = asset.get_data() else { return None };
 
-        let texture = animation.upload(name, self.device, self.queue);
-        let handle = self.bindless
-            .create_sampled_texture(texture.create_view(&Default::default()))
-            .expect("failed to push animation texture to bindless resources.");
+        let handle = self
+            .upload()
+            .upload_texture(name, &animation.texture)
+            .expect("failed to upload the animation texture to the GPU")
+            .handle;
         self.cache.skinned_animation_cache.insert(name.to_string(), handle);
         Some(handle)
     }

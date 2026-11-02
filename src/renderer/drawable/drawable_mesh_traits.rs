@@ -1,6 +1,6 @@
 use std::{num::NonZero, ops::Range};
 
-use crate::renderer::{drawable::vertex_types::VertexType, pipeline::pbr_material::PBRMaterial, resources::mesh_layout::MeshLayout};
+use crate::renderer::{drawable::vertex_types::VertexType, pipeline::pbr_material::PBRMaterial, resources::mesh_layout::MeshLayout, upload::buffer::upload_buffer};
 
 pub trait Mesh {
     /// Get a slice of references to all vertex attribute buffers.
@@ -76,14 +76,14 @@ pub trait ImmediateDrawableMesh {
     fn get_model_matrix(&self) -> &[[f32; 4]; 4];
 
     fn build_immediate_model_matrix(&self, device: &wgpu::Device, queue: &wgpu::Queue, mmgr: &MeshLayout) -> wgpu::BindGroup {
-        let immediate_buffer = device.create_buffer(&wgpu::BufferDescriptor{
-            label: Some("immediate mesh model matrix buffer"),
-            size: (std::mem::size_of::<f32>() * 4 * 4) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false
-        });
-
-        queue.write_buffer(&immediate_buffer, 0, bytemuck::cast_slice(self.get_model_matrix()));
+        let immediate_buffer = upload_buffer(
+            device,
+            queue,
+            "immediate mesh model matrix buffer",
+            wgpu::BufferUsages::STORAGE,
+            self.get_model_matrix().as_slice(),
+        )
+        .expect("failed to create the immediate mesh model matrix buffer");
 
         let immediate_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor{
             label: Some("immediate mesh bind group"),

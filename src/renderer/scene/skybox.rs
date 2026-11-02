@@ -107,6 +107,10 @@ impl SkyboxManager {
         }
     }
 
+    /// Set a cube map texture to be the skybox texture
+    /// 
+    /// Note: Bindless resource manager only handles 2D texture, and cubemaps
+    /// must be handled separately.
     pub fn set_texture(&mut self, texture: wgpu::Texture) {
         assert_eq!(texture.depth_or_array_layers(), 6);
         self.skybox_textures = Some(texture.create_view(&wgpu::TextureViewDescriptor{

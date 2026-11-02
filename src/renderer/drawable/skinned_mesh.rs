@@ -6,14 +6,12 @@ use crate::{
         drawable::{drawable_mesh_traits::{DrawableMesh, Mesh}, vertex_types::VertexType},
         pipeline::{compute_library::ComputePipelineKey, pbr_material::PBRMaterial},
         resources::{asset_cache::MeshUploadContext, bindless::SampledTextureHandle},
+        upload::buffer::upload_buffer,
     },
 };
 
 /// Workgroup size declared by `shaders/gpu_skinning.wgsl`.
 const SKINNING_WORKGROUP_SIZE: u32 = 64;
-
-/// Size of one column-major `mat4x4<f32>` entry in the model-matrix buffer.
-const MODEL_MATRIX_SIZE: u64 = std::mem::size_of::<[[f32; 4]; 4]>() as u64;
 
 /// Playback information of the baked animation bound to a skinned mesh.
 #[derive(Debug, Clone, Copy)]
@@ -85,13 +83,14 @@ impl SkinnedMesh {
         world_matrix: [[f32; 4]; 4],
         animation: Option<SkinnedAnimation>,
     ) -> Self {
-        let model_matrix_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor{
-            label: Some("skinned mesh model matrix"),
-            size: MODEL_MATRIX_SIZE,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false
-        });
-        ctx.queue.write_buffer(&model_matrix_buffer, 0, bytemuck::cast_slice(&world_matrix));
+        let model_matrix_buffer = upload_buffer(
+            ctx.device,
+            ctx.queue,
+            "skinned mesh model matrix",
+            wgpu::BufferUsages::STORAGE,
+            world_matrix.as_slice(),
+        )
+        .expect("failed to create the skinned mesh model matrix buffer");
         let model_matrix_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor{
             label: Some("skinned mesh model matrix bind group"),
             layout: ctx.mesh_layout.get_bind_group_layout(),

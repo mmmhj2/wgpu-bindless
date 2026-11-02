@@ -2,7 +2,7 @@ use std::{num::NonZero, sync::Arc};
 
 use crate::{
     asset::asset_types::AssetData, renderer::{
-        drawable::{drawable_mesh_traits::{Mesh, DrawableMesh}, static_mesh::StaticMesh}, pipeline::pbr_material::PBRMaterial, resources::{asset_cache::MeshUploadContext, mesh_layout::MeshLayout},
+        drawable::{drawable_mesh_traits::{Mesh, DrawableMesh}, static_mesh::StaticMesh}, pipeline::pbr_material::PBRMaterial, resources::{asset_cache::MeshUploadContext, mesh_layout::MeshLayout}, upload::buffer::upload_buffer,
     },
 };
 
@@ -95,19 +95,16 @@ impl StaticMeshBatch {
             _ => panic!("asset '{mesh_subasset_name}' is not a static mesh asset."),
         };
 
-        let model_matrix_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("model matrix batch buffer"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let model_matrix_buffer = upload_buffer(
+            ctx.device,
+            ctx.queue,
+            "model matrix batch buffer",
+            wgpu::BufferUsages::STORAGE,
+            world_matrices,
+        )
+        .expect("failed to create the model matrix batch buffer");
         let model_matrix_bind_group =
             Self::generate_bind_group(ctx.device, ctx.mesh_layout, &model_matrix_buffer);
-        ctx.queue.write_buffer(
-            &model_matrix_buffer,
-            0,
-            bytemuck::cast_slice(world_matrices),
-        );
 
         Self {
             mesh: ctx.static_mesh_from_asset(mesh_subasset_name, mesh_asset),

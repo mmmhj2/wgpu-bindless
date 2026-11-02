@@ -5,7 +5,7 @@ use rust_renderer::{
     asset::{
         asset_manager::AssetManager,
         asset_store::{ImportJob, ImportManifest, ManifestEntry},
-        asset_types::{AssetData::TextureAssetType, GpuAssetType},
+        asset_types::AssetData::TextureAssetType,
         importer::image_file_importer::ColorSpace,
     },
     renderer::{
@@ -16,6 +16,7 @@ use rust_renderer::{
             pbr_material::PBRMaterial,
             rasterizer_pipeline::UseRasterizerPipeline,
         },
+        upload::UploadContext,
         window::RendererState,
     },
 };
@@ -45,16 +46,24 @@ impl RendererState for State {
             let texture_asset = asset_db.iter().next().expect("at least one asset should be imported successfully");
             if let TextureAssetType(asset) = texture_asset.1.read().unwrap().get_data() {
                 let (gpu, bindless) = orchestrator.gpu_and_bindless_mut();
-                let texture = asset.upload(texture_asset.0, gpu.device(), gpu.queue());
-                let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-                let sampler = asset.sampler.clone().into();
-                PBRMaterial::create_from_views(
-                    gpu.device(),
-                    bindless,
-                    Some((texture_view, Some(sampler))),
-                    None,
-                    None
-                ).expect("failed to allocate material.")
+                // Catch the fallbacks before the upload context borrows the
+                // bindless table mutably.
+                let default_sampler = bindless.get_default_sampler();
+                let default_normal = bindless.get_default_bump_texture();
+                let default_mrao = bindless.get_default_mrao_texture();
+
+                let uploaded = UploadContext::new(gpu.device(), gpu.queue(), bindless)
+                    .upload_texture(texture_asset.0, asset)
+                    .expect("failed to upload the texture asset");
+
+                PBRMaterial::new(
+                    uploaded.handle,
+                    default_normal,
+                    default_mrao,
+                    uploaded.sampler,
+                    default_sampler,
+                    default_sampler,
+                )
             } else {
                 panic!("unexpected asset type");
             }

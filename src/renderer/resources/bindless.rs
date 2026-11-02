@@ -93,6 +93,11 @@ impl BindlessResources {
         entries: &Self::BGL_BINDLESS,
     };
 
+    /// Create the bindless resource manager and allocate default placeholder resources.
+    /// 
+    /// Default placeholder resources must be uploaded manually and cannot go
+    /// through the asset uploading routine, as asset uploader depends on the
+    /// bindless manager.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let mut ret = Self {
             sampled_textures: SlotTable::new(),
