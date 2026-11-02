@@ -6,15 +6,14 @@ use crate::{
         asset_types::{
             AssetData,
             AssetKind,
-            GpuAssetType,
-            skinned_mesh_asset::{GpuSkinnedMesh, SkinnedMeshAsset},
+            skinned_mesh_asset::SkinnedMeshAsset,
             static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial},
         },
     }, renderer::{
         drawable::static_mesh::StaticMesh, pipeline::{compute_library::ComputePipelineLibrary, pbr_material::PBRMaterial}, resources::{
             bindless::{BindlessResources, SampledTextureHandle, SamplerHandle},
             mesh_layout::MeshLayout,
-        }, upload::context::UploadContext,
+        }, upload::{context::UploadContext, gpu_mesh::GpuSkinnedMesh, gpu_type::GpuAssetType},
     },
 };
 
@@ -146,7 +145,9 @@ impl MeshUploadContext<'_> {
             return cached.clone();
         }
 
-        let geometry = mesh.upload(name, self.device, self.queue);
+        let geometry = mesh
+            .upload(name, &mut self.upload())
+            .expect("failed to upload the static mesh asset to the GPU");
         let material = self.material_from_asset(&mesh.material);
         let uploaded = Arc::new(StaticMesh::new(geometry, material));
         self.cache.mesh_cache.insert(name.to_string(), uploaded.clone());
@@ -162,7 +163,10 @@ impl MeshUploadContext<'_> {
             return cached.clone();
         }
 
-        let uploaded = Arc::new(mesh.upload(name, self.device, self.queue));
+        let uploaded = Arc::new(
+            mesh.upload(name, &mut self.upload())
+                .expect("failed to upload the skinned mesh asset to the GPU"),
+        );
         self.cache.skinned_geometry_cache.insert(name.to_string(), uploaded.clone());
         uploaded
     }

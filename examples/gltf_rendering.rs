@@ -5,7 +5,7 @@ use rust_renderer::{
     asset::{
         asset_manager::AssetManager,
         asset_store::{ImportJob, ImportManifest, ManifestEntry},
-        asset_types::{AssetData::{SceneAssetType, TextureAssetType}, GpuAssetType},
+        asset_types::AssetData::{SceneAssetType, TextureAssetType},
         importer::{gltf_importer::GltfImporter, image_file_importer::ColorSpace},
     }, renderer::{
         drawable::draw_list::{DrawList, DrawableType}, orchestrator::{RenderOrchestrator, RendererConfig}, pipeline::{
@@ -17,7 +17,7 @@ use rust_renderer::{
         }, resources::{
             camera::{CameraPerspective, CameraPerspectiveBuilder, HasViewMatrix},
             lighting::{Light, LightKindEnum},
-        }, scene::{graph::SceneGraph, skybox::SkyboxManager}, window::RendererState
+        }, scene::{graph::SceneGraph, skybox::SkyboxManager}, upload::texture::create_texture, window::RendererState
     },
 };
 use winit::{application::ApplicationHandler, event::{KeyEvent, WindowEvent}, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window};
@@ -147,7 +147,11 @@ impl RendererState for State {
             let asset = asset_manager.get_asset("skybox").expect("skybox array asset should be present");
             let asset = asset.read().expect("failed to read skybox asset");
             if let TextureAssetType(texture) = asset.get_data() {
-                texture.upload("skybox", orchestrator.device(), orchestrator.queue())
+                // The skybox needs a cube view, which the bindless table does not
+                // hold, so this deliberately bypasses `UploadContext` and only
+                // creates the texture.
+                create_texture(orchestrator.device(), orchestrator.queue(), "skybox", texture)
+                    .expect("failed to upload the skybox texture")
             } else {
                 panic!("skybox asset is not a texture asset");
             }

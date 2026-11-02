@@ -1,11 +1,8 @@
 use std::{cell::RefCell, collections::HashMap, num::NonZeroU32};
 
 use crate::{
-    asset::asset_types::{
-        GpuAssetType,
-        texture_asset::{TextureAsset, TextureDimension, TextureFormat},
-    },
-    renderer::resources::sampler::SamplerDescription,
+    asset::asset_types::texture_asset::{TextureAsset, TextureDimension, TextureFormat},
+    renderer::{resources::sampler::SamplerDescription, upload::texture::create_texture},
     util::slot_table::SlotTable,
 };
 
@@ -97,7 +94,9 @@ impl BindlessResources {
     /// 
     /// Default placeholder resources must be uploaded manually and cannot go
     /// through the asset uploading routine, as asset uploader depends on the
-    /// bindless manager.
+    /// bindless manager. They therefore use [`create_texture`] directly and
+    /// register their views here instead of going through
+    /// [`crate::renderer::upload::UploadContext`].
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let mut ret = Self {
             sampled_textures: SlotTable::new(),
@@ -111,33 +110,48 @@ impl BindlessResources {
             cached_bind_group: RefCell::new(None)
         };
 
-        let white_texture = TextureAsset::from_single_color_texel(
-            vec![255u8, 255, 255, 255],
-            TextureFormat::Rgba8Unorm,
-            TextureDimension::D2,
+        let white_texture = create_texture(
+            device,
+            queue,
+            "White texture",
+            &TextureAsset::from_single_color_texel(
+                vec![255u8, 255, 255, 255],
+                TextureFormat::Rgba8Unorm,
+                TextureDimension::D2,
+            ),
         )
-        .upload("White texture", device, queue);
+        .expect("failed to create the white texture");
         ret.white_texture = ret
             .create_sampled_texture(white_texture.create_view(&Default::default()))
             .expect("failed to allocate the white bindless texture");
 
-        let default_normal_texture = TextureAsset::from_single_color_texel(
-            // Texels are interpreted as signed 8-bit integers.
-            vec![128u8, 128, 255, 0],
-            TextureFormat::Rgba8Unorm,
-            TextureDimension::D2,
+        let default_normal_texture = create_texture(
+            device,
+            queue,
+            "Default normal texture",
+            &TextureAsset::from_single_color_texel(
+                // Texels are interpreted as signed 8-bit integers.
+                vec![128u8, 128, 255, 0],
+                TextureFormat::Rgba8Unorm,
+                TextureDimension::D2,
+            ),
         )
-        .upload("Default normal texture", device, queue);
+        .expect("failed to create the default normal texture");
         ret.default_bump_texture = ret
             .create_sampled_texture(default_normal_texture.create_view(&Default::default()))
             .expect("failed to allocate the default normal bindless texture");
 
-        let default_mrao_texture = TextureAsset::from_single_color_texel(
-            vec![0u8, 0, 0, 255],
-            TextureFormat::Rgba8Unorm,
-            TextureDimension::D2,
+        let default_mrao_texture = create_texture(
+            device,
+            queue,
+            "Default MRAO texture",
+            &TextureAsset::from_single_color_texel(
+                vec![0u8, 0, 0, 255],
+                TextureFormat::Rgba8Unorm,
+                TextureDimension::D2,
+            ),
         )
-        .upload("Default MRAO texture", device, queue);
+        .expect("failed to create the default MRAO texture");
         ret.default_mrao_texture = ret
             .create_sampled_texture(default_mrao_texture.create_view(&Default::default()))
             .expect("failed to allocate the default MRAO bindless texture");

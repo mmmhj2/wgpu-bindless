@@ -1,12 +1,12 @@
 use std::{num::NonZero, sync::Arc};
 
 use crate::{
-    asset::asset_types::{skinned_mesh_asset::GpuSkinnedMesh, vertex::{VertexBufferOthers, VertexBufferPosition}},
+    asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition},
     renderer::{
         drawable::{drawable_mesh_traits::{DrawableMesh, Mesh}, vertex_types::VertexType},
         pipeline::{compute_library::ComputePipelineKey, pbr_material::PBRMaterial},
         resources::{asset_cache::MeshUploadContext, bindless::SampledTextureHandle},
-        upload::buffer::upload_buffer,
+        upload::{buffer::upload_buffer, gpu_mesh::GpuSkinnedMesh},
     },
 };
 
