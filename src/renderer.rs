@@ -6,3 +6,4 @@ pub mod drawable;
 pub mod resources;
 pub mod scene;
 pub mod context;
+pub mod upload;
