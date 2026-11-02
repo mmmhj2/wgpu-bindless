@@ -3,21 +3,27 @@ use std::{num::NonZeroU32, sync::Arc};
 use winit::window::Window;
 
 use crate::{
-    asset::asset_manager::AssetManager, renderer::{
+    asset::{
+        asset_manager::AssetManager,
+        asset_types::scene_asset::SceneAsset,
+    }, renderer::{
         context::{
             frame_context::{Backbuffers, FrameContext},
             gpu_context::GpuContext,
             surface_context::SurfaceContext,
-        }, pipeline::{compute_library::ComputePipelineLibrary, library::{PipelineLibrary, SceneBindGroupLayouts}}, postfx::{
+        }, drawable::draw_list::DrawList, pipeline::{
+            compute_library::{ComputePipelineKey, ComputePipelineLibrary},
+            library::{PipelineLibrary, SceneBindGroupLayouts},
+        }, postfx::{
             build_context::PostFxBuildContext,
             postfx_stack::{BindlessFrame, PostFxExtraInputs, PostFxInput, PostFxStack},
         }, resources::{
-            asset_cache::{GpuAssetCache, MeshUploadContext},
+            asset_cache::{GpuAssetStore, SceneUploadContext},
             bindless::BindlessResources,
             camera::CameraManager,
             lighting::LightingManager,
             mesh_layout::MeshLayout,
-        }, scene::context::SceneContext,
+        }, scene::context::SceneContext, upload::{context::UploadContext, error::UploadError},
     },
 };
 
@@ -60,7 +66,14 @@ pub struct RenderOrchestrator {
     camera: CameraManager,
     lighting: LightingManager,
     mesh_layout: MeshLayout,
-    assets: GpuAssetCache,
+    /// Per-mesh bind group layout of the GPU skinning compute pipeline.
+    ///
+    /// Resolved once at startup so the upload phase does not have to borrow the
+    /// whole compute pipeline library.
+    /// 
+    /// TODO: This is still a somewhat bad design. Need to figure out some other ways.
+    skinning_layout: wgpu::BindGroupLayout,
+    gpu_assets: GpuAssetStore,
     pipelines: PipelineLibrary,
     compute_pipelines: ComputePipelineLibrary,
     postfx: Option<PostFxStack>,
@@ -113,6 +126,10 @@ impl RenderOrchestrator {
             config.depth_format,
         );
         let compute_pipelines = ComputePipelineLibrary::new(gpu.device(), bindless.get_bind_group_layout());
+        let skinning_layout = compute_pipelines
+            .get_dispatch_bind_group_layout(ComputePipelineKey::GpuSkinning)
+            .expect("the GPU skinning compute pipeline should be registered")
+            .clone();
         let postfx = config
             .enable_postfx
             .then(|| PostFxStack::new(scene_format, surface_format));
@@ -126,7 +143,8 @@ impl RenderOrchestrator {
             camera,
             lighting,
             mesh_layout,
-            assets: GpuAssetCache::new(),
+            skinning_layout,
+            gpu_assets: GpuAssetStore::new(),
             pipelines,
             compute_pipelines,
             postfx,
@@ -143,37 +161,50 @@ impl RenderOrchestrator {
     pub fn gpu(&self) -> &GpuContext { &self.gpu }
 
     pub fn bindless(&self) -> &BindlessResources { &self.bindless }
-    pub fn bindless_mut(&mut self) -> &mut BindlessResources { &mut self.bindless }
     pub fn camera(&self) -> &CameraManager { &self.camera }
     pub fn camera_mut(&mut self) -> &mut CameraManager { &mut self.camera }
     pub fn lighting(&self) -> &LightingManager { &self.lighting }
     pub fn lighting_mut(&mut self) -> &mut LightingManager { &mut self.lighting }
     pub fn mesh_layout(&self) -> &MeshLayout { &self.mesh_layout }
-    pub fn assets(&self) -> &GpuAssetCache { &self.assets }
-    pub fn assets_mut(&mut self) -> &mut GpuAssetCache { &mut self.assets }
 
-    /// Split the GPU context from the mutable bindless table.
+    /// Borrow the upload entry point.
     ///
-    /// Useful during texture upload/setup, where both are needed at once.
-    pub fn gpu_and_bindless_mut(&mut self) -> (&GpuContext, &mut BindlessResources) {
-        (&self.gpu, &mut self.bindless)
+    /// Setup code (texture uploads, sampler registration) uses this instead of
+    /// reaching into the bindless table itself. The borrow ends with the returned
+    /// context, so the orchestrator is usable again right after.
+    pub fn upload_context(&mut self) -> UploadContext<'_> {
+        UploadContext::new(self.gpu.device(), self.gpu.queue(), &mut self.bindless)
     }
 
-    /// Build the borrowed context required to upload meshes from assets.
-    pub fn mesh_upload_context<'a>(
-        &'a mut self,
-        assets: &'a AssetManager,
-    ) -> MeshUploadContext<'a> {
-        let gpu = &self.gpu;
-        MeshUploadContext {
-            device: gpu.device(),
-            queue: gpu.queue(),
-            bindless: &mut self.bindless,
-            compute_pipeline: &self.compute_pipelines,
-            mesh_layout: &self.mesh_layout,
-            cache: &mut self.assets,
+    /// Upload every asset a scene references and build its draw list.
+    ///
+    /// Uploaded meshes are stored within the returned [`DrawList`], which 
+    /// holds the per-batch and per-instance GPU state (buffers and bind groups).
+    /// On the other hand, textures stay owned by the store and the bindless
+    /// table, so keeping the store alive may let a second scene reuse them
+    /// instead of re-uploading.
+    ///
+    /// Errors
+    /// ---
+    ///
+    /// Any [`UploadError`] the individual assets produce are forwarded.
+    /// 
+    /// Panic
+    /// ---
+    /// Scene hierarchy validation failure panics directly, as documented in
+    /// [`crate::renderer::scene::graph::SceneGraph::from_asset`].
+    pub fn prepare_scene(
+        &mut self,
+        assets: &AssetManager,
+        scene: &SceneAsset,
+    ) -> Result<DrawList, UploadError> {
+        let mut ctx = SceneUploadContext::new(
+            UploadContext::new(self.gpu.device(), self.gpu.queue(), &mut self.bindless),
+            &self.mesh_layout,
+            &self.skinning_layout,
             assets,
-        }
+        );
+        self.gpu_assets.prepare_scene(&mut ctx, scene)
     }
 
     /// Split the device from the mutable pipeline library.
@@ -249,7 +280,6 @@ impl RenderOrchestrator {
             camera: &mut self.camera,
             lighting: &mut self.lighting,
             mesh_layout: &self.mesh_layout,
-            assets: &mut self.assets,
             pipelines: &mut self.pipelines,
             compute_pipelines: &self.compute_pipelines,
             postfx: self.postfx.as_mut(),
@@ -285,7 +315,6 @@ pub struct Frame<'a> {
     camera: &'a mut CameraManager,
     lighting: &'a mut LightingManager,
     mesh_layout: &'a MeshLayout,
-    assets: &'a mut GpuAssetCache,
     pipelines: &'a mut PipelineLibrary,
     compute_pipelines: &'a ComputePipelineLibrary,
     postfx: Option<&'a mut PostFxStack>,
@@ -384,7 +413,6 @@ impl<'a> Frame<'a> {
             camera: self.camera,
             lighting: self.lighting,
             mesh_layout: self.mesh_layout,
-            assets: self.assets,
             pipelines: self.pipelines,
         };
 

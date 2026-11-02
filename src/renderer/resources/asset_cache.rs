@@ -4,218 +4,391 @@ use crate::{
     asset::{
         asset_manager::AssetManager,
         asset_types::{
+            Asset,
             AssetData,
             AssetKind,
+            scene_asset::SceneAsset,
             skinned_mesh_asset::SkinnedMeshAsset,
             static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial},
         },
-    }, renderer::{
-        drawable::static_mesh::StaticMesh, pipeline::{compute_library::ComputePipelineLibrary, pbr_material::PBRMaterial}, resources::{
-            bindless::{BindlessResources, SampledTextureHandle, SamplerHandle},
+    },
+    renderer::{
+        pipeline::pbr_material::PBRMaterial,
+        drawable::{
+            draw_list::DrawList,
+            skinned_mesh::{SkinnedAnimation, SkinnedMesh},
+            static_mesh::StaticMesh,
+            static_mesh_batch::StaticMeshBatch,
+        },
+        resources::{
+            bindless::SampledTextureHandle,
             mesh_layout::MeshLayout,
-        }, upload::{context::UploadContext, gpu_mesh::GpuSkinnedMesh, gpu_type::GpuAssetType},
+        },
+        scene::graph::SceneGraph,
+        upload::{
+            context::UploadContext,
+            error::UploadError,
+            gpu_mesh::GpuSkinnedMesh,
+            gpu_type::GpuAssetType,
+            texture::TextureBinding,
+        },
     },
 };
 
-/// Owns the GPU-resident resources uploaded from the asset database.
+/// Owns every GPU-resident resource uploaded from the asset database.
 ///
-/// The cache itself does not own the bindless tables.
-/// Instead, they are only modified through upload methods, which borrow
-/// them explicitly through [`MeshUploadContext`] or an orchestrator helper.
-pub struct GpuAssetCache {
-    /// Asset name -> (texture handle, sampler handle) in the bindless table.
-    texture_bindings: HashMap<String, (SampledTextureHandle, SamplerHandle)>,
-    /// Mesh subasset name -> uploaded, material-resolved mesh.
-    mesh_cache: HashMap<String, Arc<StaticMesh>>,
+/// This is the single cache between the asset database and the drawables. An
+/// asset is uploaded at most once per name, and the result is shared with every
+/// instance that references it. Uploads only happen through
+/// [`Self::prepare_scene`] (or the individual accessors), which need an explicit
+/// [`SceneUploadContext`] and should be unreachable from the frame loop.
+pub struct GpuAssetStore {
+    /// Texture asset name -> uploaded texture + its bindless slots.
+    textures: HashMap<String, TextureBinding>,
+    /// Static mesh subasset name -> uploaded, material-resolved mesh.
+    static_meshes: HashMap<String, Arc<StaticMesh>>,
     /// Skinned mesh subasset name -> uploaded rest pose + skinning attributes.
     ///
     /// Shared across instances: only the deformed vertex buffers are
     /// per-instance, the rest pose geometry is immutable.
-    skinned_geometry_cache: HashMap<String, Arc<GpuSkinnedMesh>>,
-    /// Animation subasset name -> baked animation texture in the bindless table.
-    skinned_animation_cache: HashMap<String, SampledTextureHandle>,
+    skinned_geometry: HashMap<String, Arc<GpuSkinnedMesh>>,
+    /// Animation subasset name -> baked animation texture handle.
+    skinned_animations: HashMap<String, SampledTextureHandle>,
 }
 
-impl GpuAssetCache {
+impl GpuAssetStore {
     pub fn new() -> Self {
         Self {
-            texture_bindings: HashMap::new(),
-            mesh_cache: HashMap::new(),
-            skinned_geometry_cache: HashMap::new(),
-            skinned_animation_cache: HashMap::new(),
+            textures: HashMap::new(),
+            static_meshes: HashMap::new(),
+            skinned_geometry: HashMap::new(),
+            skinned_animations: HashMap::new(),
         }
     }
-}
 
-impl Default for GpuAssetCache {
-    fn default() -> Self { Self::new() }
-}
+    pub fn texture_count(&self) -> usize { self.textures.len() }
+    pub fn static_mesh_count(&self) -> usize { self.static_meshes.len() }
+    pub fn skinned_mesh_count(&self) -> usize { self.skinned_geometry.len() }
+    pub fn animation_count(&self) -> usize { self.skinned_animations.len() }
 
-/// Borrowed handles needed to upload mesh and texture assets to the GPU.
-pub struct MeshUploadContext<'a> {
-    pub device: &'a wgpu::Device,
-    pub queue: &'a wgpu::Queue,
-    pub bindless: &'a mut BindlessResources,
-    pub mesh_layout: &'a MeshLayout,
-    // Upload context requiring compute library is not a good design.
-    // Figure out some other way to pass compute pipeline layout to asset uploading (i.e. `OnceCell`` for mesh bind groups?)
-    pub compute_pipeline: &'a ComputePipelineLibrary,
-    pub cache: &'a mut GpuAssetCache,
-    pub assets: &'a AssetManager,
-}
-
-impl MeshUploadContext<'_> {
-    /// Split the fields this context shares with the upload entry point.
-    ///
-    /// The borrow ends with the returned value, so callers can keep using
-    /// [`Self::cache`] afterwards.
-    fn upload(&mut self) -> UploadContext<'_> {
-        UploadContext::new(self.device, self.queue, self.bindless)
-    }
-
-    /// Concrete kind of an asset in the database, if it is present.
-    ///
-    /// Used by the scene extractor to tell static and skinned meshes apart
-    /// without locking the asset for the whole extraction.
-    pub(crate) fn asset_kind(&self, name: &str) -> Option<AssetKind> {
-        let asset = self.assets.get_asset(name)?;
-        let asset = asset.read().ok()?;
-        Some(asset.get_data().kind())
-    }
-
-    /// Resolve a texture asset (by name) to its bindless texture/sampler
-    /// handles, uploading it at most once.
-    fn texture_binding(&mut self, name: &str) -> (SampledTextureHandle, SamplerHandle) {
-        if let Some(binding) = self.cache.texture_bindings.get(name) {
-            return *binding;
+    /// Resolve a texture asset to its uploaded binding, uploading it at most once.
+    pub(crate) fn texture<'s>(
+        &'s mut self,
+        ctx: &mut SceneUploadContext<'_>,
+        name: &str,
+    ) -> Result<&'s TextureBinding, UploadError> {
+        if !self.textures.contains_key(name) {
+            let asset = ctx.asset(name)?;
+            let asset = asset.read().map_err(|_| UploadError::AssetLockPoisoned(name.to_string()))?;
+            let AssetData::TextureAssetType(texture) = asset.get_data() else {
+                return Err(UploadError::WrongKind {
+                    name: name.to_string(),
+                    actual: asset.get_data().kind(),
+                    expected: AssetKind::Texture,
+                });
+            };
+            let binding = ctx.upload.upload_texture(name, texture)?;
+            self.textures.insert(name.to_string(), binding);
         }
 
-        let asset = self.assets.get_asset(name).unwrap_or_else(|| panic!("texture asset '{name}' not found."));
-        let asset = asset.read().expect("failed to acquire read lock for texture asset.");
-        let texture = match asset.get_data() {
-            AssetData::TextureAssetType(t) => t,
-            _ => panic!("asset '{name}' is not a texture asset."),
-        };
-
-        let uploaded = self
-            .upload()
-            .upload_texture(name, texture)
-            .expect("failed to upload the texture asset to the GPU");
-
-        let binding = (uploaded.handle, uploaded.sampler);
-        self.cache.texture_bindings.insert(name.to_string(), binding);
-        binding
+        Ok(self.textures.get(name).expect("texture was just inserted"))
     }
 
-    /// Build a `PBRMaterial` from a static mesh asset's material description.
-    pub(crate) fn material_from_asset(&mut self, material: &StaticMeshMaterial) -> PBRMaterial {
-        let default_sampler = self.bindless.get_default_sampler();
+    /// Build a `PBRMaterial` from a mesh's material description.
+    ///
+    /// Missing texture slots fall back to the bindless placeholders, so an asset
+    /// with an incomplete material still renders.
+    fn material(
+        &mut self,
+        ctx: &mut SceneUploadContext<'_>,
+        material: &StaticMeshMaterial,
+    ) -> Result<PBRMaterial, UploadError> {
+        let default_sampler = ctx.upload.bindless().get_default_sampler();
 
         let (diffuse_tx, diffuse_sp) = match &material.diffuse_texture_name {
-            Some(name) => self.texture_binding(name),
-            None => (self.bindless.get_white_texture(), default_sampler),
+            Some(name) => {
+                let binding = self.texture(ctx, name)?;
+                (binding.handle, binding.sampler)
+            },
+            None => (ctx.upload.bindless().get_white_texture(), default_sampler),
         };
 
         let (normal_tx, normal_sp) = match &material.normal_texture_name {
-            Some(name) => self.texture_binding(name),
-            None => (self.bindless.get_default_bump_texture(), default_sampler),
+            Some(name) => {
+                let binding = self.texture(ctx, name)?;
+                (binding.handle, binding.sampler)
+            },
+            None => (ctx.upload.bindless().get_default_bump_texture(), default_sampler),
         };
 
         let (mrao_tx, mrao_sp) = match &material.mrao_texture_name {
-            Some(name) => self.texture_binding(name),
-            None => (self.bindless.get_default_mrao_texture(), default_sampler),
+            Some(name) => {
+                let binding = self.texture(ctx, name)?;
+                (binding.handle, binding.sampler)
+            },
+            None => (ctx.upload.bindless().get_default_mrao_texture(), default_sampler),
         };
 
-        PBRMaterial::new(
+        Ok(PBRMaterial::new(
             diffuse_tx,
             normal_tx,
             mrao_tx,
             diffuse_sp,
             normal_sp,
             mrao_sp,
+        ))
+    }
+
+    /// Upload a static mesh asset, resolving its material. Cached by name.
+    fn static_mesh(
+        &mut self,
+        ctx: &mut SceneUploadContext<'_>,
+        name: &str,
+        mesh: &StaticMeshAsset,
+    ) -> Result<Arc<StaticMesh>, UploadError> {
+        if let Some(cached) = self.static_meshes.get(name) {
+            return Ok(cached.clone());
+        }
+
+        let geometry = mesh.upload(name, &mut ctx.upload)?;
+        let material = self.material(ctx, &mesh.material)?;
+        let uploaded = Arc::new(StaticMesh::new(geometry, material));
+        self.static_meshes.insert(name.to_string(), uploaded.clone());
+        Ok(uploaded)
+    }
+
+    /// Upload a skinned mesh's rest pose and skinning attributes. Cached by name.
+    fn skinned_mesh(
+        &mut self,
+        ctx: &mut SceneUploadContext<'_>,
+        name: &str,
+        mesh: &SkinnedMeshAsset,
+    ) -> Result<Arc<GpuSkinnedMesh>, UploadError> {
+        if let Some(cached) = self.skinned_geometry.get(name) {
+            return Ok(cached.clone());
+        }
+
+        let uploaded = Arc::new(mesh.upload(name, &mut ctx.upload)?);
+        self.skinned_geometry.insert(name.to_string(), uploaded.clone());
+        Ok(uploaded)
+    }
+
+    /// Upload a baked animation texture, if the named asset is one.
+    fn animation_texture(
+        &mut self,
+        ctx: &mut SceneUploadContext<'_>,
+        name: &str,
+    ) -> Result<Option<SampledTextureHandle>, UploadError> {
+        if let Some(cached) = self.skinned_animations.get(name) {
+            return Ok(Some(*cached));
+        }
+
+        let asset = ctx.asset(name)?;
+        let asset = asset.read().map_err(|_| UploadError::AssetLockPoisoned(name.to_string()))?;
+        let AssetData::SkinnedAnimationAssetType(animation) = asset.get_data() else {
+            return Ok(None);
+        };
+
+        let handle = ctx.upload.upload_texture(name, &animation.texture)?.handle;
+        self.skinned_animations.insert(name.to_string(), handle);
+        Ok(Some(handle))
+    }
+
+    /// Turn a scene asset into a draw list, uploading everything it references.
+    ///
+    /// Errors
+    /// ---
+    ///
+    /// Any [`UploadError`] the individual assets produce are forwarded.
+    /// 
+    /// Panic
+    /// ---
+    /// Scene hierarchy validation failure panics directly, as documented in
+    /// [`crate::renderer::scene::graph::SceneGraph::from_asset`].
+    pub fn prepare_scene(
+        &mut self,
+        ctx: &mut SceneUploadContext<'_>,
+        scene: &SceneAsset,
+    ) -> Result<DrawList, UploadError> {
+        let graph = SceneGraph::from_asset(scene);
+        let plans = graph.plan_mesh_batches();
+
+        // Resolve which baked animation drives each skin once, before any GPU
+        // resource is created.
+        let animations = animations_by_skin(ctx.assets);
+
+        let mut static_batches = Vec::new();
+        let mut static_instances = 0usize;
+        let mut skinned_instances: Vec<(&str, [[f32; 4]; 4])> = Vec::new();
+
+        for plan in &plans {
+            match ctx.asset_kind(plan.mesh_subasset_name)? {
+                AssetKind::SkinnedMesh => {
+                    // Skinned meshes are never instanced.
+                    for world_matrix in &plan.world_matrices {
+                        skinned_instances.push((plan.mesh_subasset_name, *world_matrix));
+                    }
+                },
+                AssetKind::StaticMesh => {
+                    static_instances += plan.world_matrices.len();
+                    static_batches.push(self.static_batch(ctx, plan.mesh_subasset_name, &plan.world_matrices)?);
+                },
+                actual => {
+                    return Err(UploadError::WrongKind {
+                        name: plan.mesh_subasset_name.to_string(),
+                        actual,
+                        expected: AssetKind::StaticMesh,
+                    });
+                },
+            }
+        }
+
+        log::info!(
+            "Prepared {} static mesh batches ({} instances) and {} skinned meshes from {} mesh instances",
+            static_batches.len(),
+            static_instances,
+            skinned_instances.len(),
+            graph.mesh_instance_count()
+        );
+
+        let mut skinned = Vec::with_capacity(skinned_instances.len());
+        for (name, world_matrix) in skinned_instances {
+            skinned.push(self.skinned_instance(ctx, name, world_matrix, &animations)?);
+        }
+
+        Ok(DrawList::new(static_batches, skinned))
+    }
+
+    /// Create one instanced draw covering `world_matrices` of a static mesh.
+    fn static_batch(
+        &mut self,
+        ctx: &mut SceneUploadContext<'_>,
+        name: &str,
+        world_matrices: &[[[f32; 4]; 4]],
+    ) -> Result<StaticMeshBatch, UploadError> {
+        let asset = ctx.asset(name)?;
+        let asset = asset.read().map_err(|_| UploadError::AssetLockPoisoned(name.to_string()))?;
+        let AssetData::StaticMeshAssetType(mesh) = asset.get_data() else {
+            return Err(UploadError::WrongKind {
+                name: name.to_string(),
+                actual: asset.get_data().kind(),
+                expected: AssetKind::StaticMesh,
+            });
+        };
+
+        let mesh = self.static_mesh(ctx, name, mesh)?;
+        StaticMeshBatch::new(
+            ctx.upload.device(),
+            ctx.upload.queue(),
+            ctx.mesh_layout,
+            mesh,
+            world_matrices,
         )
     }
 
-    /// Upload a static mesh asset to the GPU and resolve its material.
-    ///
-    /// The geometry is uploaded once per asset name and shared across instances
-    /// through an `Arc`.
-    pub(crate) fn static_mesh_from_asset(&mut self, name: &str, mesh: &StaticMeshAsset) -> Arc<StaticMesh> {
-        if let Some(cached) = self.cache.mesh_cache.get(name) {
-            return cached.clone();
-        }
+    /// Create one skinned mesh instance, with its baked animation if it has one.
+    fn skinned_instance(
+        &mut self,
+        ctx: &mut SceneUploadContext<'_>,
+        name: &str,
+        world_matrix: [[f32; 4]; 4],
+        animations: &HashMap<String, (String, u32, f32)>,
+    ) -> Result<SkinnedMesh, UploadError> {
+        let asset = ctx.asset(name)?;
+        let asset = asset.read().map_err(|_| UploadError::AssetLockPoisoned(name.to_string()))?;
+        let AssetData::SkinnedMeshAssetType(mesh) = asset.get_data() else {
+            return Err(UploadError::WrongKind {
+                name: name.to_string(),
+                actual: asset.get_data().kind(),
+                expected: AssetKind::SkinnedMesh,
+            });
+        };
 
-        let geometry = mesh
-            .upload(name, &mut self.upload())
-            .expect("failed to upload the static mesh asset to the GPU");
-        let material = self.material_from_asset(&mesh.material);
-        let uploaded = Arc::new(StaticMesh::new(geometry, material));
-        self.cache.mesh_cache.insert(name.to_string(), uploaded.clone());
-        uploaded
+        let geometry = self.skinned_mesh(ctx, name, mesh)?;
+        let material = self.material(ctx, &mesh.restpose.material)?;
+
+        let animation = match animations.get(&mesh.skin) {
+            Some((animation_name, frames, fps)) => self
+                .animation_texture(ctx, animation_name)?
+                .map(|texture| SkinnedAnimation { texture, frames: *frames, fps: *fps }),
+            None => None,
+        };
+
+        SkinnedMesh::new(
+            ctx.upload.device(),
+            ctx.upload.queue(),
+            ctx.mesh_layout,
+            ctx.skinning_layout,
+            geometry,
+            material,
+            world_matrix,
+            animation,
+        )
+    }
+}
+
+impl Default for GpuAssetStore {
+    fn default() -> Self { Self::new() }
+}
+
+/// Map every skin asset name to the animation that drives it.
+///
+/// Returns `(animation asset name, frames, fps)`. Several animations may target
+/// the same skin. In case of a collision, the lexicographically first asset
+/// name wins.
+fn animations_by_skin(assets: &AssetManager) -> HashMap<String, (String, u32, f32)> {
+    let database = assets.get_database();
+    let mut candidates: Vec<(String, String, u32, f32)> = Vec::new();
+
+    for (name, asset) in database.iter() {
+        let Ok(asset) = asset.read() else { continue };
+        let AssetData::SkinnedAnimationAssetType(animation) = asset.get_data() else { continue };
+        candidates.push((animation.skin.clone(), name.clone(), animation.frames, animation.fps));
+    }
+    candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+    let mut by_skin = HashMap::new();
+    for (skin, name, frames, fps) in candidates {
+        by_skin.entry(skin).or_insert((name, frames, fps));
+    }
+    by_skin
+}
+
+/// Everything the upload phase needs besides the asset data itself.
+pub struct SceneUploadContext<'a> {
+    pub upload: UploadContext<'a>,
+    pub mesh_layout: &'a MeshLayout,
+    // TODO: this gets rids of ComputePipelineLibrary dependency, but is still not very elegant.
+    pub skinning_layout: &'a wgpu::BindGroupLayout,
+    pub assets: &'a AssetManager,
+}
+
+impl<'a> SceneUploadContext<'a> {
+    pub fn new(
+        upload: UploadContext<'a>,
+        mesh_layout: &'a MeshLayout,
+        skinning_layout: &'a wgpu::BindGroupLayout,
+        assets: &'a AssetManager,
+    ) -> Self {
+        Self {
+            upload,
+            mesh_layout,
+            skinning_layout,
+            assets,
+        }
     }
 
-    /// Upload a skinned mesh's rest pose and skinning attributes.
-    ///
-    /// Only the immutable part is cached. Per-instance deformed buffers are
-    /// created by [`crate::renderer::drawable::skinned_mesh::SkinnedMesh`].
-    pub(crate) fn skinned_mesh_from_asset(&mut self, name: &str, mesh: &SkinnedMeshAsset) -> Arc<GpuSkinnedMesh> {
-        if let Some(cached) = self.cache.skinned_geometry_cache.get(name) {
-            return cached.clone();
-        }
-
-        let uploaded = Arc::new(
-            mesh.upload(name, &mut self.upload())
-                .expect("failed to upload the skinned mesh asset to the GPU"),
-        );
-        self.cache.skinned_geometry_cache.insert(name.to_string(), uploaded.clone());
-        uploaded
+    /// Look up an asset by name.
+    fn asset(&self, name: &str) -> Result<Arc<std::sync::RwLock<Asset>>, UploadError> {
+        self.assets
+            .get_asset(name)
+            .ok_or_else(|| UploadError::MissingAsset(name.to_string()))
     }
 
-    /// Upload a baked animation texture and register it in the bindless table.
-    ///
-    /// The animation asset only carries a [`TextureAsset`]. The slot and sampler
-    /// registration are handled by [`UploadContext::upload_texture`], shared by
-    /// other texture assets.
-    ///
-    /// [`TextureAsset`]: crate::asset::asset_types::texture_asset::TextureAsset
-    pub(crate) fn skinned_animation_texture(&mut self, name: &str) -> Option<SampledTextureHandle> {
-        if let Some(cached) = self.cache.skinned_animation_cache.get(name) {
-            return Some(*cached);
-        }
-
-        let asset = self.assets.get_asset(name)?;
-        let asset = asset.read().ok()?;
-        let AssetData::SkinnedAnimationAssetType(animation) = asset.get_data() else { return None };
-
-        let handle = self
-            .upload()
-            .upload_texture(name, &animation.texture)
-            .expect("failed to upload the animation texture to the GPU")
-            .handle;
-        self.cache.skinned_animation_cache.insert(name.to_string(), handle);
-        Some(handle)
-    }
-
-    /// Map every skin asset name to the animation that drives it.
-    ///
-    /// Returns `(animation asset name, frames, fps)`. Several animations may
-    /// target the same skin; the lexicographically first asset name wins so the
-    /// choice is deterministic instead of depending on hash iteration order.
-    pub(crate) fn animations_by_skin(&self) -> HashMap<String, (String, u32, f32)> {
-        let database = self.assets.get_database();
-        let mut candidates: Vec<(String, String, u32, f32)> = Vec::new();
-
-        for (name, asset) in database.iter() {
-            let Ok(asset) = asset.read() else { continue };
-            let AssetData::SkinnedAnimationAssetType(animation) = asset.get_data() else { continue };
-            candidates.push((animation.skin.clone(), name.clone(), animation.frames, animation.fps));
-        }
-        candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-
-        let mut by_skin = HashMap::new();
-        for (skin, name, frames, fps) in candidates {
-            by_skin.entry(skin).or_insert((name, frames, fps));
-        }
-        by_skin
+    /// Concrete kind of an asset in the database.
+    fn asset_kind(&self, name: &str) -> Result<AssetKind, UploadError> {
+        let asset = self.asset(name)?;
+        let asset = asset.read().map_err(|_| UploadError::AssetLockPoisoned(name.to_string()))?;
+        Ok(asset.get_data().kind())
     }
 }

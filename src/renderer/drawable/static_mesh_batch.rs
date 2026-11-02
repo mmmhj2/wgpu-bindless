@@ -1,9 +1,13 @@
 use std::{num::NonZero, sync::Arc};
 
-use crate::{
-    asset::asset_types::AssetData, renderer::{
-        drawable::{drawable_mesh_traits::{Mesh, DrawableMesh}, static_mesh::StaticMesh}, pipeline::pbr_material::PBRMaterial, resources::{asset_cache::MeshUploadContext, mesh_layout::MeshLayout}, upload::buffer::upload_buffer,
+use crate::renderer::{
+    drawable::{
+        drawable_mesh_traits::{DrawableMesh, Mesh},
+        static_mesh::StaticMesh,
     },
+    pipeline::pbr_material::PBRMaterial,
+    resources::mesh_layout::MeshLayout,
+    upload::{buffer::upload_buffer, error::UploadError},
 };
 
 /// Size of one column-major `mat4x4<f32>` entry in the model-matrix buffer.
@@ -53,65 +57,56 @@ impl StaticMeshBatch {
         })
     }
 
-    /// Create a batch from explicit world matrices.
+    /// Create a batch from an already-uploaded mesh and explicit world matrices.
     ///
     /// Matrices are column-major, matching both `cgmath` and WGSL. They must
-    /// not be empty. Callers are responsible for only passing opaque or
-    /// alpha-mask instances; alpha-blended instances must use a separate
-    /// transparent path.
+    /// not be empty. 
+    /// 
+    /// TODO: figure out how to handle alpha-blended instances, which must use a
+    /// separate transparent path.
     ///
-    /// Panics if `world_matrices` is empty, if the instance count or buffer size
-    /// exceeds device limits, or if the mesh asset is missing / not a static
-    /// mesh asset.
-    pub fn create_from_matrices(
-        ctx: &mut MeshUploadContext<'_>,
-        mesh_subasset_name: &str,
+    /// Errors
+    /// ---
+    ///
+    /// [`UploadError::EmptyBuffer`] for an empty instance list,
+    /// [`UploadError::StorageBindingTooLarge`] when the model-matrix buffer would
+    /// exceed `max_storage_buffer_binding_size`, and [`UploadError::BufferTooLarge`]
+    /// for the corresponding device-wide limit.
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mesh_layout: &MeshLayout,
+        mesh: Arc<StaticMesh>,
         world_matrices: &[[[f32; 4]; 4]],
-    ) -> Self {
-        assert!(
-            !world_matrices.is_empty(),
-            "cannot create a static mesh batch with zero instances for '{mesh_subasset_name}'"
-        );
-
+    ) -> Result<Self, UploadError> {
         let instance_count = u32::try_from(world_matrices.len())
-            .expect("static mesh batch instance count exceeds u32::MAX");
+            .map_err(|_| UploadError::TooManyInstances { count: world_matrices.len() })?;
         let buffer_size = MODEL_MATRIX_SIZE * world_matrices.len() as u64;
-        let max_binding_size = u64::from(ctx.device.limits().max_storage_buffer_binding_size);
-        assert!(
-            buffer_size <= max_binding_size,
-            "static mesh batch for '{mesh_subasset_name}' requires {buffer_size} bytes, \
-             exceeding max_storage_buffer_binding_size ({max_binding_size})"
-        );
-
-        let asset = ctx
-            .assets
-            .get_asset(mesh_subasset_name)
-            .unwrap_or_else(|| panic!("static mesh asset '{mesh_subasset_name}' not found."));
-        let asset = asset
-            .read()
-            .expect("failed to acquire read lock for static mesh asset.");
-        let mesh_asset = match asset.get_data() {
-            AssetData::StaticMeshAssetType(m) => m,
-            _ => panic!("asset '{mesh_subasset_name}' is not a static mesh asset."),
-        };
+        let max_binding_size = u64::from(device.limits().max_storage_buffer_binding_size);
+        if buffer_size > max_binding_size {
+            return Err(UploadError::StorageBindingTooLarge {
+                label: "model matrix batch buffer".to_string(),
+                needed: buffer_size,
+                limit: max_binding_size,
+            });
+        }
 
         let model_matrix_buffer = upload_buffer(
-            ctx.device,
-            ctx.queue,
+            device,
+            queue,
             "model matrix batch buffer",
             wgpu::BufferUsages::STORAGE,
             world_matrices,
-        )
-        .expect("failed to create the model matrix batch buffer");
+        )?;
         let model_matrix_bind_group =
-            Self::generate_bind_group(ctx.device, ctx.mesh_layout, &model_matrix_buffer);
+            Self::generate_bind_group(device, mesh_layout, &model_matrix_buffer);
 
-        Self {
-            mesh: ctx.static_mesh_from_asset(mesh_subasset_name, mesh_asset),
+        Ok(Self {
+            mesh,
             model_matrix_buffer,
             model_matrix_bind_group,
             instance_count,
-        }
+        })
     }
 
     /// Number of instances covered by this batch. Always at least one.

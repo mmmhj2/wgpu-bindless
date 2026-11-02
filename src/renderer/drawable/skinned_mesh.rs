@@ -4,9 +4,9 @@ use crate::{
     asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition},
     renderer::{
         drawable::{drawable_mesh_traits::{DrawableMesh, Mesh}, vertex_types::VertexType},
-        pipeline::{compute_library::ComputePipelineKey, pbr_material::PBRMaterial},
-        resources::{asset_cache::MeshUploadContext, bindless::SampledTextureHandle},
-        upload::{buffer::upload_buffer, gpu_mesh::GpuSkinnedMesh},
+        pipeline::pbr_material::PBRMaterial,
+        resources::{bindless::SampledTextureHandle, mesh_layout::MeshLayout},
+        upload::{buffer::upload_buffer, error::UploadError, gpu_mesh::GpuSkinnedMesh},
     },
 };
 
@@ -74,26 +74,28 @@ pub struct SkinnedMesh {
 impl SkinnedMesh {
 
     /// Create a skinned mesh with possible animation attached.
-    /// 
+    ///
     /// TODO: figure out a way of re-attaching a new animation for a skinned mesh.
     pub(crate) fn new(
-        ctx: &mut MeshUploadContext<'_>,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mesh_layout: &MeshLayout,
+        skinning_layout: &wgpu::BindGroupLayout,
         geometry: Arc<GpuSkinnedMesh>,
         material: PBRMaterial,
         world_matrix: [[f32; 4]; 4],
         animation: Option<SkinnedAnimation>,
-    ) -> Self {
+    ) -> Result<Self, UploadError> {
         let model_matrix_buffer = upload_buffer(
-            ctx.device,
-            ctx.queue,
+            device,
+            queue,
             "skinned mesh model matrix",
             wgpu::BufferUsages::STORAGE,
             world_matrix.as_slice(),
-        )
-        .expect("failed to create the skinned mesh model matrix buffer");
-        let model_matrix_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor{
+        )?;
+        let model_matrix_bg = device.create_bind_group(&wgpu::BindGroupDescriptor{
             label: Some("skinned mesh model matrix bind group"),
-            layout: ctx.mesh_layout.get_bind_group_layout(),
+            layout: mesh_layout.get_bind_group_layout(),
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -106,32 +108,34 @@ impl SkinnedMesh {
             ],
         });
 
-        let skinning = animation.map(|animation| Self::create_skinning_state(ctx, &geometry, animation));
+        let skinning = animation
+            .map(|animation| Self::create_skinning_state(device, skinning_layout, &geometry, animation));
 
-        Self {
+        Ok(Self {
             geometry,
             material,
             skinning,
             model_matrix_buffer,
             model_matrix_bg,
-        }
+        })
     }
 
     /// Allocate the deformed buffers and the per-mesh compute bind group.
     fn create_skinning_state(
-        ctx: &mut MeshUploadContext<'_>,
+        device: &wgpu::Device,
+        skinning_layout: &wgpu::BindGroupLayout,
         geometry: &GpuSkinnedMesh,
         animation: SkinnedAnimation,
     ) -> SkinningState {
         let vertex_count = u64::from(geometry.vertex_count);
 
-        let deformed_position = ctx.device.create_buffer(&wgpu::BufferDescriptor{
+        let deformed_position = device.create_buffer(&wgpu::BufferDescriptor{
             label: Some("skinned mesh deformed position"),
             size: vertex_count * std::mem::size_of::<VertexBufferPosition>() as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
             mapped_at_creation: false
         });
-        let deformed_attribute = ctx.device.create_buffer(&wgpu::BufferDescriptor{
+        let deformed_attribute = device.create_buffer(&wgpu::BufferDescriptor{
             label: Some("skinned mesh deformed attribute"),
             size: vertex_count * std::mem::size_of::<VertexBufferOthers>() as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
@@ -139,10 +143,7 @@ impl SkinnedMesh {
         });
         let temp_buffer = vec![deformed_position, deformed_attribute];
 
-        let skinning_layout = ctx.compute_pipeline
-            .get_dispatch_bind_group_layout(ComputePipelineKey::GpuSkinning)
-            .expect("the GPU skinning compute pipeline should be registered");
-        let dispatch_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor{
+        let dispatch_bg = device.create_bind_group(&wgpu::BindGroupDescriptor{
             label: Some("skinning dispatch bind group"),
             layout: skinning_layout,
             entries: &[

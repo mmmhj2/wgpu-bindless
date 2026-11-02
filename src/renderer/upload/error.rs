@@ -29,8 +29,21 @@ pub enum UploadError {
         limit: u64,
     },
 
+    #[error("buffer '{label}' needs {needed} bytes, exceeding max_storage_buffer_binding_size ({limit})")]
+    StorageBindingTooLarge {
+        label: String,
+        needed: u64,
+        limit: u64,
+    },
+
     #[error("buffer '{0}' has no data")]
     EmptyBuffer(String),
+
+    #[error("mesh batch has {count} instances, which does not fit in the u32 instance range")]
+    TooManyInstances { count: usize },
+
+    #[error("asset '{0}' has a poisoned lock")]
+    AssetLockPoisoned(String),
 
     #[error("mesh '{name}' has {positions} positions but {attributes} vertex attributes")]
     VertexCountMismatch {

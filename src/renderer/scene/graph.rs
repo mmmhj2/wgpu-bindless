@@ -5,11 +5,11 @@
 //! accessors. Any scene change requires rebuilding the graph (and the renderer
 //! instances derived from it).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use cgmath::Matrix4;
 
-use crate::{asset::asset_types::{AssetData, AssetKind, scene_asset::SceneAsset}, renderer::{drawable::{draw_list::DrawList, skinned_mesh::{SkinnedAnimation, SkinnedMesh}, static_mesh_batch::StaticMeshBatch}, resources::asset_cache::MeshUploadContext}};
+use crate::asset::asset_types::scene_asset::SceneAsset;
 
 /// One node of the runtime scene graph.
 #[derive(Debug)]
@@ -53,33 +53,28 @@ pub struct SceneGraph {
     roots: Vec<usize>,
 }
 
-/// One planned batch before GPU resources are created.
+/// Planned draw units for one scene, grouped by mesh primitive.
+/// 
+/// If the mesh primitive cannot be instanced (e.g. skinned mesh), the batch
+/// will be split up before uploading.
 #[derive(Debug)]
-struct BatchPlan<'a> {
-    mesh_subasset_name: &'a str,
-    world_matrices: Vec<[[f32; 4]; 4]>,
+pub struct MeshBatchPlan<'a> {
+    pub mesh_subasset_name: &'a str,
+    pub world_matrices: Vec<[[f32; 4]; 4]>,
 }
 
 /// Group mesh instances by primitive name, preserving the extraction order.
-///
-/// `can_batch` predicate determines whether a given asset can be batched.
-fn plan_batches<'a>(
-    graph: &'a SceneGraph,
-    can_batch: impl Fn(&str) -> bool,
-) -> Vec<BatchPlan<'a>> {
-    let mut plans: Vec<BatchPlan<'a>> = Vec::new();
+fn plan_batches<'a>(graph: &'a SceneGraph) -> Vec<MeshBatchPlan<'a>> {
+    let mut plans: Vec<MeshBatchPlan<'a>> = Vec::new();
     let mut index_of: HashMap<&'a str, usize> = HashMap::new();
 
     for instance in graph.mesh_instances() {
-        if !can_batch(instance.mesh_subasset_name) {
-            continue;
-        }
         let index = match index_of.get(instance.mesh_subasset_name) {
             Some(&index) => index,
             None => {
                 let index = plans.len();
                 index_of.insert(instance.mesh_subasset_name, index);
-                plans.push(BatchPlan {
+                plans.push(MeshBatchPlan {
                     mesh_subasset_name: instance.mesh_subasset_name,
                     world_matrices: Vec::new(),
                 });
@@ -227,69 +222,15 @@ impl SceneGraph {
         })
     }
 
-    /// Consume the scene graph into a draw list for drawing
-    pub fn into_draw_list(
-        self,
-        ctx: &mut MeshUploadContext<'_>,
-    ) -> DrawList {
-        // Skinned meshes are never instanced and bypass `plan_batches` entirely.
-        let mut skinned_instances: Vec<(String, [[f32; 4]; 4])> = Vec::new();
-        let mut skinned_names: HashSet<&str> = HashSet::new();
-        for instance in self.mesh_instances() {
-            if ctx.asset_kind(instance.mesh_subasset_name) == Some(AssetKind::SkinnedMesh) {
-                skinned_names.insert(instance.mesh_subasset_name);
-                skinned_instances.push((instance.mesh_subasset_name.to_owned(), instance.world_matrix));
-            }
-        }
-
-        let plans = plan_batches(&self, |name| !skinned_names.contains(name));
-        log::info!(
-            "Building {} static mesh batches and {} skinned meshes from {} mesh instances",
-            plans.len(),
-            skinned_instances.len(),
-            self.mesh_instance_count()
-        );
-
-        let static_opaque_batch = plans
-            .into_iter()
-            .map(|plan| {
-                log::debug!(
-                    "Static mesh batch '{}' covers {} instances",
-                    plan.mesh_subasset_name,
-                    plan.world_matrices.len()
-                );
-                StaticMeshBatch::create_from_matrices(ctx, plan.mesh_subasset_name, &plan.world_matrices)
-            })
-            .collect();
-
-        // Resolve which baked animation drives each skin once, before any GPU
-        // resource is created.
-        let animations = ctx.animations_by_skin();
-
-        let mut skinned_opaque = Vec::with_capacity(skinned_instances.len());
-        for (name, world_matrix) in skinned_instances {
-            let asset = ctx.assets.get_asset(&name)
-                .unwrap_or_else(|| panic!("skinned mesh asset '{name}' not found."));
-            let asset = asset.read().expect("failed to acquire read lock for skinned mesh asset.");
-            let AssetData::SkinnedMeshAssetType(mesh_asset) = asset.get_data() else {
-                panic!("asset '{name}' is not a skinned mesh asset.");
-            };
-
-            let geometry = ctx.skinned_mesh_from_asset(&name, mesh_asset);
-            let material = ctx.material_from_asset(&mesh_asset.restpose.material);
-            let animation = animations
-                .get(&mesh_asset.skin)
-                .and_then(|(animation_name, frames, fps)| {
-                    ctx.skinned_animation_texture(animation_name).map(|texture| SkinnedAnimation {
-                        texture,
-                        frames: *frames,
-                        fps: *fps,
-                    })
-                });
-            skinned_opaque.push(SkinnedMesh::new(ctx, geometry, material, world_matrix, animation));
-        }
-
-        DrawList::new(static_opaque_batch, skinned_opaque)
+    /// Group every mesh instance by primitive name, in first-seen order.
+    ///
+    /// This method only groups meshes into plans, and no actual upload is
+    /// performed (See [`prepare_scene`]). Whether or not multiple meshes are
+    /// grouped and actually instanced is determined at upload time.
+    /// 
+    /// [`prepare_scene`]: crate::renderer::resources::asset_cache::GpuAssetStore::prepare_scene
+    pub fn plan_mesh_batches(&self) -> Vec<MeshBatchPlan<'_>> {
+        plan_batches(self)
     }
 }
 
@@ -348,7 +289,7 @@ mod test {
         };
         let graph = SceneGraph::from_asset(&asset);
 
-        let plans = plan_batches(&graph, |_| true);
+        let plans = graph.plan_mesh_batches();
         assert_eq!(plans.len(), 2);
 
         assert_eq!(plans[0].mesh_subasset_name, "mesh.a");
@@ -372,7 +313,7 @@ mod test {
         };
         let graph = SceneGraph::from_asset(&asset);
 
-        let plans = plan_batches(&graph, |_| true);
+        let plans = graph.plan_mesh_batches();
         assert_eq!(plans.len(), 2);
         assert_eq!(plans[0].mesh_subasset_name, "mesh.z");
         assert_eq!(plans[1].mesh_subasset_name, "mesh.a");
@@ -391,7 +332,7 @@ mod test {
         };
         let graph = SceneGraph::from_asset(&asset);
 
-        let plans = plan_batches(&graph, |_| true);
+        let plans = graph.plan_mesh_batches();
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].world_matrices.len(), 2);
         assert_eq!(plans[0].world_matrices[0], plans[0].world_matrices[1]);
@@ -405,7 +346,7 @@ mod test {
         };
         let graph = SceneGraph::from_asset(&asset);
 
-        assert!(plan_batches(&graph, |_| true).is_empty());
+        assert!(graph.plan_mesh_batches().is_empty());
     }
 
     #[test]
@@ -421,7 +362,7 @@ mod test {
         };
         let graph = SceneGraph::from_asset(&asset);
 
-        let plans = plan_batches(&graph, |_| true);
+        let plans = graph.plan_mesh_batches();
         assert_eq!(
             plans
                 .iter()

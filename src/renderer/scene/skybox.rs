@@ -4,17 +4,29 @@ use crate::renderer::{
         library::PipelineLibrary,
         rasterizer_pipeline::{RasterizerPipeline, RasterizerPipelineDescriptor, RasterizerPipelineDescriptorBuilder, UseRasterizerPipeline},
     },
-    resources::sampler::SamplerDescription,
+    resources::{bindless::{BindlessResources, SamplerHandle}, sampler::SamplerDescription},
 };
 
 
 pub struct SkyboxManager {
     skybox_textures: Option<wgpu::TextureView>,
-    skybox_sampler: wgpu::Sampler,
+    skybox_sampler: SamplerHandle,
     skybox_bindgroup_layout: wgpu::BindGroupLayout,
+    skybox_bind_group: Option<wgpu::BindGroup>,
 }
 
 impl SkyboxManager {
+
+    /// Sampler state the skybox samples its cube map with.
+    pub const SAMPLER: SamplerDescription = SamplerDescription {
+        address_mode: [wgpu::AddressMode::Repeat, wgpu::AddressMode::Repeat, wgpu::AddressMode::Repeat ],
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        compare: None,
+        anisotropy_clamp: 1,
+        border_color: None
+    };
 
     const DBG_SKYBOX: [wgpu::BindGroupLayoutEntry; 2] = [
         wgpu::BindGroupLayoutEntry{
@@ -39,27 +51,17 @@ impl SkyboxManager {
     /// 
     /// Pipeline and its layout will be registered to [`PipelineLibrary`], and
     /// old resources sharing their keys will be replaced.
-    /// 
-    /// TODO: use bindless sampler array instead of an orphan sampler.
+    ///
+    /// `skybox_sampler` must be a handle from the bindless sampler table,
+    /// typically obtained via `UploadContext::upload_sampler(SkyboxManager::SAMPLER)`.
     pub fn new(
         device: &wgpu::Device,
         camera_bind_group_layout: &wgpu::BindGroupLayout,
         color_attachment_format: wgpu::TextureFormat,
         depth_attachment_format: wgpu::TextureFormat,
         pipelines: &mut PipelineLibrary,
+        skybox_sampler: SamplerHandle,
     ) -> Self {
-
-        let sd = &SamplerDescription{
-            address_mode: [wgpu::AddressMode::Repeat, wgpu::AddressMode::Repeat, wgpu::AddressMode::Repeat ],
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-            compare: None,
-            anisotropy_clamp: 1,
-            border_color: None
-        };
-        let skybox_sampler = device.create_sampler(&(sd.into()));
-
         let skybox_bindgroup_layout = device.create_bind_group_layout(&Self::DBGL_SKYBOX);
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -104,19 +106,48 @@ impl SkyboxManager {
             skybox_textures: None,
             skybox_sampler,
             skybox_bindgroup_layout,
+            skybox_bind_group: None,
         }
     }
 
-    /// Set a cube map texture to be the skybox texture
-    /// 
-    /// Note: Bindless resource manager only handles 2D texture, and cubemaps
-    /// must be handled separately.
-    pub fn set_texture(&mut self, texture: wgpu::Texture) {
+    /// Set a cube map texture to be the skybox texture.
+    ///
+    /// Builds the cube view and the bind group once; [`Self::draw_skybox`] then
+    /// only binds them.
+    ///
+    /// Note: the bindless resource manager only handles 2D textures, and cube
+    /// maps must be handled separately.
+    pub fn set_texture(
+        &mut self,
+        device: &wgpu::Device,
+        bindless: &BindlessResources,
+        texture: wgpu::Texture,
+    ) {
         assert_eq!(texture.depth_or_array_layers(), 6);
-        self.skybox_textures = Some(texture.create_view(&wgpu::TextureViewDescriptor{
+        let view = texture.create_view(&wgpu::TextureViewDescriptor{
             dimension: Some(wgpu::TextureViewDimension::Cube),
             ..Default::default()
-        }));
+        });
+        let sampler = bindless
+            .sampler(self.skybox_sampler)
+            .expect("the skybox sampler should be registered in the bindless table");
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Skybox bind group"),
+            layout: &self.skybox_bindgroup_layout,
+            entries: &[
+                wgpu::BindGroupEntry{
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry{
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                }
+            ]
+        });
+
+        self.skybox_textures = Some(view);
+        self.skybox_bind_group = Some(bind_group);
     }
 
     /// Draw skybox on the given render pass.
@@ -127,7 +158,6 @@ impl SkyboxManager {
     /// The fourth bind group will be mutated by the draw call.
     pub fn draw_skybox(
         &self,
-        device: &wgpu::Device,
         pipelines: &PipelineLibrary,
         rp: &mut wgpu::RenderPass,
     ) {
@@ -135,21 +165,11 @@ impl SkyboxManager {
             .get(PipelineKey::Skybox, VertexLayoutKey::EMPTY, PipelineLayoutKey::Skybox)
             .expect("skybox pipeline should be registered");
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &self.skybox_bindgroup_layout,
-            entries: &[
-                wgpu::BindGroupEntry{
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(self.skybox_textures.as_ref().expect("set skybox texture before drawing.")),
-                },
-                wgpu::BindGroupEntry{
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.skybox_sampler)
-                }
-            ]
-        });
-        rp.set_bind_group(3, &bind_group, &[]);
+        let bind_group = self
+            .skybox_bind_group
+            .as_ref()
+            .expect("set skybox texture before drawing.");
+        rp.set_bind_group(3, bind_group, &[]);
         rp.set_rasterizer_pipeline(pipeline);
         rp.draw(0..36, 0..1);
     }

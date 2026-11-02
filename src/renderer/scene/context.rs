@@ -1,7 +1,6 @@
 use crate::renderer::{
     pipeline::library::PipelineLibrary,
     resources::{
-        asset_cache::GpuAssetCache,
         bindless::BindlessResources,
         camera::CameraManager,
         lighting::LightingManager,
@@ -12,14 +11,13 @@ use crate::renderer::{
 
 /// Per-frame split borrow of the scene renderer state.
 ///
-/// This type does not own anything; the orchestrator owns the individual
+/// This type does not own anything. the orchestrator owns the individual
 /// resources and hands out this transient view while recording a frame.
 pub struct SceneContext<'a> {
     pub bindless: &'a mut BindlessResources,
     pub camera: &'a mut CameraManager,
     pub lighting: &'a mut LightingManager,
     pub mesh_layout: &'a MeshLayout,
-    pub assets: &'a mut GpuAssetCache,
     pub pipelines: &'a mut PipelineLibrary,
 }
 
