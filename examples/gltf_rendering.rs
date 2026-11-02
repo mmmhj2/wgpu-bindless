@@ -17,7 +17,7 @@ use rust_renderer::{
         }, resources::{
             camera::{CameraPerspective, CameraPerspectiveBuilder, HasViewMatrix},
             lighting::{Light, LightKindEnum},
-        }, scene::{graph::SceneGraph, skybox::SkyboxManager}, upload::texture::create_texture, window::RendererState
+        }, scene::skybox::SkyboxManager, upload::texture::create_texture, window::RendererState
     },
 };
 use winit::{application::ApplicationHandler, event::{KeyEvent, WindowEvent}, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window};
@@ -80,6 +80,10 @@ impl RendererState for State {
 
         let scene_format = orchestrator.scene_format();
         let camera_bgl = orchestrator.camera().get_bind_group_layout().clone();
+        let skybox_sampler = orchestrator
+            .upload_context()
+            .upload_sampler(SkyboxManager::SAMPLER)
+            .expect("failed to register the skybox sampler");
         let mut skybox = {
             let (device, pipelines) = orchestrator.device_and_pipelines_mut();
             SkyboxManager::new(
@@ -88,6 +92,7 @@ impl RendererState for State {
                 scene_format,
                 wgpu::TextureFormat::Depth32Float,
                 pipelines,
+                skybox_sampler,
             )
         };
         {
@@ -134,8 +139,9 @@ impl RendererState for State {
             let asset = asset_manager.get_asset(&scene_name).expect("gltf scene asset should be present");
             let asset = asset.read().expect("failed to read gltf scene asset");
             if let SceneAssetType(scene) = asset.get_data() {
-                let mut ctx = orchestrator.mesh_upload_context(&asset_manager);
-                SceneGraph::from_asset(scene).into_draw_list(&mut ctx)
+                orchestrator
+                    .prepare_scene(&asset_manager, scene)
+                    .expect("failed to prepare the scene")
             } else {
                 panic!("asset '{scene_name}' is not a scene asset");
             }
@@ -156,7 +162,7 @@ impl RendererState for State {
                 panic!("skybox asset is not a texture asset");
             }
         };
-        skybox.set_texture(skybox_texture);
+        skybox.set_texture(orchestrator.device(), orchestrator.bindless(), skybox_texture);
 
         let camera = CameraPerspectiveBuilder::new().set_origin(cgmath::point3(0.0, 0.0, 3.0)).build();
 
@@ -207,7 +213,7 @@ impl RendererState for State {
                     );
                     self.draw_list.draw(DrawableType::OpaqueStatic, render_pass);
 
-                    skybox.draw_skybox(gpu.device(), scene.pipelines, render_pass);
+                    skybox.draw_skybox(scene.pipelines, render_pass);
                 },
             );
         });

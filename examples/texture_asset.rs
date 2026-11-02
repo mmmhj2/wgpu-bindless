@@ -16,7 +16,6 @@ use rust_renderer::{
             pbr_material::PBRMaterial,
             rasterizer_pipeline::UseRasterizerPipeline,
         },
-        upload::UploadContext,
         window::RendererState,
     },
 };
@@ -45,14 +44,12 @@ impl RendererState for State {
             let asset_db = asset_manager.get_database();
             let texture_asset = asset_db.iter().next().expect("at least one asset should be imported successfully");
             if let TextureAssetType(asset) = texture_asset.1.read().unwrap().get_data() {
-                let (gpu, bindless) = orchestrator.gpu_and_bindless_mut();
-                // Catch the fallbacks before the upload context borrows the
-                // bindless table mutably.
-                let default_sampler = bindless.get_default_sampler();
-                let default_normal = bindless.get_default_bump_texture();
-                let default_mrao = bindless.get_default_mrao_texture();
+                let mut upload = orchestrator.upload_context();
+                let default_sampler = upload.bindless().get_default_sampler();
+                let default_normal = upload.bindless().get_default_bump_texture();
+                let default_mrao = upload.bindless().get_default_mrao_texture();
 
-                let uploaded = UploadContext::new(gpu.device(), gpu.queue(), bindless)
+                let uploaded = upload
                     .upload_texture(texture_asset.0, asset)
                     .expect("failed to upload the texture asset");
 

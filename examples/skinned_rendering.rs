@@ -28,7 +28,6 @@ use rust_renderer::{
             camera::{CameraPerspective, CameraPerspectiveBuilder},
             lighting::Light,
         },
-        scene::graph::SceneGraph,
         window::RendererState,
     },
 };
@@ -73,8 +72,9 @@ impl RendererState for State {
             let SceneAssetType(scene) = asset.get_data() else {
                 panic!("asset '{scene_name}' is not a scene asset");
             };
-            let mut ctx = orchestrator.mesh_upload_context(&asset_manager);
-            SceneGraph::from_asset(scene).into_draw_list(&mut ctx)
+            orchestrator
+                .prepare_scene(&asset_manager, scene)
+                .expect("failed to prepare the scene")
         };
 
         log::info!(

@@ -9,7 +9,7 @@ mod test {
             importer::gltf_importer::GltfImporter,
         }, renderer::{
             drawable::draw_list::{DrawList, DrawableType},
-            orchestrator::{RenderOrchestrator, RendererConfig}, scene::graph::SceneGraph, window::RendererState,
+            orchestrator::{RenderOrchestrator, RendererConfig}, window::RendererState,
         },
     };
     use winit::{event_loop::EventLoop, window::Window};
@@ -34,8 +34,9 @@ mod test {
                 let asset = asset_manager.get_asset(&scene_name).expect("gltf scene asset should be present");
                 let asset = asset.read().expect("failed to read gltf scene asset");
                 if let AssetData::SceneAssetType(scene) = asset.get_data() {
-                    let mut ctx = orchestrator.mesh_upload_context(&asset_manager);
-                    SceneGraph::from_asset(scene).into_draw_list(&mut ctx)
+                    orchestrator
+                        .prepare_scene(&asset_manager, scene)
+                        .expect("failed to prepare the scene")
                 } else {
                     panic!("asset '{scene_name}' is not a scene asset");
                 }
