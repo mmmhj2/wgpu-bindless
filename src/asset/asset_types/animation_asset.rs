@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::asset::asset_types::{ConcreteAssetType, GpuAssetType, texture_asset::TextureAsset};
+use crate::asset::asset_types::{ConcreteAssetType, texture_asset::TextureAsset};
 
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -22,24 +22,4 @@ pub struct SkinnedAnimationAsset {
 
 impl ConcreteAssetType for SkinnedAnimationAsset {
     const SCHEMA_VERSION: u32 = 1;
-}
-
-impl GpuAssetType for SkinnedAnimationAsset {
-    type GpuObjectType = wgpu::Texture;
-    
-    /// Upload the baked animation texture onto the GPU.
-    /// 
-    /// Joint animations are baked into a 2D texture at import time, one row per
-    /// frame. The skinning compute shader reads the row selected by the `frame`
-    /// immediate with `textureLoad`, so no sampling or filtering is involved.
-    /// 
-    /// The texture has the format of RGBA16 by default. It should provide more
-    /// than enough precision. If bandwidth is a problem, RGBA8 may be used in
-    /// the future.
-    /// 
-    /// All transform data is baked *in model space*, to be directly used in the
-    /// compute shader.
-    fn upload(&self, name: &str, device: &wgpu::Device, queue: &wgpu::Queue) -> Self::GpuObjectType {
-        self.texture.upload(name, device, queue)
-    }
 }

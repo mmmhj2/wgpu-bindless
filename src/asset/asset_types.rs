@@ -115,11 +115,6 @@ pub trait ConcreteAssetType: Serialize + DeserializeOwned {
     const SCHEMA_VERSION: u32;
 }
 
-pub trait GpuAssetType: ConcreteAssetType {
-    type GpuObjectType;
-    fn upload(&self, name: &str, device: &wgpu::Device, queue: &wgpu::Queue) -> Self::GpuObjectType;
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Asset {
     metadata: AssetMetadata,

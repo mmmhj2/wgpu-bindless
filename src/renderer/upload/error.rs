@@ -32,6 +32,23 @@ pub enum UploadError {
     #[error("buffer '{0}' has no data")]
     EmptyBuffer(String),
 
+    #[error("mesh '{name}' has {positions} positions but {attributes} vertex attributes")]
+    VertexCountMismatch {
+        name: String,
+        positions: usize,
+        attributes: usize,
+    },
+
+    #[error("skinned mesh '{name}' has {vertices} vertices but {skinning} skinning entries")]
+    SkinningCountMismatch {
+        name: String,
+        vertices: usize,
+        skinning: usize,
+    },
+
+    #[error("texture '{name}' declares more mip levels than its size allows (mip {level})")]
+    MipChainTooLong { name: String, level: u32 },
+
     #[error(transparent)]
     Bindless(#[from] BindlessError),
 }

@@ -1,11 +1,14 @@
 use crate::{
-    asset::asset_types::{GpuAssetType, texture_asset::TextureAsset},
+    asset::asset_types::texture_asset::TextureAsset,
     renderer::{
         resources::{
             bindless::{BindlessResources, SamplerHandle},
             sampler::SamplerDescription,
         },
-        upload::{buffer::upload_buffer, error::UploadError, texture::TextureBinding},
+        upload::{
+            buffer::upload_buffer, error::UploadError, gpu_type::GpuAssetType,
+            texture::TextureBinding,
+        },
     },
 };
 
@@ -81,7 +84,7 @@ impl<'a> UploadContext<'a> {
         name: &str,
         asset: &TextureAsset,
     ) -> Result<TextureBinding, UploadError> {
-        let texture = asset.upload(name, self.device, self.queue);
+        let texture = asset.upload(name, self)?;
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
