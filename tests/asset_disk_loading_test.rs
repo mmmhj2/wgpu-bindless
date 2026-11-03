@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod test {
     use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, MutexGuard};
 
     use rust_renderer::asset::{
         asset_manager::AssetManager,
@@ -16,10 +17,20 @@ mod test {
     const GLTF_PATH: &str = "resource/test_two_cubes.glb";
     const IMAGE_PATH: &str = "resource/skybox/back.jpg";
 
+    /// Prevent concurrent write on resources.
+    static RESOURCE_LOCK: Mutex<()> = Mutex::new(());
+    fn resource_lock() -> MutexGuard<'static, ()> {
+        RESOURCE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// Reads any asset's name, on-disk path and provenance out of the manager,
     /// then verifies the container it wrote can be peeked and fully re-loaded.
     #[test]
     fn imported_assets_are_persisted_as_zip_containers_with_provenance() {
+        let _guard = resource_lock();
+
         let manager = AssetManager::new();
         manager.import(GltfImporter::new(GLTF_PATH)).expect("import should succeed");
 
@@ -58,6 +69,8 @@ mod test {
 
     #[test]
     fn image_importer_records_its_own_identity() {
+        let _guard = resource_lock();
+
         let manager = AssetManager::new();
         manager.import(ImageFileImporter::new(IMAGE_PATH, ColorSpace::Srgb)).expect("import should succeed");
 
@@ -75,6 +88,8 @@ mod test {
     /// invalidate the batch regardless of which importer wrote it.
     #[test]
     fn gltf_provenance_stamps_all_produced_asset_types() {
+        let _guard = resource_lock();
+
         let manager = AssetManager::new();
         manager.import(GltfImporter::new(GLTF_PATH)).expect("import should succeed");
 

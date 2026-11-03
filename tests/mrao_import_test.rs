@@ -111,8 +111,10 @@ mod test {
         );
     }
 
+    /// The MR/AO images are inputs of the combined texture, not material
+    /// textures the renderer samples, so they are not persisted on their own.
     #[test]
-    fn deduplicates_mrao_assets_and_keeps_raw_textures() {
+    fn deduplicates_mrao_assets_and_skips_raw_source_textures() {
         let dir = temp_workspace("dedup");
         let gltf = dir.join("test_mrao.gltf");
         let manager = AssetManager::new();
@@ -131,7 +133,10 @@ mod test {
             "test_mrao.gltf.tex_1",
             "test_mrao.gltf.tex_2",
         ] {
-            assert!(database.contains_key(raw_texture), "raw texture '{raw_texture}' should still be imported");
+            assert!(
+                !database.contains_key(raw_texture),
+                "raw MRAO source texture '{raw_texture}' should not be imported"
+            );
         }
     }
 

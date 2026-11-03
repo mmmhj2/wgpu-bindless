@@ -1,11 +1,25 @@
 #[cfg(test)]
 mod test {
     use std::path::PathBuf;
+    use std::sync::{Mutex, MutexGuard};
+    use rust_renderer::asset::{
+        asset_manager::AssetManager,
+        asset_types::{Asset, AssetData, texture_asset::{TexelData, TextureDimension, TextureFormat}},
+        importer::{gltf_importer::GltfImporter, image_file_importer::{ColorSpace, ImageArrayImporter, ImageFileImporter}}
+    };
 
-use rust_renderer::asset::{asset_manager::AssetManager, asset_types::{Asset, AssetData, texture_asset::{TexelData, TextureDimension, TextureFormat}}, importer::{gltf_importer::GltfImporter, image_file_importer::{ColorSpace, ImageArrayImporter, ImageFileImporter}}};
+    /// Prevent concurrent write on resources.
+    static RESOURCE_LOCK: Mutex<()> = Mutex::new(());
+    fn resource_lock() -> MutexGuard<'static, ()> {
+        RESOURCE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     #[test]
     fn import_gltf_test() {
+        let _guard = resource_lock();
+
         let test_filename: PathBuf;
         {
             let asset_manager = AssetManager::new();
@@ -23,6 +37,8 @@ use rust_renderer::asset::{asset_manager::AssetManager, asset_types::{Asset, Ass
 
     #[test]
     fn import_gltf_scene_test() {
+        let _guard = resource_lock();
+
         let gltf_path = std::path::Path::new("resource/test_two_cubes.glb");
         let asset_manager = AssetManager::new();
         asset_manager.import(GltfImporter::new(gltf_path)).expect("import should succeed");
@@ -63,6 +79,8 @@ use rust_renderer::asset::{asset_manager::AssetManager, asset_types::{Asset, Ass
 
     #[test]
     fn import_single_image_test() {
+        let _guard = resource_lock();
+
         let test_filename: PathBuf;
         {
             let asset_manager = AssetManager::new();
@@ -80,6 +98,8 @@ use rust_renderer::asset::{asset_manager::AssetManager, asset_types::{Asset, Ass
 
     #[test]
     fn import_image_array_test() {
+        let _guard = resource_lock();
+
         let test_filename: PathBuf;
         {
             let asset_manager = AssetManager::new();

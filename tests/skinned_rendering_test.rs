@@ -4,13 +4,14 @@
 //! list, records the skinning compute pass and renders a few frames. Any wgpu
 //! validation error along the way aborts the test.
 
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+mod common;
+
 #[cfg(test)]
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 mod test {
     use std::{path::PathBuf, sync::Arc};
-
     use rust_renderer::{
-        app::DefaultAppHandler,
         asset::{
             asset_manager::AssetManager,
             asset_types::AssetData,
@@ -31,10 +32,9 @@ mod test {
             window::RendererState,
         },
     };
-    use winit::{event_loop::EventLoop, window::Window};
+    use winit::window::Window;
+    use crate::common;
 
-    /// Render a few frames so the compute pass and the scene pass both run more
-    /// than once (the second frame reuses the already-written deformed buffers).
     const FRAMES_TO_RENDER: u32 = 3;
 
     /// Playback time fed to the skinning pass on each frame.
@@ -124,9 +124,6 @@ mod test {
         }
 
         fn render(&mut self) -> Result<(), ()> {
-            if self.rendered_frames >= FRAMES_TO_RENDER {
-                return Err(());
-            }
             self.rendered_frames += 1;
 
             let camera = self.camera.clone();
@@ -185,15 +182,11 @@ mod test {
     fn skinned_rendering_test() {
         env_logger::init();
 
-        // The event loop must be created from the test thread.
-        use winit::platform::windows::EventLoopBuilderExtWindows;
-
-        let event_loop = EventLoop::<State>::with_user_event()
-            .with_any_thread(true)
-            .build()
-            .expect("Failed to build event loop.");
-        let mut app = DefaultAppHandler::new();
-
-        event_loop.run_app(&mut app).unwrap();
+        let frames = common::run_windowed::<State>(FRAMES_TO_RENDER);
+        assert_eq!(
+            frames,
+            Some(FRAMES_TO_RENDER),
+            "the event loop should stop after the configured frame limit"
+        );
     }
 }

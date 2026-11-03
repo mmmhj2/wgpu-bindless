@@ -1,10 +1,14 @@
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+mod common;
+
 #[cfg(test)]
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 mod test {
     use std::sync::Arc;
+    use crate::common;
 
     use rust_renderer::{
-        app::DefaultAppHandler, asset::{
+        asset::{
             asset_manager::AssetManager, asset_types::AssetData,
             importer::gltf_importer::GltfImporter,
         }, renderer::{
@@ -12,7 +16,8 @@ mod test {
             orchestrator::{RenderOrchestrator, RendererConfig}, window::RendererState,
         },
     };
-    use winit::{event_loop::EventLoop, window::Window};
+    use winit::window::Window;
+    const FRAMES_TO_RENDER: u32 = 1;
 
     pub struct State {
         orchestrator: RenderOrchestrator,
@@ -61,7 +66,14 @@ mod test {
         }
 
         fn render(&mut self) -> Result<(), ()> {
-            Err(())
+            self.orchestrator.with_frame(|frame| {
+                frame.render_scene(
+                    wgpu::Color { r: 0.1, g: 0.2, b: 0.3, a: 1.0 },
+                    |_, _, _| {},
+                );
+            });
+
+            Ok(())
         }
     }
 
@@ -69,13 +81,11 @@ mod test {
     fn gltf_loading_test() {
         env_logger::init();
 
-        // We need to create the eventloop from the test thread.
-        #[cfg(target_os = "windows")]
-        use winit::platform::windows::EventLoopBuilderExtWindows;
-
-        let event_loop = EventLoop::<State>::with_user_event().with_any_thread(true).build().expect("Failed to build event loop.");
-        let mut app = DefaultAppHandler::new();
-
-        event_loop.run_app(&mut app).unwrap();
+        let frames = common::run_windowed::<State>(FRAMES_TO_RENDER);
+        assert_eq!(
+            frames,
+            Some(FRAMES_TO_RENDER),
+            "the glTF test should render one frame before the limit stops it"
+        );
     }
 }

@@ -1,16 +1,18 @@
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+mod common;
+
 #[cfg(test)]
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 mod test {
     use std::sync::Arc;
-
-    use rust_renderer::{
-        app::DefaultAppHandler,
-        renderer::{
-            orchestrator::{RenderOrchestrator, RendererConfig},
-            window::RendererState,
-        },
+    use rust_renderer::renderer::{
+        orchestrator::{RenderOrchestrator, RendererConfig},
+        window::RendererState,
     };
-    use winit::{event_loop::EventLoop, window::Window};
+    use winit::window::Window;
+    use crate::common;
+
+    const FRAMES_TO_RENDER: u32 = 3;
 
     pub struct State {
         orchestrator: RenderOrchestrator,
@@ -44,17 +46,15 @@ mod test {
         }
     }
 
-    /// TODO: this test loops forever! This is not good for CI or regression.
     #[test]
     fn basic_functionality_test() {
         env_logger::init();
 
-        // We need to create the eventloop from the test thread.
-        #[cfg(target_os = "windows")]
-        use winit::platform::windows::EventLoopBuilderExtWindows;
-
-        let event_loop = EventLoop::<State>::with_user_event().with_any_thread(true).build().expect("Failed to build event loop.");
-        let mut app = DefaultAppHandler::new();
-        event_loop.run_app(&mut app).unwrap();
+        let frames = common::run_windowed::<State>(FRAMES_TO_RENDER);
+        assert_eq!(
+            frames,
+            Some(FRAMES_TO_RENDER),
+            "the event loop should stop after the configured frame limit"
+        );
     }
 }

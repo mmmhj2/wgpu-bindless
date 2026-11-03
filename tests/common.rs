@@ -4,9 +4,9 @@
 
 use std::num::NonZero;
 
-use rust_renderer::asset::asset_types::texture_asset::{
+use rust_renderer::{app::{DefaultAppHandler, build_event_loop}, asset::asset_types::texture_asset::{
     Sampler, TexelData, TextureAsset, TextureDimension, TextureFormat,
-};
+}, renderer::window::RendererState};
 
 /// Encode a value as IEEE-754 binary16.
 ///
@@ -62,3 +62,25 @@ pub fn rest_pose_texture(joint_count: usize) -> TextureAsset {
         .collect();
     joint_matrix_texture(&columns)
 }
+
+/// Run `RState` until it has rendered `max_frames` frames.
+///
+/// Returns the number of successful render callbacks, or `None` when no
+/// windowing system is available and the test should be skipped.
+pub fn run_windowed<RState: RendererState + 'static>(max_frames: u32) -> Option<u32> {
+    let event_loop = match build_event_loop::<RState>() {
+        Ok(event_loop) => event_loop,
+        Err(error) => {
+            eprintln!("skipping windowed test: could not create an event loop ({error})");
+            return None;
+        }
+    };
+
+    let mut app = DefaultAppHandler::<RState>::with_max_frames(max_frames);
+    event_loop
+        .run_app(&mut app)
+        .expect("the event loop should run to completion");
+
+    Some(app.frames_rendered())
+}
+

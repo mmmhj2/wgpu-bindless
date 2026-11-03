@@ -4,14 +4,13 @@
 //! texture, then read the deformed vertex buffers back and compare them against a
 //! CPU reference. No window or surface is involved.
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 mod common;
 
 #[cfg(test)]
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 mod test {
     use std::num::NonZero;
-
     use rust_renderer::{
         asset::asset_types::{
             texture_asset::TextureAsset,
@@ -24,7 +23,6 @@ mod test {
             upload::UploadContext,
         },
     };
-
     use crate::common;
 
     fn storage_buffer<T: bytemuck::Pod>(

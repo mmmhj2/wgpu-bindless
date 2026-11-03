@@ -158,17 +158,19 @@ mod test {
             assert_eq!(animation.fps, 30.0);
             assert!(animation.frames > 1, "'{name}' should span more than one frame");
 
-            // Four texels per joint, one row per frame, `Rgba16Float`.
+            // Four texels per joint, one row per baked frame plus the appended
+            // wrap row that repeats frame 0, `Rgba16Float`.
             assert_eq!(animation.texture.format, TextureFormat::Rgba16Float);
             assert_eq!(animation.texture.width.get(), JOINT_COUNT as u32 * 4);
-            assert_eq!(animation.texture.height.unwrap().get(), animation.frames);
+            let rows = animation.frames + 1;
+            assert_eq!(animation.texture.height.unwrap().get(), rows);
 
             let texels = match &animation.texture.texels {
                 rust_renderer::asset::asset_types::texture_asset::TexelData::Plain(texels) => texels,
                 _ => panic!("baked animation must be a plain texture"),
             };
             let frame_bytes = animation.texture.width.get() as usize * 8;
-            assert_eq!(texels.len(), frame_bytes * animation.frames as usize);
+            assert_eq!(texels.len(), frame_bytes * rows as usize);
 
             // The bake must actually vary over time. Looping animations repeat
             // the first pose at the end, so compare against the middle frame.
@@ -176,6 +178,11 @@ mod test {
             let first = &texels[..frame_bytes];
             let middle = &texels[middle_frame * frame_bytes..(middle_frame + 1) * frame_bytes];
             assert_ne!(first, middle, "'{name}' looks static around the middle frame");
+
+            // The skinning shader reads row `frame + 1` for interpolation, so
+            // the bake appends frame 0 to wrap around without a branch.
+            let last = &texels[animation.frames as usize * frame_bytes..];
+            assert_eq!(first, last, "'{name}' should append frame 0 as the wrap row");
         }
     }
 

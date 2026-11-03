@@ -14,6 +14,10 @@ use crate::renderer::{
 pub trait RendererState: Sized + 'static {
     fn new(window: Arc<Window>) -> impl std::future::Future<Output = Self> + Send;
     fn resize(&mut self, width: u32, height: u32);
+    /// Render one frame.
+    ///
+    /// Returning `Err(())` asks the application handler to stop the event
+    /// loop; the value itself carries no information.
     fn render(&mut self) -> Result<(), ()>;
 }
 
