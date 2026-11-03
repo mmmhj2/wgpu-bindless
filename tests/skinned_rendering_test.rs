@@ -72,7 +72,7 @@ mod test {
             let asset_manager = AssetManager::new();
             asset_manager.import(GltfImporter::new(&glb)).expect("import should succeed");
 
-            let draw_list = {
+            let mut draw_list = {
                 let scene_name = GltfImporter::scene_subasset_name(&glb, 0).expect("scene name should resolve");
                 let asset = asset_manager.get_asset(&scene_name).expect("gltf scene asset should be present");
                 let asset = asset.read().expect("failed to read gltf scene asset");
@@ -98,6 +98,28 @@ mod test {
                 draw_list.get_skinned_meshes()[0].is_animated(),
                 "the imported Fox animation should be bound to the skinned mesh"
             );
+
+            // All baked clips of the skin must be registered, and the default
+            // clip must be the first one in deterministic order.
+            {
+                let animations = draw_list.animations_mut();
+                assert_eq!(animations.clips().len(), 3, "Fox has three baked animations");
+                assert_eq!(animations.player_count(), 1, "one player per skinned instance");
+
+                let skin = animations.player(0).skin().to_string();
+                let clips = animations.clips_for_skin(&skin).to_vec();
+                assert_eq!(clips.len(), 3);
+                assert_eq!(
+                    animations.player(0).clip(),
+                    Some(clips[0]),
+                    "the default clip should be the first sorted clip"
+                );
+
+                // Runtime switching must reset the playhead.
+                animations.play(0, clips[1]);
+                assert_eq!(animations.player(0).clip(), Some(clips[1]));
+                assert_eq!(animations.player(0).time(), 0.0);
+            }
 
             orchestrator.lighting_mut().set_ambient([0.05, 0.05, 0.05]);
             let light = Light::directional(cgmath::vec3(1.0, -1.0, 1.0), [1.0, 1.0, 1.0], 3.0);
@@ -128,7 +150,14 @@ mod test {
 
             let camera = self.camera.clone();
             let light = self.light.clone();
-            let playback_time = self.rendered_frames as f32 * PLAYBACK_SECONDS_PER_FRAME;
+
+            self.draw_list.update_animations(PLAYBACK_SECONDS_PER_FRAME);
+            if self.rendered_frames == 1 {
+                let frame = self.draw_list.animations().frame(0)
+                    .expect("the Fox player should have a clip")
+                    .frame();
+                assert!(frame > 0.0, "the manager should advance the playback frame");
+            }
 
             self.draw_list
                 .ensure_bound(self.orchestrator.device(), self.orchestrator.mesh_layout())
@@ -150,11 +179,10 @@ mod test {
                     });
                     cp.set_pipeline(pipeline);
                     cp.set_bind_group(0, Some(&bindless_bg), &[]);
-                    for mesh in draw_list.get_skinned_meshes() {
-                        // Each frame advances the playback time, so the mesh is
-                        // actually re-posed instead of repeating the bind pose.
-                        mesh.skin_with(&mut cp, playback_time);
-                    }
+                    // Each frame advances the manager, so the dispatched frame
+                    // changes and the mesh is re-posed instead of staying in the
+                    // bind pose.
+                    draw_list.record_skinning(&mut cp);
                 }
 
                 frame.render_scene(

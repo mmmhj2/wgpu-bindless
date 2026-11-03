@@ -36,14 +36,42 @@ use winit::{event_loop::EventLoop, window::Window};
 const GLTF_PATH: &str = "resource/Fox.glb";
 const MANIFEST_PATH: &str = "resource/import_fox_manifest.ff";
 
+/// How long the demo plays one clip before switching to the next one.
+const CLIP_SWITCH_SECONDS: f32 = 3.0;
+
 struct State {
     orchestrator: RenderOrchestrator,
     draw_list: DrawList,
     camera: CameraPerspective,
     light: Light,
-    /// Playback clock: the animation time is the elapsed wall-clock time.
-    started_at: Instant,
+    /// Start of the current frame's animation delta.
+    last_tick: Instant,
+    /// Time spent on the currently selected clip.
+    clip_timer: f32,
     _asset_manager: AssetManager,
+}
+
+/// Select the next clip of the first player, demonstrating runtime switching.
+fn play_next_clip(draw_list: &mut DrawList) {
+    let animations = draw_list.animations_mut();
+    if animations.player_count() == 0 {
+        return;
+    }
+
+    let skin = animations.player(0).skin().to_string();
+    let clips = animations.clips_for_skin(&skin);
+    if clips.len() < 2 {
+        return;
+    }
+
+    let current = animations.player(0).clip();
+    let next_index = current
+        .and_then(|current| clips.iter().position(|&clip| clip == current))
+        .map_or(0, |index| (index + 1) % clips.len());
+    let next = clips[next_index];
+
+    animations.play(0, next);
+    log::info!("Playing animation clip '{}'.", animations.clip(next).asset_name());
 }
 
 impl RendererState for State {
@@ -78,9 +106,10 @@ impl RendererState for State {
         };
 
         log::info!(
-            "Loaded {} skinned meshes and {} static batches.",
+            "Loaded {} skinned meshes, {} static batches and {} animation clips.",
             draw_list.count(DrawableType::OpaqueSkinned),
-            draw_list.count(DrawableType::OpaqueStatic)
+            draw_list.count(DrawableType::OpaqueStatic),
+            draw_list.animations().clips().len()
         );
 
         orchestrator.lighting_mut().set_ambient([0.05, 0.05, 0.05]);
@@ -98,7 +127,8 @@ impl RendererState for State {
             draw_list,
             camera,
             light,
-            started_at: Instant::now(),
+            last_tick: Instant::now(),
+            clip_timer: 0.0,
             _asset_manager: asset_manager,
         }
     }
@@ -110,7 +140,17 @@ impl RendererState for State {
     fn render(&mut self) -> Result<(), ()> {
         let camera = self.camera.clone();
         let light = self.light.clone();
-        let playback_time = self.started_at.elapsed().as_secs_f32();
+
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_tick).as_secs_f32();
+        self.last_tick = now;
+
+        self.clip_timer += dt;
+        if self.clip_timer >= CLIP_SWITCH_SECONDS {
+            self.clip_timer = 0.0;
+            play_next_clip(&mut self.draw_list);
+        }
+        self.draw_list.update_animations(dt);
 
         self.draw_list
             .ensure_bound(self.orchestrator.device(), self.orchestrator.mesh_layout())
@@ -134,9 +174,7 @@ impl RendererState for State {
                 });
                 cp.set_pipeline(pipeline);
                 cp.set_bind_group(0, Some(&bindless_bg), &[]);
-                for mesh in draw_list.get_skinned_meshes() {
-                    mesh.skin_with(&mut cp, playback_time);
-                }
+                draw_list.record_skinning(&mut cp);
             }
 
             frame.render_scene(
