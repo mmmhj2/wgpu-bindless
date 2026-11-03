@@ -11,7 +11,7 @@ use crate::{
             DrawableMesh, ImmediateDrawableMesh, Mesh
         }, pipeline::pbr_material::PBRMaterial, resources::{
             bindless::BindlessResources,
-            mesh_layout::MeshLayout,
+            mesh_layout::ModelMatrixBindingSource,
         }, upload::buffer::upload_buffer,
     }
 };
@@ -91,7 +91,7 @@ impl ImmediateMeshBuilder {
     }
 
     /// Commit 
-    pub fn commit(self, device: &wgpu::Device, queue: &wgpu::Queue, mmgr: &MeshLayout) -> ImmediateMesh {
+    pub fn commit(self, device: &wgpu::Device, queue: &wgpu::Queue, bindings: &dyn ModelMatrixBindingSource) -> ImmediateMesh {
         assert_eq!(self.position.len(), self.attributes.len());
 
         let pb = upload_buffer(
@@ -112,7 +112,7 @@ impl ImmediateMeshBuilder {
         )
         .expect("failed to upload the immediate mesh attribute buffer");
 
-        let bg = self.build_immediate_model_matrix(device, queue, mmgr);
+        let bg = self.build_immediate_model_matrix(device, queue, bindings);
 
         ImmediateMesh::new(self.position.len() as u32, pb, ab, self.material, bg)
     }

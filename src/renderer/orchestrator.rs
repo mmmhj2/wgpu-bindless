@@ -12,7 +12,7 @@ use crate::{
             gpu_context::GpuContext,
             surface_context::SurfaceContext,
         }, drawable::draw_list::DrawList, pipeline::{
-            compute_library::{ComputePipelineKey, ComputePipelineLibrary},
+            compute_library::ComputePipelineLibrary,
             library::{PipelineLibrary, SceneBindGroupLayouts},
         }, postfx::{
             build_context::PostFxBuildContext,
@@ -66,13 +66,6 @@ pub struct RenderOrchestrator {
     camera: CameraManager,
     lighting: LightingManager,
     mesh_layout: MeshLayout,
-    /// Per-mesh bind group layout of the GPU skinning compute pipeline.
-    ///
-    /// Resolved once at startup so the upload phase does not have to borrow the
-    /// whole compute pipeline library.
-    /// 
-    /// TODO: This is still a somewhat bad design. Need to figure out some other ways.
-    skinning_layout: wgpu::BindGroupLayout,
     gpu_assets: GpuAssetStore,
     pipelines: PipelineLibrary,
     compute_pipelines: ComputePipelineLibrary,
@@ -126,10 +119,6 @@ impl RenderOrchestrator {
             config.depth_format,
         );
         let compute_pipelines = ComputePipelineLibrary::new(gpu.device(), bindless.get_bind_group_layout());
-        let skinning_layout = compute_pipelines
-            .get_dispatch_bind_group_layout(ComputePipelineKey::GpuSkinning)
-            .expect("the GPU skinning compute pipeline should be registered")
-            .clone();
         let postfx = config
             .enable_postfx
             .then(|| PostFxStack::new(scene_format, surface_format));
@@ -143,7 +132,6 @@ impl RenderOrchestrator {
             camera,
             lighting,
             mesh_layout,
-            skinning_layout,
             gpu_assets: GpuAssetStore::new(),
             pipelines,
             compute_pipelines,
@@ -179,7 +167,10 @@ impl RenderOrchestrator {
     /// Upload every asset a scene references and build its draw list.
     ///
     /// Uploaded meshes are stored within the returned [`DrawList`], which 
-    /// holds the per-batch and per-instance GPU state (buffers and bind groups).
+    /// holds the per-batch and per-instance GPU state. Only buffers are created
+    /// here: bind groups need a pipeline layout, so they are materialized on
+    /// first use by [`DrawList::ensure_bound`] and
+    /// [`DrawList::ensure_skinning_bound`], which must run before drawing.
     /// On the other hand, textures stay owned by the store and the bindless
     /// table, so keeping the store alive may let a second scene reuse them
     /// instead of re-uploading.
@@ -200,8 +191,6 @@ impl RenderOrchestrator {
     ) -> Result<DrawList, UploadError> {
         let mut ctx = SceneUploadContext::new(
             UploadContext::new(self.gpu.device(), self.gpu.queue(), &mut self.bindless),
-            &self.mesh_layout,
-            &self.skinning_layout,
             assets,
         );
         self.gpu_assets.prepare_scene(&mut ctx, scene)

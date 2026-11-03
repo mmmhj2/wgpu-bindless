@@ -62,9 +62,49 @@ impl ComputePipelineLibrary {
 
     /// Layout of the per-dispatch bind group, i.e. pipeline layout group 1.
     ///
-    /// Needed by callers that build the per-object bind group themselves, such
-    /// as the skinned mesh skinning dispatch.
+    /// Low-level escape hatch, used by shader tests that build a bind group for
+    /// a standalone dispatch.
+    /// 
+    /// Mesh paths should go through [`ComputeDispatchBindingSource`] instead,
+    /// which keeps the layout private.
     pub fn get_dispatch_bind_group_layout(&self, k: ComputePipelineKey) -> Option<&BindGroupLayout> {
         self.cache.get(&k).and_then(|entry| entry.extra_bind_group_layouts.first())
+    }
+}
+
+/// Source of per-dispatch (pipeline layout group 1) bind groups for compute
+/// shaders.
+///
+/// The library owning the pipeline supplies the layout; the caller supplies the
+/// buffer bindings, because only the caller knows what each entry means. Like
+/// [`crate::renderer::resources::mesh_layout::ModelMatrixBindingSource`], this
+/// is the seam a future binding cache plugs into without changing call sites.
+pub trait ComputeDispatchBindingSource {
+    /// Create a group-1 bind group for `key`'s pipeline from `entries`.
+    fn create_dispatch_bind_group(
+        &self,
+        device: &wgpu::Device,
+        key: ComputePipelineKey,
+        label: &str,
+        entries: &[wgpu::BindGroupEntry<'_>],
+    ) -> wgpu::BindGroup;
+}
+
+impl ComputeDispatchBindingSource for ComputePipelineLibrary {
+    fn create_dispatch_bind_group(
+        &self,
+        device: &wgpu::Device,
+        key: ComputePipelineKey,
+        label: &str,
+        entries: &[wgpu::BindGroupEntry<'_>],
+    ) -> wgpu::BindGroup {
+        let layout = self
+            .get_dispatch_bind_group_layout(key)
+            .unwrap_or_else(|| panic!("compute pipeline {key:?} has no per-dispatch bind group layout"));
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout,
+            entries,
+        })
     }
 }

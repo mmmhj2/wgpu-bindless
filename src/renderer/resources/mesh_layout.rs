@@ -33,3 +33,38 @@ impl MeshLayout {
 
     pub fn get_bind_group_layout(&self) -> &wgpu::BindGroupLayout { &self.bind_group_layout }
 }
+
+/// Source of the per-mesh (group 3) bind groups.
+pub trait ModelMatrixBindingSource {
+    /// Create a group-3 bind group covering the whole of `buffer`.
+    fn create_model_matrix_bind_group(
+        &self,
+        device: &wgpu::Device,
+        label: &str,
+        buffer: &wgpu::Buffer,
+    ) -> wgpu::BindGroup;
+}
+
+impl ModelMatrixBindingSource for MeshLayout {
+    fn create_model_matrix_bind_group(
+        &self,
+        device: &wgpu::Device,
+        label: &str,
+        buffer: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(label),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: 0,
+                        size: NonZero::new(buffer.size()),
+                    }),
+                },
+            ],
+        })
+    }
+}

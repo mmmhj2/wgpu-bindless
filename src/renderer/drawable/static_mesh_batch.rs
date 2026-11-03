@@ -1,4 +1,4 @@
-use std::{num::NonZero, sync::Arc};
+use std::sync::Arc;
 
 use crate::renderer::{
     drawable::{
@@ -6,7 +6,7 @@ use crate::renderer::{
         static_mesh::StaticMesh,
     },
     pipeline::pbr_material::PBRMaterial,
-    resources::mesh_layout::MeshLayout,
+    resources::mesh_layout::ModelMatrixBindingSource,
     upload::{buffer::upload_buffer, error::UploadError},
 };
 
@@ -20,6 +20,9 @@ const MODEL_MATRIX_SIZE: u64 = std::mem::size_of::<[[f32; 4]; 4]>() as u64;
 /// [`StaticMesh`] asset. Their model matrices live in one read-only storage
 /// buffer and are indexed by `@builtin(instance_index)`.
 ///
+/// Creation of the group-3 bind group that exposes that buffer is deferred to
+/// [`crate::renderer::drawable::draw_list::DrawList::ensure_bound`].
+///
 /// Only opaque and alpha-mask primitives may use this type. Alpha-blended
 /// transparent instances must not be grouped into a batch and must be sorted
 /// independently.
@@ -29,34 +32,12 @@ pub struct StaticMeshBatch {
     // Owned explicitly so the buffer outlives its bind group. The bind group
     // also keeps the resource alive, but keeping the handle makes ownership
     // and future per-frame updates straightforward.
-    #[allow(dead_code)]
     model_matrix_buffer: wgpu::Buffer,
-    model_matrix_bind_group: wgpu::BindGroup,
+    model_matrix_bind_group: Option<wgpu::BindGroup>,
     instance_count: u32,
 }
 
 impl StaticMeshBatch {
-    fn generate_bind_group(
-        device: &wgpu::Device,
-        mmgr: &MeshLayout,
-        buffer: &wgpu::Buffer,
-    ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("model matrix batch bind group"),
-            layout: mmgr.get_bind_group_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer,
-                        offset: 0,
-                        size: NonZero::new(buffer.size()),
-                    }),
-                },
-            ],
-        })
-    }
-
     /// Create a batch from an already-uploaded mesh and explicit world matrices.
     ///
     /// Matrices are column-major, matching both `cgmath` and WGSL. They must
@@ -75,7 +56,6 @@ impl StaticMeshBatch {
     pub(crate) fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        mesh_layout: &MeshLayout,
         mesh: Arc<StaticMesh>,
         world_matrices: &[[[f32; 4]; 4]],
     ) -> Result<Self, UploadError> {
@@ -98,15 +78,34 @@ impl StaticMeshBatch {
             wgpu::BufferUsages::STORAGE,
             world_matrices,
         )?;
-        let model_matrix_bind_group =
-            Self::generate_bind_group(device, mesh_layout, &model_matrix_buffer);
 
         Ok(Self {
             mesh,
             model_matrix_buffer,
-            model_matrix_bind_group,
+            model_matrix_bind_group: None,
             instance_count,
         })
+    }
+
+    /// Materialize this batch's group-3 bind group on first use.
+    ///
+    /// Idempotent. Must run before the batch is drawn.
+    /// 
+    /// [`crate::renderer::drawable::draw_list::DrawList::ensure_bound`] is the
+    /// normal entry point.
+    pub(crate) fn ensure_bound(
+        &mut self,
+        device: &wgpu::Device,
+        bindings: &impl ModelMatrixBindingSource,
+    ) {
+        if self.model_matrix_bind_group.is_some() {
+            return;
+        }
+        self.model_matrix_bind_group = Some(bindings.create_model_matrix_bind_group(
+            device,
+            "model matrix batch bind group",
+            &self.model_matrix_buffer,
+        ));
     }
 
     /// Number of instances covered by this batch. Always at least one.
@@ -135,7 +134,9 @@ impl DrawableMesh for StaticMeshBatch {
         self.mesh.get_material()
     }
     fn get_model_matrix_bind_group(&self) -> &wgpu::BindGroup {
-        &self.model_matrix_bind_group
+        self.model_matrix_bind_group.as_ref().expect(
+            "model matrix bind group is not initialized: call `DrawList::ensure_bound` before drawing",
+        )
     }
     fn get_instance_range(&self) -> std::ops::Range<u32> {
         0..self.instance_count

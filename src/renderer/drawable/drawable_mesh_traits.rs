@@ -1,6 +1,6 @@
-use std::{num::NonZero, ops::Range};
+use std::ops::Range;
 
-use crate::renderer::{drawable::vertex_types::VertexType, pipeline::pbr_material::PBRMaterial, resources::mesh_layout::MeshLayout, upload::buffer::upload_buffer};
+use crate::renderer::{drawable::vertex_types::VertexType, pipeline::pbr_material::PBRMaterial, resources::mesh_layout::ModelMatrixBindingSource, upload::buffer::upload_buffer};
 
 pub trait Mesh {
     /// Get a slice of references to all vertex attribute buffers.
@@ -75,7 +75,8 @@ pub trait ImmediateDrawableMesh {
     /// Get the model matrix of the mesh.
     fn get_model_matrix(&self) -> &[[f32; 4]; 4];
 
-    fn build_immediate_model_matrix(&self, device: &wgpu::Device, queue: &wgpu::Queue, mmgr: &MeshLayout) -> wgpu::BindGroup {
+    /// Build the model-matrix bind group of an immediate mesh.
+    fn build_immediate_model_matrix(&self, device: &wgpu::Device, queue: &wgpu::Queue, bindings: &dyn ModelMatrixBindingSource) -> wgpu::BindGroup {
         let immediate_buffer = upload_buffer(
             device,
             queue,
@@ -85,21 +86,10 @@ pub trait ImmediateDrawableMesh {
         )
         .expect("failed to create the immediate mesh model matrix buffer");
 
-        let immediate_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor{
-            label: Some("immediate mesh bind group"),
-            layout: mmgr.get_bind_group_layout(),
-            entries: &[
-                wgpu::BindGroupEntry{
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding{
-                        buffer: &immediate_buffer,
-                        offset: 0,
-                        size: NonZero::new(immediate_buffer.size())
-                    })
-                }
-            ]
-        });
-
-        return immediate_bind_group;
+        bindings.create_model_matrix_bind_group(
+            device,
+            "immediate mesh bind group",
+            &immediate_buffer,
+        )
     }
 }

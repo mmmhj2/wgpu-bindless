@@ -20,10 +20,7 @@ use crate::{
             static_mesh::StaticMesh,
             static_mesh_batch::StaticMeshBatch,
         },
-        resources::{
-            bindless::SampledTextureHandle,
-            mesh_layout::MeshLayout,
-        },
+        resources::bindless::SampledTextureHandle,
         scene::graph::SceneGraph,
         upload::{
             context::UploadContext,
@@ -282,7 +279,6 @@ impl GpuAssetStore {
         StaticMeshBatch::new(
             ctx.upload.device(),
             ctx.upload.queue(),
-            ctx.mesh_layout,
             mesh,
             world_matrices,
         )
@@ -331,8 +327,6 @@ impl GpuAssetStore {
         SkinnedMesh::new(
             ctx.upload.device(),
             ctx.upload.queue(),
-            ctx.mesh_layout,
-            ctx.skinning_layout,
             geometry,
             material,
             world_matrix,
@@ -368,25 +362,21 @@ fn animations_by_skin(assets: &AssetManager) -> AnimationTable {
 }
 
 /// Everything the upload phase needs besides the asset data itself.
+///
+/// Note: Bind groups are renderer resources, and are not created in asset
+/// upload precedures.
 pub struct SceneUploadContext<'a> {
     pub upload: UploadContext<'a>,
-    pub mesh_layout: &'a MeshLayout,
-    // TODO: this gets rids of ComputePipelineLibrary dependency, but is still not very elegant.
-    pub skinning_layout: &'a wgpu::BindGroupLayout,
     pub assets: &'a AssetManager,
 }
 
 impl<'a> SceneUploadContext<'a> {
     pub fn new(
         upload: UploadContext<'a>,
-        mesh_layout: &'a MeshLayout,
-        skinning_layout: &'a wgpu::BindGroupLayout,
         assets: &'a AssetManager,
     ) -> Self {
         Self {
             upload,
-            mesh_layout,
-            skinning_layout,
             assets,
         }
     }

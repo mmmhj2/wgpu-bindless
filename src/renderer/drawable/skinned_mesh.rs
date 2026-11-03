@@ -4,8 +4,11 @@ use crate::{
     asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition},
     renderer::{
         drawable::{drawable_mesh_traits::{DrawableMesh, Mesh}, vertex_types::VertexType},
-        pipeline::pbr_material::PBRMaterial,
-        resources::{bindless::SampledTextureHandle, mesh_layout::MeshLayout},
+        pipeline::{
+            compute_library::{ComputeDispatchBindingSource, ComputePipelineKey},
+            pbr_material::PBRMaterial,
+        },
+        resources::{bindless::SampledTextureHandle, mesh_layout::ModelMatrixBindingSource},
         upload::{buffer::upload_buffer, error::UploadError, gpu_mesh::GpuSkinnedMesh},
     },
 };
@@ -47,8 +50,12 @@ struct SkinningState {
     /// Deformed vertex streams, in the same order as the rest pose streams.
     temp_buffer: Vec<wgpu::Buffer>,
     /// Bind group 1 of the skinning pipeline: rest pose in, deformed out, plus
-    /// the joint indices and weights. Immutable for the mesh's lifetime.
-    dispatch_bg: wgpu::BindGroup,
+    /// the joint indices and weights.
+    ///
+    /// Materialized by [`SkinnedMesh::ensure_skinning_bound`], because the
+    /// dispatch layout belongs to the compute pipeline and does not exist yet
+    /// when the mesh is created.
+    dispatch_bg: Option<wgpu::BindGroup>,
     animation: SkinnedAnimation,
 }
 
@@ -59,6 +66,10 @@ struct SkinningState {
 /// 
 /// Contrary to static meshes, skinned meshes are *never* instanced: every
 /// instance owns its own deformed vertex buffers and its own model matrix.
+///
+/// Both bind groups this type needs are deferred: the model-matrix group is
+/// created by `ensure_bound`, and the skinning dispatch group by
+/// `ensure_skinning_bound`. Mesh creation therefore needs no pipeline layout.
 #[derive(Debug)]
 pub struct SkinnedMesh {
     geometry: Arc<GpuSkinnedMesh>,
@@ -66,9 +77,8 @@ pub struct SkinnedMesh {
     /// `None` when no animation is bound: the mesh then renders its rest pose.
     skinning: Option<SkinningState>,
 
-    #[allow(dead_code)]
     model_matrix_buffer: wgpu::Buffer,
-    model_matrix_bg: wgpu::BindGroup,
+    model_matrix_bg: Option<wgpu::BindGroup>,
 }
 
 impl SkinnedMesh {
@@ -79,8 +89,6 @@ impl SkinnedMesh {
     pub(crate) fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        mesh_layout: &MeshLayout,
-        skinning_layout: &wgpu::BindGroupLayout,
         geometry: Arc<GpuSkinnedMesh>,
         material: PBRMaterial,
         world_matrix: [[f32; 4]; 4],
@@ -93,37 +101,75 @@ impl SkinnedMesh {
             wgpu::BufferUsages::STORAGE,
             world_matrix.as_slice(),
         )?;
-        let model_matrix_bg = device.create_bind_group(&wgpu::BindGroupDescriptor{
-            label: Some("skinned mesh model matrix bind group"),
-            layout: mesh_layout.get_bind_group_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &model_matrix_buffer,
-                        offset: 0,
-                        size: NonZero::new(model_matrix_buffer.size()),
-                    }),
-                },
-            ],
-        });
 
         let skinning = animation
-            .map(|animation| Self::create_skinning_state(device, skinning_layout, &geometry, animation));
+            .map(|animation| Self::create_skinning_state(device, &geometry, animation));
 
         Ok(Self {
             geometry,
             material,
             skinning,
             model_matrix_buffer,
-            model_matrix_bg,
+            model_matrix_bg: None,
         })
     }
 
-    /// Allocate the deformed buffers and the per-mesh compute bind group.
+    /// Materialize the group-3 model-matrix bind group on first use.
+    ///
+    /// Idempotent. Must run before the mesh is drawn.
+    /// 
+    /// [`crate::renderer::drawable::draw_list::DrawList::ensure_bound`] is the
+    /// normal entry point.
+    pub(crate) fn ensure_bound(
+        &mut self,
+        device: &wgpu::Device,
+        bindings: &impl ModelMatrixBindingSource,
+    ) {
+        if self.model_matrix_bg.is_some() {
+            return;
+        }
+        self.model_matrix_bg = Some(bindings.create_model_matrix_bind_group(
+            device,
+            "skinned mesh model matrix bind group",
+            &self.model_matrix_buffer,
+        ));
+    }
+
+    /// Materialize the skinning dispatch bind group on first use.
+    ///
+    /// Idempotent. No-op for meshes without an animation. 
+    /// 
+    /// Must run before the skinning compute pass records [`Self::skin_with`].
+    pub(crate) fn ensure_skinning_bound(
+        &mut self,
+        device: &wgpu::Device,
+        bindings: &impl ComputeDispatchBindingSource,
+    ) {
+        let Some(skinning) = &mut self.skinning else { return };
+        if skinning.dispatch_bg.is_some() {
+            return;
+        }
+
+        let entries = [
+            Self::storage_entry(0, &self.geometry.restpose_vertex_buffer[0]),
+            Self::storage_entry(1, &self.geometry.restpose_vertex_buffer[1]),
+            Self::storage_entry(2, &skinning.temp_buffer[0]),
+            Self::storage_entry(3, &skinning.temp_buffer[1]),
+            Self::storage_entry(4, &self.geometry.skinning_buffer),
+        ];
+        skinning.dispatch_bg = Some(bindings.create_dispatch_bind_group(
+            device,
+            ComputePipelineKey::GpuSkinning,
+            "skinning dispatch bind group",
+            &entries,
+        ));
+    }
+
+    /// Allocate the deformed buffers for one instance.
+    ///
+    /// Bind group layout creation is deferred.
     fn create_skinning_state(
         device: &wgpu::Device,
-        skinning_layout: &wgpu::BindGroupLayout,
         geometry: &GpuSkinnedMesh,
         animation: SkinnedAnimation,
     ) -> SkinningState {
@@ -143,19 +189,7 @@ impl SkinnedMesh {
         });
         let temp_buffer = vec![deformed_position, deformed_attribute];
 
-        let dispatch_bg = device.create_bind_group(&wgpu::BindGroupDescriptor{
-            label: Some("skinning dispatch bind group"),
-            layout: skinning_layout,
-            entries: &[
-                Self::storage_entry(0, &geometry.restpose_vertex_buffer[0]),
-                Self::storage_entry(1, &geometry.restpose_vertex_buffer[1]),
-                Self::storage_entry(2, &temp_buffer[0]),
-                Self::storage_entry(3, &temp_buffer[1]),
-                Self::storage_entry(4, &geometry.skinning_buffer),
-            ],
-        });
-
-        SkinningState { temp_buffer, dispatch_bg, animation }
+        SkinningState { temp_buffer, dispatch_bg: None, animation }
     }
 
     fn storage_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
@@ -179,7 +213,9 @@ impl SkinnedMesh {
     /// 
     /// This method assumes that the compute pass is set up correctly:
     /// - The skinning compute pipeline is bound;
-    /// - Bindless bind group (group 0) is bound.
+    /// - Bindless bind group (group 0) is bound;
+    /// - The per-mesh dispatch bind group has been materialized by
+    ///   [`crate::renderer::drawable::draw_list::DrawList::ensure_skinning_bound`].
     ///
     /// It resolves the animation frame from `time_seconds`, binds the per-mesh
     /// bind group (group 1), sets the immediates and dispatches one workgroup per
@@ -188,8 +224,11 @@ impl SkinnedMesh {
     /// TODO: revisit this API design after Skinning animation is actually running.
     pub fn skin_with(&self, cp: &mut wgpu::ComputePass, time_seconds: f32) {
         let Some(skinning) = &self.skinning else { return };
+        let dispatch_bg = skinning.dispatch_bg.as_ref().expect(
+            "skinning dispatch bind group is not initialized: call `DrawList::ensure_skinning_bound` before the skinning pass",
+        );
 
-        cp.set_bind_group(1, Some(&skinning.dispatch_bg), &[]);
+        cp.set_bind_group(1, Some(dispatch_bg), &[]);
 
         // Layout must stay in sync with `Immediate` in `gpu_skinning.wgsl`.
         let mut immediates = [0u8; 8];
@@ -216,7 +255,11 @@ impl Mesh for SkinnedMesh {
 }
 
 impl DrawableMesh for SkinnedMesh {
-    fn get_model_matrix_bind_group(&self) -> &wgpu::BindGroup { &self.model_matrix_bg }
+    fn get_model_matrix_bind_group(&self) -> &wgpu::BindGroup {
+        self.model_matrix_bg.as_ref().expect(
+            "model matrix bind group is not initialized: call `DrawList::ensure_bound` before drawing",
+        )
+    }
     fn get_instance_range(&self) -> std::ops::Range<u32> { 0..1 }
     fn get_material(&self) -> &PBRMaterial { &self.material }
 }
