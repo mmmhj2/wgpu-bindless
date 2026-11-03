@@ -7,13 +7,15 @@ use crate::asset::asset_types::{ConcreteAssetType, texture_asset::TextureAsset};
 pub struct SkinnedAnimationAsset {
     /// Name of the skin asset that this animation applies to.
     pub skin: String,
-    /// Number of baked frames, i.e. the height of [`Self::texture`].
+    /// Number of unique baked frames.
+    ///
+    /// [`Self::texture`] is one row taller for wrapping in the compute shader.
     pub frames: u32,
     /// Playback rate the frames were baked at.
     pub fps: f32,
     /// Baked joint matrices.
     ///
-    /// `width == joint_count * 4` and `height == frames`. Each joint owns four
+    /// `width == joint_count * 4` and `height == frames + 1`. Each joint owns four
     /// consecutive texels holding the four *columns* of its object-space
     /// skinning matrix, so a joint matrix can be rebuilt with four `textureLoad`
     /// calls.

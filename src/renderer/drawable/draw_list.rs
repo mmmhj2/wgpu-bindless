@@ -1,4 +1,5 @@
 use crate::renderer::{
+    animation::AnimationManager,
     drawable::{drawable_mesh_traits::DrawableMesh, skinned_mesh::SkinnedMesh, static_mesh_batch::StaticMeshBatch},
     pipeline::compute_library::ComputeDispatchBindingSource,
     resources::mesh_layout::ModelMatrixBindingSource,
@@ -15,15 +16,44 @@ pub enum DrawableType {
 #[derive(Debug)]
 pub struct DrawList {
     static_opaque_batch: Vec<StaticMeshBatch>,
-    skinned_opaque: Vec<SkinnedMesh>
+    skinned_opaque: Vec<SkinnedMesh>,
+    animations: AnimationManager,
 }
 
 impl DrawList {
     pub(crate) fn new(
         static_opaque_batch: Vec<StaticMeshBatch>,
-        skinned_opaque: Vec<SkinnedMesh>
+        skinned_opaque: Vec<SkinnedMesh>,
+        animations: AnimationManager,
     ) -> Self {
-        Self { static_opaque_batch, skinned_opaque }
+        assert_eq!(
+            animations.player_count(),
+            skinned_opaque.len(),
+            "every skinned mesh needs exactly one animation player"
+        );
+        Self { static_opaque_batch, skinned_opaque, animations }
+    }
+
+    /// CPU animation state of this draw list.
+    pub fn animations(&self) -> &AnimationManager { &self.animations }
+    pub fn animations_mut(&mut self) -> &mut AnimationManager { &mut self.animations }
+
+    /// Advance every animation player by `dt` seconds.
+    pub fn update_animations(&mut self, dt: f32) { self.animations.update(dt); }
+
+    /// Record one skinning dispatch per animated mesh.
+    ///
+    /// The caller must already have bound the GPU skinning pipeline and the
+    /// global bindless bind group (group 0). Meshes without a clip (rest pose)
+    /// are skipped.
+    pub fn record_skinning(&self, cp: &mut wgpu::ComputePass) -> &Self {
+        for (index, mesh) in self.skinned_opaque.iter().enumerate() {
+            if let Some(frame) = self.animations.frame(index) {
+                mesh.skin_with(cp, frame);
+            }
+        }
+
+        self
     }
 
     /// Materialize every mesh's group-3 (model matrix) bind group.
@@ -101,12 +131,10 @@ impl DrawList {
         }
     }
 
-    /// Get a list of skinned meshes in this draw call.
-    /// 
-    /// Useful to produce immediate vertex buffers used for the draw proper.
-    /// 
-    /// TODO: this API design kind of smells. Figure out an improvement after
-    /// skinning animation is actually working.
+    /// Get the skinned meshes in this draw call.
+    ///
+    /// Escape hatch to get all skinned meshes. Prefer to use other methods when
+    /// available.
     pub fn get_skinned_meshes(&self) -> &[SkinnedMesh] {
         &self.skinned_opaque
     }

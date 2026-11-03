@@ -17,7 +17,10 @@ pub struct SampledTextureHandle(u32);
 
 impl SampledTextureHandle {
     pub fn index(self) -> usize { self.0 as usize }
-    fn from_index(index: usize) -> Self { Self(index as u32) }
+    /// Rebuild a handle from its raw bindless slot.
+    ///
+    /// Used for internal or test purposes only.
+    pub(crate) fn from_index(index: usize) -> Self { Self(index as u32) }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

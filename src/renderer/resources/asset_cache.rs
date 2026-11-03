@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::{HashMap, HashSet}, sync::Arc};
 
 use crate::{
     asset::{
@@ -13,10 +13,11 @@ use crate::{
         },
     },
     renderer::{
+        animation::{AnimationClip, AnimationManager},
         pipeline::pbr_material::PBRMaterial,
         drawable::{
             draw_list::DrawList,
-            skinned_mesh::{SkinnedAnimation, SkinnedMesh},
+            skinned_mesh::SkinnedMesh,
             static_mesh::StaticMesh,
             static_mesh_batch::StaticMeshBatch,
         },
@@ -32,7 +33,55 @@ use crate::{
     },
 };
 
-pub struct AnimationTable(HashMap<String, HashMap<String, (u32, f32)>>);
+/// One baked animation discovered in the asset database.
+struct AnimationDescriptor {
+    asset_name: String,
+    skin: String,
+    frames: u32,
+    fps: f32,
+}
+
+/// Every baked animation, grouped by the skin it drives.
+///
+/// Clips within one skin are sorted by asset name so that the default clip and
+/// the per-skin clip order do not depend on hash-map iteration.
+#[derive(Default)]
+struct AnimationCatalog {
+    by_skin: HashMap<String, Vec<AnimationDescriptor>>,
+}
+
+impl AnimationCatalog {
+    fn from_assets(assets: &AssetManager) -> Self {
+        let database = assets.get_database();
+        let mut by_skin: HashMap<String, Vec<AnimationDescriptor>> = HashMap::new();
+
+        for (name, asset) in database.iter() {
+            let Ok(asset) = asset.read() else { continue };
+            let AssetData::SkinnedAnimationAssetType(animation) = asset.get_data() else {
+                continue;
+            };
+            by_skin
+                .entry(animation.skin.clone())
+                .or_default()
+                .push(AnimationDescriptor {
+                    asset_name: name.clone(),
+                    skin: animation.skin.clone(),
+                    frames: animation.frames,
+                    fps: animation.fps,
+                });
+        }
+
+        for clips in by_skin.values_mut() {
+            clips.sort_by(|a, b| a.asset_name.cmp(&b.asset_name));
+        }
+
+        Self { by_skin }
+    }
+
+    fn clips_for_skin(&self, skin: &str) -> &[AnimationDescriptor] {
+        self.by_skin.get(skin).map(Vec::as_slice).unwrap_or(&[])
+    }
+}
 
 /// Owns every GPU-resident resource uploaded from the asset database.
 ///
@@ -172,25 +221,32 @@ impl GpuAssetStore {
         Ok(uploaded)
     }
 
-    /// Upload a baked animation texture, if the named asset is one.
+    /// Upload a baked animation texture.
+    ///
+    /// Cached by asset name, so a clip shared by several skinned instances only
+    /// occupies one bindless texture slot.
     fn animation_texture(
         &mut self,
         ctx: &mut SceneUploadContext<'_>,
         name: &str,
-    ) -> Result<Option<SampledTextureHandle>, UploadError> {
+    ) -> Result<SampledTextureHandle, UploadError> {
         if let Some(cached) = self.skinned_animations.get(name) {
-            return Ok(Some(*cached));
+            return Ok(*cached);
         }
 
         let asset = ctx.asset(name)?;
         let asset = asset.read().map_err(|_| UploadError::AssetLockPoisoned(name.to_string()))?;
         let AssetData::SkinnedAnimationAssetType(animation) = asset.get_data() else {
-            return Ok(None);
+            return Err(UploadError::WrongKind {
+                name: name.to_string(),
+                actual: asset.get_data().kind(),
+                expected: AssetKind::SkinnedAnimation,
+            });
         };
 
         let handle = ctx.upload.upload_texture(name, &animation.texture)?.handle;
         self.skinned_animations.insert(name.to_string(), handle);
-        Ok(Some(handle))
+        Ok(handle)
     }
 
     /// Turn a scene asset into a draw list, uploading everything it references.
@@ -212,9 +268,12 @@ impl GpuAssetStore {
         let graph = SceneGraph::from_asset(scene);
         let plans = graph.plan_mesh_batches();
 
-        // Resolve which baked animation drives each skin once, before any GPU
-        // resource is created.
-        let animations = animations_by_skin(ctx.assets);
+        // Discover every baked animation up front, grouped by skin and sorted
+        // deterministically. Textures are still uploaded lazily below, once per
+        // skin that the scene actually references.
+        let catalog = AnimationCatalog::from_assets(ctx.assets);
+        let mut animations = AnimationManager::new();
+        let mut uploaded_skins: HashSet<String> = HashSet::new();
 
         let mut static_batches = Vec::new();
         let mut static_instances = 0usize;
@@ -252,10 +311,23 @@ impl GpuAssetStore {
 
         let mut skinned = Vec::with_capacity(skinned_instances.len());
         for (name, world_matrix) in skinned_instances {
-            skinned.push(self.skinned_instance(ctx, name, world_matrix, &animations)?);
+            skinned.push(self.skinned_instance(
+                ctx,
+                name,
+                world_matrix,
+                &catalog,
+                &mut animations,
+                &mut uploaded_skins,
+            )?);
         }
 
-        Ok(DrawList::new(static_batches, skinned))
+        log::info!(
+            "Registered {} animation clips for {} skinned instances",
+            animations.clips().len(),
+            animations.player_count()
+        );
+
+        Ok(DrawList::new(static_batches, skinned, animations))
     }
 
     /// Create one instanced draw covering `world_matrices` of a static mesh.
@@ -284,18 +356,20 @@ impl GpuAssetStore {
         )
     }
 
-    /// Create one skinned mesh instance, with its baked animation if it has one.
+    /// Create one skinned mesh instance and its animation player.
+    ///
+    /// Every clip of the mesh's skin is uploaded and registered, so the player
+    /// can switch between them at runtime without touching the upload phase.
     /// 
-    /// For skins with multiple animations, an indeterminate one is uploaded
-    /// and bound to the mesh.
-    /// 
-    /// TODO: Address the above problem.
+    /// TODO: maybe try lazy uploading?
     fn skinned_instance(
         &mut self,
         ctx: &mut SceneUploadContext<'_>,
         name: &str,
         world_matrix: [[f32; 4]; 4],
-        animations: &AnimationTable,
+        catalog: &AnimationCatalog,
+        animations: &mut AnimationManager,
+        uploaded_skins: &mut HashSet<String>,
     ) -> Result<SkinnedMesh, UploadError> {
         let asset = ctx.asset(name)?;
         let asset = asset.read().map_err(|_| UploadError::AssetLockPoisoned(name.to_string()))?;
@@ -310,19 +384,28 @@ impl GpuAssetStore {
         let geometry = self.skinned_mesh(ctx, name, mesh)?;
         let material = self.material(ctx, &mesh.restpose.material)?;
 
-        let animation = match animations.0.get(&mesh.skin) {
-            Some(table) => {
-                let (animation_name, (frames, fps)) = table.iter().next().expect("animation table should have at least one entry");
-                // TODO: upload all animations, and select on run time.
-                self
-                .animation_texture(ctx, animation_name)?
-                .map(|texture| SkinnedAnimation { texture, frames: *frames, fps: *fps })
-            },
-            None => {
-                log::warn!("Mesh {name} does not have animations attached to it.");
-                None
-            },
-        };
+        let clips = catalog.clips_for_skin(&mesh.skin);
+        let animated = !clips.is_empty();
+        if animated {
+            if uploaded_skins.insert(mesh.skin.clone()) {
+                for descriptor in clips {
+                    // TODO: lazy uploading of animation resources
+                    let texture = self.animation_texture(ctx, &descriptor.asset_name)?;
+                    animations.register_clip(AnimationClip::new(
+                        descriptor.asset_name.clone(),
+                        descriptor.skin.clone(),
+                        texture,
+                        descriptor.frames,
+                        descriptor.fps,
+                    ));
+                }
+            }
+        } else {
+            log::warn!("Mesh {name} does not have animations attached to it.");
+        }
+
+        let default_clip = animations.clips_for_skin(&mesh.skin).first().copied();
+        animations.add_player(&mesh.skin, default_clip);
 
         SkinnedMesh::new(
             ctx.upload.device(),
@@ -330,35 +413,13 @@ impl GpuAssetStore {
             geometry,
             material,
             world_matrix,
-            animation,
+            animated,
         )
     }
 }
 
 impl Default for GpuAssetStore {
     fn default() -> Self { Self::new() }
-}
-
-/// Map every skin asset name to the animation that drives it.
-fn animations_by_skin(assets: &AssetManager) -> AnimationTable {
-    let database = assets.get_database();
-    let mut candidates: Vec<(String, String, u32, f32)> = Vec::new();
-
-    for (name, asset) in database.iter() {
-        let Ok(asset) = asset.read() else { continue };
-        let AssetData::SkinnedAnimationAssetType(animation) = asset.get_data() else { continue };
-        candidates.push((animation.skin.clone(), name.clone(), animation.frames, animation.fps));
-    }
-
-    let mut by_skin = HashMap::new();
-    for (skin, name, frames, fps) in candidates {
-        log::debug!("Found animation {name} for skin {skin} with {frames} frames at {fps} fps.");
-        let table = by_skin.entry(skin.clone()).or_insert(HashMap::new());
-        if let Some(_) = table.insert(name.clone(), (frames, fps)) {
-            log::warn!("Replacing animation {name} for skin {skin}.");
-        }
-    }
-    AnimationTable(by_skin)
 }
 
 /// Everything the upload phase needs besides the asset data itself.

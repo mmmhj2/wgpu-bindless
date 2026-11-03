@@ -3,43 +3,19 @@ use std::{num::NonZero, sync::Arc};
 use crate::{
     asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition},
     renderer::{
+        animation::SkinnedAnimationFrame,
         drawable::{drawable_mesh_traits::{DrawableMesh, Mesh}, vertex_types::VertexType},
         pipeline::{
             compute_library::{ComputeDispatchBindingSource, ComputePipelineKey},
             pbr_material::PBRMaterial,
         },
-        resources::{bindless::SampledTextureHandle, mesh_layout::ModelMatrixBindingSource},
+        resources::mesh_layout::ModelMatrixBindingSource,
         upload::{buffer::upload_buffer, error::UploadError, gpu_mesh::GpuSkinnedMesh},
     },
 };
 
 /// Workgroup size declared by `shaders/gpu_skinning.wgsl`.
 const SKINNING_WORKGROUP_SIZE: u32 = 64;
-
-/// Playback information of the baked animation bound to a skinned mesh.
-#[derive(Debug, Clone, Copy)]
-pub struct SkinnedAnimation {
-    /// Bindless index of the baked joint-matrix texture.
-    pub texture: SampledTextureHandle,
-    /// Number of rows in that texture.
-    pub frames: u32,
-    /// Rate the rows were baked at.
-    pub fps: f32,
-}
-
-impl SkinnedAnimation {
-    /// Resolve the fractal frame index for a playback time, wrapping at the end.
-    pub fn frame_at(&self, time_seconds: f32) -> f32 {
-        if self.fps <= 0.0 {
-            panic!("the animation somehow has a negative FPS");
-        }
-        if self.frames <= 0 {
-            panic!("the animation has no duration");
-        }
-        let duration = (self.frames as f32) / self.fps;
-        (time_seconds % duration) / duration * (self.frames as f32)
-    }
-}
 
 /// Per-instance GPU state of an animated mesh.
 ///
@@ -56,7 +32,6 @@ struct SkinningState {
     /// dispatch layout belongs to the compute pipeline and does not exist yet
     /// when the mesh is created.
     dispatch_bg: Option<wgpu::BindGroup>,
-    animation: SkinnedAnimation,
 }
 
 /// Skinned animated mesh.
@@ -74,7 +49,7 @@ struct SkinningState {
 pub struct SkinnedMesh {
     geometry: Arc<GpuSkinnedMesh>,
     material: PBRMaterial,
-    /// `None` when no animation is bound: the mesh then renders its rest pose.
+    /// `None` when the skin has no clips: the mesh then renders its rest pose.
     skinning: Option<SkinningState>,
 
     model_matrix_buffer: wgpu::Buffer,
@@ -83,16 +58,22 @@ pub struct SkinnedMesh {
 
 impl SkinnedMesh {
 
-    /// Create a skinned mesh with possible animation attached.
+    /// Create a skinned mesh.
     ///
-    /// TODO: figure out a way of re-attaching a new animation for a skinned mesh.
+    /// `animated` must be true when the mesh has animation clip attached to it.
+    /// This flag controls allocation of the per-instance deformed vertex
+    /// buffers that the skinning compute pass writes.
+    /// 
+    /// The actual clip is selected by the
+    /// [`crate::renderer::animation::AnimationManager`] at draw time, and this
+    /// constructor does not keep any playback state.
     pub(crate) fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         geometry: Arc<GpuSkinnedMesh>,
         material: PBRMaterial,
         world_matrix: [[f32; 4]; 4],
-        animation: Option<SkinnedAnimation>,
+        animated: bool,
     ) -> Result<Self, UploadError> {
         let model_matrix_buffer = upload_buffer(
             device,
@@ -102,8 +83,7 @@ impl SkinnedMesh {
             world_matrix.as_slice(),
         )?;
 
-        let skinning = animation
-            .map(|animation| Self::create_skinning_state(device, &geometry, animation));
+        let skinning = animated.then(|| Self::create_skinning_state(device, &geometry));
 
         Ok(Self {
             geometry,
@@ -171,7 +151,6 @@ impl SkinnedMesh {
     fn create_skinning_state(
         device: &wgpu::Device,
         geometry: &GpuSkinnedMesh,
-        animation: SkinnedAnimation,
     ) -> SkinningState {
         let vertex_count = u64::from(geometry.vertex_count);
 
@@ -189,7 +168,7 @@ impl SkinnedMesh {
         });
         let temp_buffer = vec![deformed_position, deformed_attribute];
 
-        SkinningState { temp_buffer, dispatch_bg: None, animation }
+        SkinningState { temp_buffer, dispatch_bg: None }
     }
 
     fn storage_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
@@ -217,12 +196,10 @@ impl SkinnedMesh {
     /// - The per-mesh dispatch bind group has been materialized by
     ///   [`crate::renderer::drawable::draw_list::DrawList::ensure_skinning_bound`].
     ///
-    /// It resolves the animation frame from `time_seconds`, binds the per-mesh
-    /// bind group (group 1), sets the immediates and dispatches one workgroup per
-    /// 64 vertices. Meshes without an animation are a no-op.
-    ///
-    /// TODO: revisit this API design after Skinning animation is actually running.
-    pub fn skin_with(&self, cp: &mut wgpu::ComputePass, time_seconds: f32) {
+    /// It binds the per-mesh bind group (group 1), writes the clip texture and
+    /// fractional frame supplied by the animation manager, and dispatches one
+    /// workgroup per 64 vertices. Meshes without animation state are a no-op.
+    pub fn skin_with(&self, cp: &mut wgpu::ComputePass, frame: SkinnedAnimationFrame) {
         let Some(skinning) = &self.skinning else { return };
         let dispatch_bg = skinning.dispatch_bg.as_ref().expect(
             "skinning dispatch bind group is not initialized: call `DrawList::ensure_skinning_bound` before the skinning pass",
@@ -232,8 +209,8 @@ impl SkinnedMesh {
 
         // Layout must stay in sync with `Immediate` in `gpu_skinning.wgsl`.
         let mut immediates = [0u8; 8];
-        immediates[..4].copy_from_slice(&(skinning.animation.texture.index() as u32).to_le_bytes());
-        immediates[4..].copy_from_slice(&skinning.animation.frame_at(time_seconds).to_le_bytes());
+        immediates[..4].copy_from_slice(&(frame.texture().index() as u32).to_ne_bytes());   // WGSL assumes host endianness
+        immediates[4..].copy_from_slice(&frame.frame().to_le_bytes());
         cp.set_immediates(0, &immediates);
 
         cp.dispatch_workgroups(self.geometry.vertex_count.div_ceil(SKINNING_WORKGROUP_SIZE), 1, 1);
