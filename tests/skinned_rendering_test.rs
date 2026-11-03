@@ -132,6 +132,11 @@ mod test {
             let camera = self.camera.clone();
             let light = self.light.clone();
             let playback_time = self.rendered_frames as f32 * PLAYBACK_SECONDS_PER_FRAME;
+
+            self.draw_list
+                .ensure_bound(self.orchestrator.device(), self.orchestrator.mesh_layout())
+                .ensure_skinning_bound(self.orchestrator.device(), self.orchestrator.compute_pipelines());
+
             let draw_list = &self.draw_list;
 
             self.orchestrator.with_frame(|frame| {

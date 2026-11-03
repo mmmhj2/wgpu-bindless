@@ -189,6 +189,9 @@ impl RendererState for State {
         let light = self.light.clone();
         let skybox = &self.skybox;
 
+        self.draw_list
+            .ensure_bound(self.orchestrator.device(), self.orchestrator.mesh_layout());
+
         self.orchestrator.with_frame(|frame| {
             frame.render_scene(
                 wgpu::Color {
