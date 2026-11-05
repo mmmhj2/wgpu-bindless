@@ -153,7 +153,7 @@ mod test {
 
             self.draw_list.update_animations(PLAYBACK_SECONDS_PER_FRAME);
             if self.rendered_frames == 1 {
-                let frame = self.draw_list.animations().frame(0)
+                let frame = self.draw_list.animations().skinned_frame(0)
                     .expect("the Fox player should have a clip")
                     .frame();
                 assert!(frame > 0.0, "the manager should advance the playback frame");

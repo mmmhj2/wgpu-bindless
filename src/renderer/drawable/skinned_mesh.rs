@@ -1,16 +1,11 @@
 use std::{num::NonZero, sync::Arc};
 
 use crate::{
-    asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition},
-    renderer::{
-        animation::SkinnedAnimationFrame,
-        drawable::{drawable_mesh_traits::{DrawableMesh, Mesh}, vertex_types::VertexType},
-        pipeline::{
+    asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition}, renderer::{
+        animation::{MorphAnimationFrame, SkinnedAnimationFrame}, drawable::{drawable_mesh_traits::{DrawableMesh, Mesh}, vertex_types::VertexType}, pipeline::{
             compute_library::{ComputeDispatchBindingSource, ComputePipelineKey},
             pbr_material::PBRMaterial,
-        },
-        resources::mesh_layout::ModelMatrixBindingSource,
-        upload::{buffer::upload_buffer, error::UploadError, gpu_mesh::GpuSkinnedMesh},
+        }, resources::mesh_layout::ModelMatrixBindingSource, upload::{buffer::upload_buffer, error::UploadError, gpu_mesh::GpuSkinnedMesh},
     },
 };
 
@@ -22,16 +17,21 @@ const SKINNING_WORKGROUP_SIZE: u32 = 64;
 /// Every buffer here is written by the skinning compute shader, so it cannot be
 /// shared between instances of the same mesh.
 #[derive(Debug)]
-struct SkinningState {
+struct AnimationState {
     /// Deformed vertex streams, in the same order as the rest pose streams.
     temp_buffer: Vec<wgpu::Buffer>,
     /// Bind group 1 of the skinning pipeline: rest pose in, deformed out, plus
     /// the joint indices and weights.
     ///
-    /// Materialized by [`SkinnedMesh::ensure_skinning_bound`], because the
+    /// Materialized by [`AnimatedMesh::ensure_skinning_bound`], because the
     /// dispatch layout belongs to the compute pipeline and does not exist yet
     /// when the mesh is created.
-    dispatch_bg: Option<wgpu::BindGroup>,
+    skin_dispatch_bg: Option<wgpu::BindGroup>,
+
+    /// Bind group 1 and 2 of the morphing pipeline.
+    /// 
+    /// Materialized by [`AnimatedMesh::ensure_morphing_bound`].
+    morph_dispatch_bg: Option<[wgpu::BindGroup; 2]>
 }
 
 /// Animated mesh.
@@ -48,9 +48,10 @@ struct SkinningState {
 #[derive(Debug)]
 pub struct AnimatedMesh {
     geometry: Arc<GpuSkinnedMesh>,
+    morph_targets: Option<Arc<()>>,
     material: PBRMaterial,
     /// `None` when the skin has no clips: the mesh then renders its rest pose.
-    skinning: Option<SkinningState>,
+    animation: Option<AnimationState>,
 
     model_matrix_buffer: wgpu::Buffer,
     model_matrix_bg: Option<wgpu::BindGroup>,
@@ -58,7 +59,12 @@ pub struct AnimatedMesh {
 
 impl AnimatedMesh {
 
-    /// Create a skinned mesh.
+    /// Create an animated mesh.
+    /// 
+    /// The mesh can be animated through skeleton skinning or vertex morphing.
+    /// In case only vertex morphing is needed, the skeleton attributes (i.e
+    /// bone indices and weights) are still needed. They may be filled with
+    /// defaulted values a priori.
     ///
     /// `animated` must be true when the mesh has animation clip attached to it.
     /// This flag controls allocation of the per-instance deformed vertex
@@ -87,8 +93,9 @@ impl AnimatedMesh {
 
         Ok(Self {
             geometry,
+            morph_targets: None,
             material,
-            skinning,
+            animation: skinning,
             model_matrix_buffer,
             model_matrix_bg: None,
         })
@@ -125,8 +132,8 @@ impl AnimatedMesh {
         device: &wgpu::Device,
         bindings: &impl ComputeDispatchBindingSource,
     ) {
-        let Some(skinning) = &mut self.skinning else { return };
-        if skinning.dispatch_bg.is_some() {
+        let Some(skinning) = &mut self.animation else { return };
+        if skinning.skin_dispatch_bg.is_some() {
             return;
         }
 
@@ -137,7 +144,7 @@ impl AnimatedMesh {
             Self::storage_entry(3, &skinning.temp_buffer[1]),
             Self::storage_entry(4, &self.geometry.skinning_buffer),
         ];
-        skinning.dispatch_bg = Some(bindings.create_dispatch_bind_group(
+        skinning.skin_dispatch_bg = Some(bindings.create_dispatch_bind_group(
             device,
             ComputePipelineKey::GpuSkinning,
             "skinning dispatch bind group",
@@ -162,7 +169,7 @@ impl AnimatedMesh {
     fn create_skinning_state(
         device: &wgpu::Device,
         geometry: &GpuSkinnedMesh,
-    ) -> SkinningState {
+    ) -> AnimationState {
         let vertex_count = u64::from(geometry.vertex_count);
 
         let deformed_position = device.create_buffer(&wgpu::BufferDescriptor{
@@ -179,7 +186,7 @@ impl AnimatedMesh {
         });
         let temp_buffer = vec![deformed_position, deformed_attribute];
 
-        SkinningState { temp_buffer, dispatch_bg: None }
+        AnimationState { temp_buffer, skin_dispatch_bg: None, morph_dispatch_bg: None }
     }
 
     fn storage_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
@@ -197,7 +204,21 @@ impl AnimatedMesh {
     ///
     /// A skinned mesh without an animation renders its rest pose and skips the
     /// compute dispatch entirely.
-    pub fn is_animated(&self) -> bool { self.skinning.is_some() }
+    pub fn is_animated(&self) -> bool { self.animation.is_some() }
+
+    pub fn morph_with(&self, cp: &mut wgpu::ComputePass, frame: MorphAnimationFrame) {
+        let Some(anim) = &self.animation else { return };
+        let dispatch_bg = anim.morph_dispatch_bg.as_ref().expect(
+            "morph dispatch bind group is not initialized: call `DrawList::ensure_morphing_bound` before the skinning pass",
+        );
+
+        cp.set_bind_group(1, Some(&dispatch_bg[0]), &[]);
+        cp.set_bind_group(2, &dispatch_bg[1], &[]);
+
+        todo!("fill up push constants");
+
+        cp.dispatch_workgroups(self.geometry.vertex_count.div_ceil(SKINNING_WORKGROUP_SIZE), 1, 1);
+    }
 
     /// Record the skinning dispatch that produces the deformed vertex buffers.
     /// 
@@ -211,8 +232,8 @@ impl AnimatedMesh {
     /// fractional frame supplied by the animation manager, and dispatches one
     /// workgroup per 64 vertices. Meshes without animation state are a no-op.
     pub fn skin_with(&self, cp: &mut wgpu::ComputePass, frame: SkinnedAnimationFrame) {
-        let Some(skinning) = &self.skinning else { return };
-        let dispatch_bg = skinning.dispatch_bg.as_ref().expect(
+        let Some(skinning) = &self.animation else { return };
+        let dispatch_bg = skinning.skin_dispatch_bg.as_ref().expect(
             "skinning dispatch bind group is not initialized: call `DrawList::ensure_skinning_bound` before the skinning pass",
         );
 
@@ -232,7 +253,7 @@ impl AnimatedMesh {
 
 impl Mesh for AnimatedMesh {
     fn get_vertex_buffer(&self) -> &[wgpu::Buffer] {
-        match &self.skinning {
+        match &self.animation {
             Some(skinning) => &skinning.temp_buffer,
             None => &self.geometry.restpose_vertex_buffer,
         }

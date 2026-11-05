@@ -58,7 +58,7 @@ impl DrawList {
     /// are skipped.
     pub fn record_skinning(&self, cp: &mut wgpu::ComputePass) -> &Self {
         for (index, mesh) in self.skinned_opaque.iter().enumerate() {
-            if let Some(frame) = self.animations.frame(index) {
+            if let Some(frame) = self.animations.skinned_frame(index) {
                 mesh.skin_with(cp, frame);
             }
         }
