@@ -24,6 +24,15 @@ pub(super) const BAKE_FPS: f32 = 30.0;
 /// enormous texture.
 const MAX_FRAMES: u32 = 4096;
 
+/// Import source identifier of one glTF animation inside one glTF scene.
+///
+/// The skeletal track and the morph weight track of the same glTF animation
+/// share this identifier, which is how the runtime merges the two halves back
+/// into a single clip.
+pub(super) fn clip_source(scene: usize, animation: usize) -> String {
+    format!("scene{scene}/anim{animation}")
+}
+
 /// Local rest transform of one node, in TRS form.
 #[derive(Clone, Copy)]
 struct NodeTransform {
@@ -283,6 +292,7 @@ pub(super) fn bake_animation(
     inverse_bind_matrices: &[[[f32; 4]; 4]],
     mesh_node_index: usize,
     skin_name: String,
+    source: String,
     fps: f32,
 ) -> Result<SkinnedAnimationAsset, GltfImportError> {
     let joint_indices: Vec<usize> = skin.joints().map(|node| node.index()).collect();
@@ -384,7 +394,7 @@ pub(super) fn bake_animation(
         texels: TexelData::Plain(texels.into_boxed_slice()),
     };
 
-    Ok(SkinnedAnimationAsset { skin: skin_name, frames: frame_count, fps, texture })
+    Ok(SkinnedAnimationAsset { skin: skin_name, source, frames: frame_count, fps, texture })
 }
 
 /// Convert an `f32` to IEEE-754 binary16 bits.

@@ -36,6 +36,16 @@ pub(super) enum SubAssetType {
     Skin { scene: usize, skin: usize },
     /// A GLTF animation baked into joint-matrix texture, scoped to its scene.
     Animation { scene: usize, animation: usize },
+    /// Morph targets of one GLTF primitive.
+    ///
+    /// Morph targets belong to a primitive, not to a mesh or a skin, so the name
+    /// carries both mesh and primitive index.
+    MorphTarget { mesh: usize, primitive: usize },
+    /// One primitive's morph weight animation baked into a weight texture.
+    ///
+    /// A glTF animation's `weights` channel targets a node, hence a mesh, and
+    /// each primitive of that mesh gets its own weight track.
+    MorphAnimation { scene: usize, animation: usize, mesh: usize, primitive: usize },
     /// A GLTF scene, preserved as a hierarchy of nodes with local transforms.
     Scene(usize),
     /// A renderer-layout MRAO texture derived from optional MR and AO textures.
@@ -58,6 +68,9 @@ impl GltfImporter {
             SubAssetType::SkinnedPrimitive { mesh, primitive } => format!(".skpr_{}_{}", mesh, primitive),
             SubAssetType::Skin { scene, skin } => format!(".skin_{}_{}", scene, skin),
             SubAssetType::Animation { scene, animation } => format!(".anim_{}_{}", scene, animation),
+            SubAssetType::MorphTarget { mesh, primitive } => format!(".morphtgt_{}_{}", mesh, primitive),
+            SubAssetType::MorphAnimation { scene, animation, mesh, primitive } =>
+                format!(".morphanim_{}_{}_{}_{}", scene, animation, mesh, primitive),
             SubAssetType::Scene(index) => format!(".scene_{}", index),
             SubAssetType::MraoTexture(key) => {
                 fn source_label(prefix: &str, index: Option<usize>) -> String {
@@ -107,5 +120,33 @@ impl GltfImporter {
         Self::generate_subasset_name(&gltf_file, SubAssetType::Animation { scene: scene_index, animation: animation_index })?
             .into_string()
             .map_err(|_| GltfImportError::InvalidSubresourceName(gltf_file.as_ref().to_path_buf()))
+    }
+
+    /// Resolve the subasset name of a primitive's morph targets.
+    pub fn morph_target_subasset_name(gltf_file: impl AsRef<Path>, mesh_index: usize, primitive_index: usize) -> Result<String, GltfImportError> {
+        Self::generate_subasset_name(&gltf_file, SubAssetType::MorphTarget { mesh: mesh_index, primitive: primitive_index })?
+            .into_string()
+            .map_err(|_| GltfImportError::InvalidSubresourceName(gltf_file.as_ref().to_path_buf()))
+    }
+
+    /// Resolve the subasset name of a primitive's baked morph weight animation.
+    pub fn morph_animation_subasset_name(
+        gltf_file: impl AsRef<Path>,
+        scene_index: usize,
+        animation_index: usize,
+        mesh_index: usize,
+        primitive_index: usize,
+    ) -> Result<String, GltfImportError> {
+        Self::generate_subasset_name(
+            &gltf_file,
+            SubAssetType::MorphAnimation {
+                scene: scene_index,
+                animation: animation_index,
+                mesh: mesh_index,
+                primitive: primitive_index,
+            },
+        )?
+        .into_string()
+        .map_err(|_| GltfImportError::InvalidSubresourceName(gltf_file.as_ref().to_path_buf()))
     }
 }

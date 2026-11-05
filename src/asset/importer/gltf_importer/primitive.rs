@@ -273,7 +273,13 @@ impl GltfImporter {
             .map(|(indices, weights)| Self::normalize_skinning_weights(indices, weights))
             .collect();
 
-        Ok(SkinnedMeshAsset { skin: skin_name, restpose, animation })
+        Ok(SkinnedMeshAsset {
+            skin: Some(skin_name),
+            // Morph targets are imported separately; see `import_morph_targets`.
+            morph_target: None,
+            restpose,
+            animation,
+        })
     }
 
     /// Keep the four strongest influences and renormalize their weights.

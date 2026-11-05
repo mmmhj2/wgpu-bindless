@@ -15,7 +15,7 @@ use crate::asset::{
     asset_types::{Asset, AssetData, AssetMetadata},
     error::ImportError,
     importer::{AssetImporter, ImporterContext, gltf_importer::{
-        animation::{bake_animation, BAKE_FPS},
+        animation::{bake_animation, clip_source, BAKE_FPS},
         common::GltfImportError,
         naming::SubAssetType,
         texture::MraoKey,
@@ -40,7 +40,8 @@ impl AssetImporter for GltfImporter {
     /// 4: imports skins, skinned primitives and baked animations.
     /// 5: recomputes missing vertex normals from the triangle winding.
     /// 6: wrapping around for animation texture
-    const IMPORTER_VERSION: u32 = 6;
+    /// 7: morph target assets, and a clip `source` shared by both tracks.
+    const IMPORTER_VERSION: u32 = 7;
 
     fn import(mut self, context: &ImporterContext) -> Result<(), ImportError> {
         if !self.path.is_file() {
@@ -228,6 +229,7 @@ impl AssetImporter for GltfImporter {
 
             let skin_name = Self::generate_subasset_name(path, SubAssetType::Skin { scene: usage.scene, skin: skin_index })?
                 .into_string().map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
+            let source = clip_source(usage.scene, animation.index());
             let baked = bake_animation(
                 &document,
                 &buffers,
@@ -236,6 +238,7 @@ impl AssetImporter for GltfImporter {
                 inverse_bind_matrices,
                 usage.node,
                 skin_name,
+                source,
                 BAKE_FPS,
             )?;
             Self::queue_asset(context, subasset_name, subasset_path, AssetData::SkinnedAnimationAssetType(baked));
