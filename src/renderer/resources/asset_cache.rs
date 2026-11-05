@@ -17,7 +17,7 @@ use crate::{
         pipeline::pbr_material::PBRMaterial,
         drawable::{
             draw_list::DrawList,
-            skinned_mesh::SkinnedMesh,
+            skinned_mesh::AnimatedMesh,
             static_mesh::StaticMesh,
             static_mesh_batch::StaticMeshBatch,
         },
@@ -370,7 +370,7 @@ impl GpuAssetStore {
         catalog: &AnimationCatalog,
         animations: &mut AnimationManager,
         uploaded_skins: &mut HashSet<String>,
-    ) -> Result<SkinnedMesh, UploadError> {
+    ) -> Result<AnimatedMesh, UploadError> {
         let asset = ctx.asset(name)?;
         let asset = asset.read().map_err(|_| UploadError::AssetLockPoisoned(name.to_string()))?;
         let AssetData::SkinnedMeshAssetType(mesh) = asset.get_data() else {
@@ -407,7 +407,7 @@ impl GpuAssetStore {
         let default_clip = animations.clips_for_skin(&mesh.skin).first().copied();
         animations.add_player(&mesh.skin, default_clip);
 
-        SkinnedMesh::new(
+        AnimatedMesh::new(
             ctx.upload.device(),
             ctx.upload.queue(),
             geometry,

@@ -1,6 +1,6 @@
 use crate::renderer::{
     animation::AnimationManager,
-    drawable::{drawable_mesh_traits::DrawableMesh, skinned_mesh::SkinnedMesh, static_mesh_batch::StaticMeshBatch},
+    drawable::{drawable_mesh_traits::DrawableMesh, skinned_mesh::AnimatedMesh, static_mesh_batch::StaticMeshBatch},
     pipeline::compute_library::ComputeDispatchBindingSource,
     resources::mesh_layout::ModelMatrixBindingSource,
 };
@@ -16,14 +16,14 @@ pub enum DrawableType {
 #[derive(Debug)]
 pub struct DrawList {
     static_opaque_batch: Vec<StaticMeshBatch>,
-    skinned_opaque: Vec<SkinnedMesh>,
+    skinned_opaque: Vec<AnimatedMesh>,
     animations: AnimationManager,
 }
 
 impl DrawList {
     pub(crate) fn new(
         static_opaque_batch: Vec<StaticMeshBatch>,
-        skinned_opaque: Vec<SkinnedMesh>,
+        skinned_opaque: Vec<AnimatedMesh>,
         animations: AnimationManager,
     ) -> Self {
         assert_eq!(
@@ -163,7 +163,7 @@ impl DrawList {
     ///
     /// Escape hatch to get all skinned meshes. Prefer to use other methods when
     /// available.
-    pub fn get_skinned_meshes(&self) -> &[SkinnedMesh] {
+    pub fn get_skinned_meshes(&self) -> &[AnimatedMesh] {
         &self.skinned_opaque
     }
 }

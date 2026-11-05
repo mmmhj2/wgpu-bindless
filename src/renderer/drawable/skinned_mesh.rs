@@ -34,7 +34,7 @@ struct SkinningState {
     dispatch_bg: Option<wgpu::BindGroup>,
 }
 
-/// Skinned animated mesh.
+/// Animated mesh.
 /// 
 /// Skinned meshes store both a rest-pose reference mesh in `geometry`, and the
 /// intermediate vertex attributes that are produced by the compute shader.
@@ -46,7 +46,7 @@ struct SkinningState {
 /// created by `ensure_bound`, and the skinning dispatch group by
 /// `ensure_skinning_bound`. Mesh creation therefore needs no pipeline layout.
 #[derive(Debug)]
-pub struct SkinnedMesh {
+pub struct AnimatedMesh {
     geometry: Arc<GpuSkinnedMesh>,
     material: PBRMaterial,
     /// `None` when the skin has no clips: the mesh then renders its rest pose.
@@ -56,7 +56,7 @@ pub struct SkinnedMesh {
     model_matrix_bg: Option<wgpu::BindGroup>,
 }
 
-impl SkinnedMesh {
+impl AnimatedMesh {
 
     /// Create a skinned mesh.
     ///
@@ -230,7 +230,7 @@ impl SkinnedMesh {
     pub fn get_material(&self) -> &PBRMaterial { &self.material }
 }
 
-impl Mesh for SkinnedMesh {
+impl Mesh for AnimatedMesh {
     fn get_vertex_buffer(&self) -> &[wgpu::Buffer] {
         match &self.skinning {
             Some(skinning) => &skinning.temp_buffer,
@@ -242,7 +242,7 @@ impl Mesh for SkinnedMesh {
     fn get_vertex_type(&self) -> VertexType { VertexType::Basic }
 }
 
-impl DrawableMesh for SkinnedMesh {
+impl DrawableMesh for AnimatedMesh {
     fn get_model_matrix_bind_group(&self) -> &wgpu::BindGroup {
         self.model_matrix_bg.as_ref().expect(
             "model matrix bind group is not initialized: call `DrawList::ensure_bound` before drawing",
