@@ -134,3 +134,34 @@ impl ComputeRecipe for GpuSkinningComputeRecipe {
         vec![Some(&self.bgl)]
     }
 }
+
+pub(super) struct GpuVertexMorphingRecipe {
+    bgl: wgpu::BindGroupLayout
+}
+
+impl GpuVertexMorphingRecipe {
+    const BGL_MORPHING: [wgpu::BindGroupLayoutEntry; 0] = todo!();
+
+    pub fn new(device: &wgpu::Device) -> Self {
+        let bgl = device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor { 
+                label: None,
+                entries: &Self::BGL_MORPHING
+            }
+        );
+
+        Self { bgl }
+    }
+    pub fn bind_group_layout(&self) -> &wgpu::BindGroupLayout { &self.bgl }
+}
+
+impl ComputeRecipe for GpuVertexMorphingRecipe {
+    const LABEL: &'static str = "GPU Vertex morphing";
+    const SHADER_STRING: &'static str = include_str!("shaders/gpu_vertex_morph.wgsl");
+    const ENTRY_POINT: &'static str = "cs_main";
+    const IMMEDIATE_SIZE: u32 = todo!();
+
+    fn get_extra_bind_groups<'a>(&'a self) -> Vec<Option<&'a wgpu::BindGroupLayout>> {
+        vec![Some(&self.bgl)]
+    }
+}

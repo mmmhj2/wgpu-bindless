@@ -12,7 +12,8 @@ use crate::renderer::pipeline::compute_recipe::{ComputeRecipe, GpuSkinningComput
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum ComputePipelineKey {
-    GpuSkinning
+    GpuSkinning,
+    GpuVertexMorphing
 }
 
 /// One compiled compute pipeline plus the layouts it was built with.

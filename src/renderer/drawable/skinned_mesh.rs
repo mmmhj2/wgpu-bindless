@@ -145,6 +145,17 @@ impl SkinnedMesh {
         ));
     }
 
+    /// Materialize the vertex morphing dispatch bind group on first use.
+    ///
+    /// Idempotent. No-op for meshes without an animation. 
+    pub(crate) fn ensure_morphing_bound(
+        &mut self,
+        device: &wgpu::Device,
+        bindings: &impl ComputeDispatchBindingSource
+    ) {
+        todo!()
+    }
+
     /// Allocate the deformed buffers for one instance.
     ///
     /// Bind group layout creation is deferred.

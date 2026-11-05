@@ -12,15 +12,8 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::asset::{
     asset_types::{
-        animation_asset::SkinnedAnimationAsset,
-        scene_asset::SceneAsset,
-        skin_asset::SkinAsset,
-        skinned_mesh_asset::SkinnedMeshAsset,
-        static_mesh_asset::StaticMeshAsset,
-        texture_asset::TextureAsset
-    },
-    error::AssetIoError,
-    provenance::ImportProvenance
+        animation_asset::{SkinnedAnimationAsset, VertexMorphAnimationAsset, VertexMorphTargetAsset}, scene_asset::SceneAsset, skin_asset::SkinAsset, skinned_mesh_asset::SkinnedMeshAsset, static_mesh_asset::StaticMeshAsset, texture_asset::TextureAsset
+    }, error::AssetIoError, provenance::ImportProvenance
 };
 
 /// Name of the ZIP entry holding the serialized [`AssetMetadata`].
@@ -57,13 +50,16 @@ impl AssetMetadata {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[non_exhaustive]
 pub enum AssetData {
     StaticMeshAssetType(StaticMeshAsset),
     TextureAssetType(TextureAsset),
     SceneAssetType(SceneAsset),
     SkinnedMeshAssetType(SkinnedMeshAsset),
     SkinnedAnimationAssetType(SkinnedAnimationAsset),
-    SkinAssetType(SkinAsset)
+    SkinAssetType(SkinAsset),
+    VertexMorphTargetAssetType(VertexMorphTargetAsset),
+    VertexMorphAnimationAssetType(VertexMorphAnimationAsset)
 }
 
 impl AssetData {
@@ -75,7 +71,9 @@ impl AssetData {
             AssetData::SceneAssetType(_) => AssetKind::Scene,
             AssetData::SkinnedMeshAssetType(_) => AssetKind::SkinnedMesh,
             AssetData::SkinnedAnimationAssetType(_) => AssetKind::SkinnedAnimation,
-            AssetData::SkinAssetType(_) => AssetKind::Skin
+            AssetData::SkinAssetType(_) => AssetKind::Skin,
+            AssetData::VertexMorphTargetAssetType(_) => AssetKind::VertexMorphTarget,
+            AssetData::VertexMorphAnimationAssetType(_) => AssetKind::VertexMorphAnimation,
         }
     }
 }
@@ -84,13 +82,16 @@ impl AssetData {
 ///
 /// Needed to stamp provenance and detect schema changes.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum AssetKind {
     StaticMesh,
     Texture,
     Scene,
     SkinnedMesh,
     SkinnedAnimation,
-    Skin
+    Skin,
+    VertexMorphTarget,
+    VertexMorphAnimation
 }
 
 impl AssetKind {
@@ -103,6 +104,8 @@ impl AssetKind {
             AssetKind::SkinnedMesh => <SkinnedMeshAsset as ConcreteAssetType>::SCHEMA_VERSION,
             AssetKind::SkinnedAnimation => <SkinnedAnimationAsset as ConcreteAssetType>::SCHEMA_VERSION,
             AssetKind::Skin => <SkinAsset as ConcreteAssetType>::SCHEMA_VERSION,
+            AssetKind::VertexMorphTarget => <VertexMorphTargetAsset as ConcreteAssetType>::SCHEMA_VERSION,
+            AssetKind::VertexMorphAnimation => <VertexMorphAnimationAsset as ConcreteAssetType>::SCHEMA_VERSION,
         }
     }
 }

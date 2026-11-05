@@ -52,9 +52,22 @@ pub struct VertexMorphTargetAsset {
     /// Channels of morph targets.
     /// 
     /// Up to 8 channels can be specified according to glTF spec.
+    /// 
+    /// For glTF these channels can be grouped up, so one morph target can
+    /// control multiple properties. When processing on GPU, these groupings
+    /// are ignored, and only weights are used, so channels in a single group
+    /// have their morph weights duplicated.
     pub data: Vec<VertexMorphTargetData>
 }
 
+impl ConcreteAssetType for VertexMorphTargetAsset {
+    const SCHEMA_VERSION: u32 = todo!();
+}
+
+/// Asset for vertex morph animation.
+/// 
+/// Vertex morphs are attached to meshes with morph targets, instead of skins.
+/// So they are managed separately.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VertexMorphAnimationAsset {
     /// Mesh that the animation is attached to.
@@ -66,6 +79,14 @@ pub struct VertexMorphAnimationAsset {
     pub frames: u32,
     /// Playback rate the frames were baked at.
     pub fps: f32,
+    /// Morph target asset of this animation.
+    pub target: String,
+    /// Whether a channel in the morph target is enabled.
+    /// 
+    /// Has the same length as channels in the morph target.
+    /// Different from a zero weight, this flag controls reading on GPU to avoid
+    /// undefined behavior.
+    pub channel_enabled: Vec<bool>,
     /// Baked weight texture.
     /// 
     /// The texture has `height == frames + 1` and `width = floor(channels/4)`,
@@ -75,5 +96,9 @@ pub struct VertexMorphAnimationAsset {
     /// 
     /// Uses RGBA16 format by default.
     pub texture: TextureAsset
+}
+
+impl ConcreteAssetType for VertexMorphAnimationAsset {
+    const SCHEMA_VERSION: u32 = todo!();
 }
 

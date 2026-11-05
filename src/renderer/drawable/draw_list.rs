@@ -41,6 +41,16 @@ impl DrawList {
     /// Advance every animation player by `dt` seconds.
     pub fn update_animations(&mut self, dt: f32) { self.animations.update(dt); }
 
+    /// Record one morphing dispatch per animated mesh.
+    /// 
+    /// Vertex morphing should be performed before any skinning.
+    /// 
+    /// The caller must already have bound the GPU skinning pipeline and the
+    /// global bindless bind group (group 0).
+    pub fn record_morphing(&self, cp: &mut wgpu::ComputePass) -> &Self {
+        todo!()
+    }
+
     /// Record one skinning dispatch per animated mesh.
     ///
     /// The caller must already have bound the GPU skinning pipeline and the
@@ -94,6 +104,24 @@ impl DrawList {
     ) -> &mut Self {
         for mesh in &mut self.skinned_opaque {
             mesh.ensure_skinning_bound(device, bindings);
+        }
+        self
+    }
+
+    /// Materialize the morphing dispatch bind groups.
+    ///
+    /// Must run before the morping compute pass records
+    /// [`...`].
+    /// A no-op for static-only lists and for meshes without an animation.
+    /// 
+    /// Drawing an unbound mesh with vertex morph panics.
+    pub fn ensure_morphing_bound(
+        &mut self,
+        device: &wgpu::Device,
+        bindings: &impl ComputeDispatchBindingSource
+    ) -> &mut Self {
+        for mesh in &mut self.skinned_opaque {
+            mesh.ensure_morphing_bound(device, bindings);
         }
         self
     }
