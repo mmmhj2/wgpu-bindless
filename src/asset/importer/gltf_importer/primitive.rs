@@ -1,6 +1,7 @@
 //! Primitive import: geometry streams, skinning attributes and material slots.
 
 use crate::asset::asset_types::{
+    animation_asset::{MorphTarget, VertexMorphTargetAsset},
     skinned_mesh_asset::SkinnedMeshAsset,
     static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial},
     vertex::{VertexBufferOthers, VertexBufferPosition, VertexBufferSkinning},
@@ -11,6 +12,17 @@ use super::common::GltfImportError;
 use super::importer::GltfImporter;
 use super::naming::SubAssetType;
 use super::texture::MraoKey;
+
+/// Upper bound on imported morph targets, matching the glTF spec limit.
+///
+/// Excess targets are dropped with a warning. The GPU layout reserves attribute
+/// slots rather than a target count, so raising this limit later needs no layout
+/// change.
+const MAX_MORPH_TARGETS: usize = 8;
+
+/// glTF attribute names of the morph target slots, in layout order.
+const MORPH_ATTRIBUTE_NAMES: [&str; MorphTarget::CHANNEL_COUNT] =
+    ["POSITION", "NORMAL", "TANGENT", "TEXCOORD_0", "COLOR_0"];
 
 impl GltfImporter {
     /// Whether a primitive carries the skinning attributes the compute shader
@@ -26,6 +38,11 @@ impl GltfImporter {
             }
         }
         joints && weights
+    }
+
+    /// Whether a primitive has any morph target.
+    pub(super) fn has_morph_targets(primitive: &gltf::Primitive) -> bool {
+        primitive.morph_targets().len() > 0
     }
 
     fn construct_position_buffer (
@@ -235,51 +252,110 @@ impl GltfImporter {
         Ok(ret)
     }
 
+    /// Import the morph targets of one primitive as a [`VertexMorphTargetAsset`].
+    ///
+    /// `mesh_name` is the name of the [`SkinnedMeshAsset`] the targets belong to.
+    pub(crate) fn import_morph_targets(
+        primitive: &gltf::Primitive,
+        buffers: &[gltf::buffer::Data],
+        mesh_name: String,
+    ) -> Result<VertexMorphTargetAsset, GltfImportError> {
+        let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+        let vertex_count = reader.read_positions().map_or(0, Iterator::count);
+
+        let declared_count = reader.read_morph_targets().len();
+        if declared_count > MAX_MORPH_TARGETS {
+            log::warn!(
+                "Mesh {mesh_name} has {declared_count} morph targets; only the first {MAX_MORPH_TARGETS} are imported."
+            );
+        }
+
+        let mut targets = Vec::with_capacity(declared_count.min(MAX_MORPH_TARGETS));
+        for (index, (positions, normals, tangents)) in reader
+            .read_morph_targets()
+            .enumerate()
+            .take(MAX_MORPH_TARGETS)
+        {
+            let target = MorphTarget {
+                position: positions.map(Iterator::collect),
+                normal: normals.map(Iterator::collect),
+                tangent: tangents.map(Iterator::collect),
+                // TODO: support more morph targets
+                texcoord0: None,
+                color0: None,
+            };
+
+            for (channel, attribute) in MORPH_ATTRIBUTE_NAMES.iter().enumerate() {
+                let Some(actual) = target.attribute_vertex_count(channel) else { continue };
+                if actual != vertex_count {
+                    return Err(GltfImportError::MorphTargetCountMismatch {
+                        mesh: mesh_name,
+                        target: index,
+                        attribute,
+                        expected: vertex_count,
+                        actual,
+                    });
+                }
+            }
+
+            targets.push(target);
+        }
+
+        Ok(VertexMorphTargetAsset {
+            mesh: mesh_name,
+            targets,
+            // TODO: take `mesh.weights` and warn about `node.weights` overrides.
+            default_weights: None,
+        })
+    }
+
     /// Import a primitive as a [`SkinnedMeshAsset`].
     ///
     /// The rest pose is imported exactly like a static primitive.
+    ///
+    /// A primitive with morph targets but no `JOINTS_0` / `WEIGHTS_0` produces an
+    /// empty `animation` list. Such a mesh is only ever driven by the morph
+    /// stage, so its skinning buffer only has to exist for the shared bind group
+    /// layout.
     pub(crate) fn import_skinned_from_gltf_primitive(
         importer: &mut GltfImporter,
         primitive: &gltf::Primitive,
         buffers: &[gltf::buffer::Data],
-        skin_name: String,
+        skin_name: Option<String>,
+        morph_target: Option<String>,
     ) -> Result<SkinnedMeshAsset, GltfImportError> {
         let restpose = Self::import_from_gltf_primitive(importer, primitive, buffers)?;
 
         let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
-        let joints: Vec<[u16; 4]> = reader.read_joints(0)
-            .ok_or(GltfImportError::MissingSkinningAttributes)?
-            .into_u16()
-            .collect();
-        let weights: Vec<[f32; 4]> = reader.read_weights(0)
-            .ok_or(GltfImportError::MissingSkinningAttributes)?
-            .into_f32()
-            .collect();
+        let joints = reader.read_joints(0).map(|joints| joints.into_u16().collect::<Vec<[u16; 4]>>());
+        let weights = reader.read_weights(0).map(|weights| weights.into_f32().collect::<Vec<[f32; 4]>>());
 
-        assert_eq!(
-            joints.len(),
-            weights.len(),
-            "JOINTS_0 and WEIGHTS_0 must have the same element count."
-        );
-        assert_eq!(
-            joints.len(),
-            restpose.vp.len(),
-            "skinning attributes must have one entry per vertex."
-        );
+        let animation = match (joints, weights) {
+            (Some(joints), Some(weights)) => {
+                assert_eq!(
+                    joints.len(),
+                    weights.len(),
+                    "JOINTS_0 and WEIGHTS_0 must have the same element count."
+                );
+                assert_eq!(
+                    joints.len(),
+                    restpose.vp.len(),
+                    "skinning attributes must have one entry per vertex."
+                );
 
-        let animation = joints
-            .iter()
-            .zip(weights.iter())
-            .map(|(indices, weights)| Self::normalize_skinning_weights(indices, weights))
-            .collect();
+                joints
+                    .iter()
+                    .zip(weights.iter())
+                    .map(|(indices, weights)| Self::normalize_skinning_weights(indices, weights))
+                    .collect()
+            }
+            // Morph-only primitive: neither attribute is present, and the mesh
+            // has nothing that could skin it.
+            (None, None) if Self::has_morph_targets(primitive) => Vec::new(),
+            _ => return Err(GltfImportError::MissingSkinningAttributes),
+        };
 
-        Ok(SkinnedMeshAsset {
-            skin: Some(skin_name),
-            // Morph targets are imported separately; see `import_morph_targets`.
-            morph_target: None,
-            restpose,
-            animation,
-        })
+        Ok(SkinnedMeshAsset { skin: skin_name, morph_target, restpose, animation })
     }
 
     /// Keep the four strongest influences and renormalize their weights.

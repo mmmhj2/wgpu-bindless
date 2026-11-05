@@ -88,10 +88,17 @@ impl AssetImporter for GltfImporter {
             // asset, so both variants exist and neither is orphaned.
             let needs_static = skin_index.is_none() || unskinned_meshes.contains(&mesh.index());
 
+            // TODO: this loop has become somewhat messy. Needs cleaning up.
             for primitive in mesh.primitives() {
                 let skinnable = Self::has_skinning_attributes(&primitive);
+                let morph_targets = Self::has_morph_targets(&primitive);
 
-                if needs_static || !skinnable {
+                // A primitive with morph targets is always referenced through its
+                // deformable asset (see `import_from_gltf_scene`), so a static
+                // variant would be orphaned and duplicate the geometry. A
+                // primitive without skinning attributes on a skinned node still
+                // needs its static variant.
+                if (needs_static || !skinnable) && !morph_targets {
                     let asset_type = SubAssetType::Primitive { mesh: mesh.index(), primitive: primitive.index() };
                     let subasset_path = Self::generate_subasset_filename(path, asset_type)?;
                     let subasset_name = Self::generate_subasset_name(path, asset_type)?.into_string()
@@ -100,20 +107,48 @@ impl AssetImporter for GltfImporter {
                     Self::queue_asset(context, subasset_name, subasset_path, AssetData::StaticMeshAssetType(imported_mesh));
                 }
 
-                if let (Some(skin_index), true) = (skin_index, skinnable) {
-                    let usage = skin_usage[&skin_index];
-                    let skin_name = Self::generate_subasset_name(
-                        path,
-                        SubAssetType::Skin { scene: usage.scene, skin: skin_index }
-                    )?.into_string().map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
-
-                    let asset_type = SubAssetType::SkinnedPrimitive { mesh: mesh.index(), primitive: primitive.index() };
-                    let subasset_path = Self::generate_subasset_filename(path, asset_type)?;
-                    let subasset_name = Self::generate_subasset_name(path, asset_type)?.into_string()
-                        .map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
-                    let imported_mesh = Self::import_skinned_from_gltf_primitive(&mut self, &primitive, &buffers, skin_name)?;
-                    Self::queue_asset(context, subasset_name, subasset_path, AssetData::SkinnedMeshAssetType(imported_mesh));
+                if !morph_targets && !(skin_index.is_some() && skinnable) {
+                    continue;
                 }
+
+                let asset_type = SubAssetType::SkinnedPrimitive { mesh: mesh.index(), primitive: primitive.index() };
+                let subasset_path = Self::generate_subasset_filename(path, asset_type)?;
+                let subasset_name = Self::generate_subasset_name(path, asset_type)?.into_string()
+                    .map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
+
+                let morph_target_name = if morph_targets {
+                    let target_type = SubAssetType::MorphTarget { mesh: mesh.index(), primitive: primitive.index() };
+                    let target_path = Self::generate_subasset_filename(path, target_type)?;
+                    let target_name = Self::generate_subasset_name(path, target_type)?.into_string()
+                        .map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
+                    let imported_targets = Self::import_morph_targets(&primitive, &buffers, subasset_name.clone())?;
+                    Self::queue_asset(context, target_name.clone(), target_path, AssetData::VertexMorphTargetAssetType(imported_targets));
+                    Some(target_name)
+                } else {
+                    None
+                };
+
+                // The skinning attributes are what binds a mesh to a skin. A
+                // primitive with morph targets but without them is morph-only.
+                let skin_name = match skin_index {
+                    Some(skin_index) if skinnable => {
+                        let usage = skin_usage[&skin_index];
+                        Some(Self::generate_subasset_name(
+                            path,
+                            SubAssetType::Skin { scene: usage.scene, skin: skin_index }
+                        )?.into_string().map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?)
+                    }
+                    _ => None,
+                };
+
+                let imported_mesh = Self::import_skinned_from_gltf_primitive(
+                    &mut self,
+                    &primitive,
+                    &buffers,
+                    skin_name,
+                    morph_target_name,
+                )?;
+                Self::queue_asset(context, subasset_name, subasset_path, AssetData::SkinnedMeshAssetType(imported_mesh));
             }
         }
 

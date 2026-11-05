@@ -54,6 +54,15 @@ pub enum GltfImportError {
     #[error("skinned primitive is missing JOINTS_0 / WEIGHTS_0")]
     MissingSkinningAttributes,
 
+    #[error("morph target {target} of mesh '{mesh}' has {actual} {attribute} deltas, but the mesh has {expected} vertices")]
+    MorphTargetCountMismatch {
+        mesh: String,
+        target: usize,
+        attribute: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+
     #[error("skin has {joints} joints but {matrices} inverse bind matrices")]
     SkinJointCountMismatch { joints: usize, matrices: usize },
 

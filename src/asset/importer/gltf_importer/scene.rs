@@ -200,13 +200,17 @@ impl GltfImporter {
             let node = document.nodes().nth(gltf_index)
                 .ok_or(GltfImportError::IndexOutOfRange(gltf_index))?;
 
-            // A node carrying a skin references the skinned variant of each
-            // primitive, so the renderer can tell both apart by asset kind.
+            // A node carrying a skin references the deformable variant of each
+            // primitive, so the renderer can tell both apart by asset kind. A
+            // primitive with morph targets is always deformable, even without a
+            // skin.
             let skinned = node.skin().is_some();
             let mesh_subasset_names = match node.mesh() {
                 Some(mesh) => mesh.primitives()
                     .map(|primitive| {
-                        let asset_type = if skinned && Self::has_skinning_attributes(&primitive) {
+                        let deformable = Self::has_morph_targets(&primitive)
+                            || (skinned && Self::has_skinning_attributes(&primitive));
+                        let asset_type = if deformable {
                             SubAssetType::SkinnedPrimitive { mesh: mesh.index(), primitive: primitive.index() }
                         } else {
                             SubAssetType::Primitive { mesh: mesh.index(), primitive: primitive.index() }

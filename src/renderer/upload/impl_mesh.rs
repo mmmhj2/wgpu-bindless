@@ -86,7 +86,11 @@ impl GpuAssetType for SkinnedMeshAsset {
                 attributes: restpose.va.len(),
             });
         }
-        if restpose.vp.len() != self.animation.len() {
+        // An empty skinning stream means a morph-only mesh, which never
+        // dispatches the skinning pass. Only a mesh that does claim a skin has to
+        // carry one entry per vertex.
+        // TODO: clean up morph and skinning entanglement after all features can run.
+        if !self.animation.is_empty() && restpose.vp.len() != self.animation.len() {
             return Err(UploadError::SkinningCountMismatch {
                 name: name.to_string(),
                 vertices: restpose.vp.len(),
@@ -105,11 +109,17 @@ impl GpuAssetType for SkinnedMeshAsset {
             restpose.va.as_slice(),
         )?;
 
-        // A zero-sized buffer cannot be created; fall back to a single zeroed
+        // A zero-sized buffer cannot be created. Fall back to a single zeroed
         // entry so the bind group stays valid for malformed assets.
         let skinning_label = format!("{name}.skinning");
         let skinning_buffer = if self.animation.is_empty() {
-            log::warn!("Missing armature data for skinned mesh {name}. The asset may be malformed.");
+            if self.skin.is_some() {
+                log::warn!("Missing armature data for skinned mesh {name}. The asset may be malformed.");
+            } else {
+                // Morph-only meshes still bind this buffer to satisfy the shared
+                // bind group layout. The skinning shader never reads it.
+                log::info!("Mesh {name} has no skinning attributes; it is a morph-only mesh.");
+            }
             ctx.upload_buffer(
                 &skinning_label,
                 wgpu::BufferUsages::STORAGE,
