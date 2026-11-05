@@ -58,8 +58,8 @@ fn play_next_clip(draw_list: &mut DrawList) {
         return;
     }
 
-    let skin = animations.player(0).skin().to_string();
-    let clips = animations.clips_for_skin(&skin);
+    let rig = animations.player(0).rig().clone();
+    let clips = animations.clips_for_rig(&rig);
     if clips.len() < 2 {
         return;
     }
@@ -71,7 +71,7 @@ fn play_next_clip(draw_list: &mut DrawList) {
     let next = clips[next_index];
 
     animations.play(0, next);
-    log::info!("Playing animation clip '{}'.", animations.clip(next).asset_name());
+    log::info!("Playing animation clip '{}'.", animations.clip(next).name());
 }
 
 impl RendererState for State {

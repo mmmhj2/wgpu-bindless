@@ -106,8 +106,8 @@ mod test {
                 assert_eq!(animations.clips().len(), 3, "Fox has three baked animations");
                 assert_eq!(animations.player_count(), 1, "one player per skinned instance");
 
-                let skin = animations.player(0).skin().to_string();
-                let clips = animations.clips_for_skin(&skin).to_vec();
+                let rig = animations.player(0).rig().clone();
+                let clips = animations.clips_for_rig(&rig).to_vec();
                 assert_eq!(clips.len(), 3);
                 assert_eq!(
                     animations.player(0).clip(),
