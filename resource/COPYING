@@ -1,4 +1,5 @@
 Some of the resource files redistributed here are from third party, and are listed as follows:
 
 - `DamagedHelmet.glb`: From Khronos glTF Sample Assets, redistributed under CC0 License. Used to test PBR rendering.
-- `Fox.glb`: From Khronos glTF Sample Assets, redistributed under CC0 License. Used to test animation.
+- `Fox.glb`: From Khronos glTF Sample Assets, redistributed under CC0 License. Used to test skeletal animation.
+- `AnimatedMorphCube.glb`: From Khronos glTF Sample Assets, redistributed under CC0 License. Used to test morph target animation.
