@@ -19,6 +19,7 @@ var<storage, read_write> position_out: array<Position>;
 @group(1) @binding(3)
 var<storage, read_write> attribute_out: array<Attribute>;
 
+// Morph sources comes from vertex morph targets.
 // TODO: 4 arrays for testing is more than enough, but 8 are required by the spec.
 // TODO: maybe use binding_array
 @group(2) @binding(0)

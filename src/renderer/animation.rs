@@ -149,6 +149,10 @@ impl SkinnedAnimationFrame {
     pub fn frame(&self) -> f32 { self.frame }
 }
 
+pub struct MorphAnimationFrame {
+    // TODO: stub code
+}
+
 /// Playback state of one skinned mesh instance.
 ///
 /// Players only hold time and policy, and the clip metadata stays in the owning
@@ -380,7 +384,7 @@ impl AnimationManager {
     ///
     /// Returns `None` when the player has no clip (the mesh renders its rest
     /// pose) or when `index` is out of range.
-    pub fn frame(&self, index: usize) -> Option<SkinnedAnimationFrame> {
+    pub fn skinned_frame(&self, index: usize) -> Option<SkinnedAnimationFrame> {
         let player = self.players.get(index)?;
         let clip_id = player.clip?;
         let clip = self.clip(clip_id);
@@ -624,7 +628,7 @@ mod test {
         let player = manager.player(0);
         assert!(player.is_finished());
         approx(player.time(), 29.0 / 30.0);
-        approx(manager.frame(0).expect("player has a clip").frame(), 29.0);
+        approx(manager.skinned_frame(0).expect("player has a clip").frame(), 29.0);
     }
 
     #[test]
@@ -672,7 +676,7 @@ mod test {
         assert_eq!(manager.clips_for_skin("other").len(), 1);
         assert!(manager.clips_for_skin("missing").is_empty());
         assert_eq!(manager.find_clip("a0"), Some(skin[1]));
-        assert!(manager.frame(0).is_none());
+        assert!(manager.skinned_frame(0).is_none());
     }
 
     #[test]
