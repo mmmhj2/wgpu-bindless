@@ -148,6 +148,7 @@ impl AnimatedMesh {
             device,
             ComputePipelineKey::GpuSkinning,
             "skinning dispatch bind group",
+            0,
             &entries,
         ));
     }

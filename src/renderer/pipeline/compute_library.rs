@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Index};
 
 use wgpu::{BindGroupLayout, ComputePipeline, PipelineLayout};
 
@@ -61,15 +61,21 @@ impl ComputePipelineLibrary {
         self.cache.get(&k).map(|x| &x.layout)
     }
 
-    /// Layout of the per-dispatch bind group, i.e. pipeline layout group 1.
-    ///
-    /// Low-level escape hatch, used by shader tests that build a bind group for
-    /// a standalone dispatch.
+    /// Get the layout of the extra bind groups.
+    /// 
+    /// This bind group is indexed from 1 (0 is reserved for bindless resources).
+    /// So with `index = 0`, the very first extra bind group is returned.
     /// 
     /// Mesh paths should go through [`ComputeDispatchBindingSource`] instead,
     /// which keeps the layout private.
-    pub fn get_dispatch_bind_group_layout(&self, k: ComputePipelineKey) -> Option<&BindGroupLayout> {
-        self.cache.get(&k).and_then(|entry| entry.extra_bind_group_layouts.first())
+    pub fn get_dispatch_bind_group_layout(&self, k: ComputePipelineKey, index: usize) -> Option<&BindGroupLayout> {
+        // try_index is still not available...
+        self.cache.get(&k).and_then(|entry|
+            if entry.extra_bind_group_layouts.len() <= index {
+                None
+            } else {
+                Some(entry.extra_bind_group_layouts.index(index))
+            })
     }
 }
 
@@ -87,6 +93,7 @@ pub trait ComputeDispatchBindingSource {
         device: &wgpu::Device,
         key: ComputePipelineKey,
         label: &str,
+        index: usize,
         entries: &[wgpu::BindGroupEntry<'_>],
     ) -> wgpu::BindGroup;
 }
@@ -97,11 +104,12 @@ impl ComputeDispatchBindingSource for ComputePipelineLibrary {
         device: &wgpu::Device,
         key: ComputePipelineKey,
         label: &str,
+        index: usize,
         entries: &[wgpu::BindGroupEntry<'_>],
     ) -> wgpu::BindGroup {
         let layout = self
-            .get_dispatch_bind_group_layout(key)
-            .unwrap_or_else(|| panic!("compute pipeline {key:?} has no per-dispatch bind group layout"));
+            .get_dispatch_bind_group_layout(key, index)
+            .unwrap_or_else(|| panic!("compute pipeline {key:?} has no per-dispatch bind group layout {index}"));
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(label),
             layout,
