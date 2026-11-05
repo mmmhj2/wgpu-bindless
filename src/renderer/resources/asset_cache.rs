@@ -384,28 +384,37 @@ impl GpuAssetStore {
         let geometry = self.skinned_mesh(ctx, name, mesh)?;
         let material = self.material(ctx, &mesh.restpose.material)?;
 
-        let clips = catalog.clips_for_skin(&mesh.skin);
-        let animated = !clips.is_empty();
-        if animated {
-            if uploaded_skins.insert(mesh.skin.clone()) {
-                for descriptor in clips {
-                    // TODO: lazy uploading of animation resources
-                    let texture = self.animation_texture(ctx, &descriptor.asset_name)?;
-                    animations.register_clip(AnimationClip::new(
-                        descriptor.asset_name.clone(),
-                        descriptor.skin.clone(),
-                        texture,
-                        descriptor.frames,
-                        descriptor.fps,
-                    ));
+        // TODO: key clips and players by rig instead of by skin, so that a
+        // morph-only mesh (no skin) can own clips too. Until then such a mesh
+        // simply has no clips and renders its rest pose.
+        let skin = mesh.skin.as_deref();
+        let mut animated = false;
+        if let Some(skin) = skin {
+            let clips = catalog.clips_for_skin(skin);
+            if clips.is_empty() {
+                log::warn!("Mesh {name} does not have animations attached to it.");
+            } else {
+                animated = true;
+                if uploaded_skins.insert(skin.to_string()) {
+                    for descriptor in clips {
+                        // TODO: lazy uploading of animation resources
+                        let texture = self.animation_texture(ctx, &descriptor.asset_name)?;
+                        animations.register_clip(AnimationClip::new(
+                            descriptor.asset_name.clone(),
+                            descriptor.skin.clone(),
+                            texture,
+                            descriptor.frames,
+                            descriptor.fps,
+                        ));
+                    }
                 }
             }
-        } else {
-            log::warn!("Mesh {name} does not have animations attached to it.");
         }
 
-        let default_clip = animations.clips_for_skin(&mesh.skin).first().copied();
-        animations.add_player(&mesh.skin, default_clip);
+        // A player always exists, one per draw list entry, even without a clip.
+        let player_skin = skin.unwrap_or_default();
+        let default_clip = animations.clips_for_skin(player_skin).first().copied();
+        animations.add_player(player_skin, default_clip);
 
         AnimatedMesh::new(
             ctx.upload.device(),

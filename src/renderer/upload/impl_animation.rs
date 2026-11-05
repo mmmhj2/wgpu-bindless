@@ -23,28 +23,18 @@ impl GpuAssetType for SkinnedAnimationAsset {
     }
 }
 
-/// TODO: maybe move to util module
-pub struct BufferWithOffset {
-    pub buffer: wgpu::Buffer,
-    pub offset: usize
-}
-
-pub enum MorphTargetBuffer {
-    Position(BufferWithOffset),
-    Normal(BufferWithOffset),
-    Tangent(BufferWithOffset)
-}
-
 impl GpuAssetType for VertexMorphTargetAsset {
-    /// Storage buffers for vertex morph targets
-    type GpuObjectType = Vec<MorphTargetBuffer>;
+    /// TODO: the upload produces a `GpuMorphTargets` holding the layout
+    /// buffer (masks and offsets), the packed delta buffer and the optional
+    /// base-weight texture.
+    type GpuObjectType = ();
 
     fn upload(
         &self,
-        name: &str,
-        ctx: &mut UploadContext<'_>,
+        _name: &str,
+        _ctx: &mut UploadContext<'_>,
     ) -> Result<Self::GpuObjectType, UploadError> {
-        todo!()
+        todo!("upload morph target layout / deltas / base weights")
     }
 }
 

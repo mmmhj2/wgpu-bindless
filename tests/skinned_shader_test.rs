@@ -88,7 +88,7 @@ mod test {
         let bones_buffer = storage_buffer(device, queue, "test bones", bones, wgpu::BufferUsages::empty());
 
         let skinning_layout = compute
-            .get_dispatch_bind_group_layout(ComputePipelineKey::GpuSkinning)
+            .get_dispatch_bind_group_layout(ComputePipelineKey::GpuSkinning, 0)
             .expect("skinning pipeline should be registered");
         let skinning_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("test skinning bind group"),

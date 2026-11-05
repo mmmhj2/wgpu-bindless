@@ -140,7 +140,11 @@ pub(super) struct GpuVertexMorphingRecipe {
 }
 
 impl GpuVertexMorphingRecipe {
-    const BGL_MORPHING: [wgpu::BindGroupLayoutEntry; 0] = todo!();
+    /// Predetermined bind group layouts for the morphing compute shader.
+    ///
+    /// TODO: `(layout, deltas)`. Kept empty until the shader side lands, so
+    /// that the constant stays evaluable.
+    const BGL_MORPHING: [wgpu::BindGroupLayoutEntry; 0] = [];
 
     pub fn new(device: &wgpu::Device) -> Self {
         let bgl = device.create_bind_group_layout(
@@ -159,7 +163,8 @@ impl ComputeRecipe for GpuVertexMorphingRecipe {
     const LABEL: &'static str = "GPU Vertex morphing";
     const SHADER_STRING: &'static str = include_str!("shaders/gpu_vertex_morph.wgsl");
     const ENTRY_POINT: &'static str = "cs_main";
-    const IMMEDIATE_SIZE: u32 = todo!();
+    /// TODO: determine push constant size.
+    const IMMEDIATE_SIZE: u32 = 0;
 
     fn get_extra_bind_groups<'a>(&'a self) -> Vec<Option<&'a wgpu::BindGroupLayout>> {
         vec![Some(&self.bgl)]

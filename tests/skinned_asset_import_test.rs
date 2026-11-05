@@ -54,7 +54,15 @@ mod test {
             mesh.restpose.vp.len(),
             "there must be one skinning entry per vertex"
         );
-        assert_eq!(mesh.skin, skin_name, "the skinned mesh must reference the imported skin");
+        assert_eq!(
+            mesh.skin.as_deref(),
+            Some(skin_name.as_str()),
+            "the skinned mesh must reference the imported skin"
+        );
+        assert!(
+            mesh.morph_target.is_none(),
+            "the Fox mesh has no morph targets"
+        );
 
         // The compute shader assumes normalized weights.
         for entry in &mesh.animation {
@@ -155,6 +163,11 @@ mod test {
             };
 
             assert_eq!(animation.skin, skin_name);
+            assert_eq!(
+                animation.source,
+                format!("scene0/anim{animation_index}"),
+                "the clip source must identify the glTF animation it was baked from"
+            );
             assert_eq!(animation.fps, 30.0);
             assert!(animation.frames > 1, "'{name}' should span more than one frame");
 
