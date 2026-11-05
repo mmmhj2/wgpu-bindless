@@ -17,6 +17,6 @@ mod impl_texture;
 pub use buffer::upload_buffer;
 pub use context::UploadContext;
 pub use error::UploadError;
-pub use gpu_mesh::{GpuSkinnedMesh, GpuStaticMesh};
+pub use gpu_mesh::{GpuMorphTargets, GpuSkinnedMesh, GpuStaticMesh, MAX_MORPH_CHANNELS, MORPH_LAYOUT_WORDS};
 pub use gpu_type::GpuAssetType;
 pub use texture::{TextureBinding, create_texture};

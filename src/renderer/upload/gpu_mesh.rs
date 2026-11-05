@@ -1,3 +1,10 @@
+use std::num::NonZero;
+
+use crate::{
+    asset::asset_types::animation_asset::MorphTarget,
+    renderer::resources::bindless::SampledTextureHandle,
+};
+
 /// GPU-resident geometry produced by uploading a
 /// [`crate::asset::asset_types::static_mesh_asset::StaticMeshAsset`].
 ///
@@ -30,3 +37,43 @@ pub struct GpuSkinnedMesh {
     pub vertex_count: u32,
     pub vertex_draw_count: u32,
 }
+
+/// Number of morph target channels the GPU layout reserves.
+pub const MAX_MORPH_CHANNELS: usize = 8;
+
+/// Number of `u32` words in the morph layout buffer.
+///
+/// `[0]` channel count, `[1..9]` per-channel attribute masks, `[9..49]`
+/// per-channel, per-attribute offsets into [`GpuMorphTargets::deltas`].
+pub const MORPH_LAYOUT_WORDS: usize = 1 + MAX_MORPH_CHANNELS + MAX_MORPH_CHANNELS * MorphTarget::CHANNEL_COUNT;
+
+/// GPU-resident morph targets of one primitive.
+///
+/// One asset produces one of these, shared by every instance of the mesh. The
+/// layout and the deltas are immutable, only the weights vary per draw.
+///
+/// The layout is data-driven so that adding an attribute never changes the
+/// bindings or the immediate encoding. Masks say which attributes a channel
+/// carries, offsets say where its block starts in [`Self::deltas`].
+#[derive(Debug)]
+pub struct GpuMorphTargets {
+    /// `[u32; MORPH_LAYOUT_WORDS]`: `[0]` channel count, `[1..9]` masks,
+    /// `[9..49]` offsets (unit: `f32` index into [`Self::deltas`]).
+    pub layout: wgpu::Buffer,
+    /// Attribute deltas of every channel, packed back to back.
+    ///
+    /// Buffer should never be zero sized.
+    pub deltas: wgpu::Buffer,
+    /// One-row weight texture holding the mesh's static `mesh.weights`.
+    ///
+    /// `None` when the base weights are absent or all zero, i.e. when the mesh
+    /// has no static deformation.
+    pub base_weights: Option<SampledTextureHandle>,
+    /// Number of morph targets, i.e. the number of weights a clip provides.
+    pub channel_count: u32,
+    /// Number of weight channels [`Self::base_weights`] provides.
+    /// 
+    /// Zero when the texture does not exist.
+    pub base_channels: Option<NonZero<u32>>,
+}
+

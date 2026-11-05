@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     asset::{
@@ -13,7 +13,7 @@ use crate::{
         },
     },
     renderer::{
-        animation::{AnimationClip, AnimationManager},
+        animation::{AnimationClip, AnimationManager, RigId},
         pipeline::pbr_material::PBRMaterial,
         drawable::{
             draw_list::DrawList,
@@ -26,61 +26,291 @@ use crate::{
         upload::{
             context::UploadContext,
             error::UploadError,
-            gpu_mesh::GpuSkinnedMesh,
+            gpu_mesh::{GpuMorphTargets, GpuSkinnedMesh},
             gpu_type::GpuAssetType,
             texture::TextureBinding,
         },
     },
 };
 
-/// One baked animation discovered in the asset database.
-struct AnimationDescriptor {
+/// One baked track discovered in the asset database.
+#[derive(Debug, Clone, PartialEq)]
+struct BakedTrack {
+    /// Import source shared by both halves of one glTF animation.
+    source: String,
+    /// Asset name of the track, used to upload its texture.
     asset_name: String,
-    skin: String,
     frames: u32,
     fps: f32,
 }
 
-/// Every baked animation, grouped by the skin it drives.
+/// Every baked track of the asset database, indexed by what it drives.
 ///
-/// Clips within one skin are sorted by asset name so that the default clip and
-/// the per-skin clip order do not depend on hash-map iteration.
+/// Clips are assembled per rig by [`ClipCatalog::clips_for_rig`],
+/// because only the rig knows which of the two halves it can consume.
 #[derive(Default)]
-struct AnimationCatalog {
-    by_skin: HashMap<String, Vec<AnimationDescriptor>>,
+struct ClipCatalog {
+    joints_by_skin: HashMap<String, Vec<BakedTrack>>,
+    weights_by_mesh: HashMap<String, Vec<BakedTrack>>,
 }
 
-impl AnimationCatalog {
+impl ClipCatalog {
     fn from_assets(assets: &AssetManager) -> Self {
-        let database = assets.get_database();
-        let mut by_skin: HashMap<String, Vec<AnimationDescriptor>> = HashMap::new();
+        let mut catalog = Self::default();
 
-        for (name, asset) in database.iter() {
+        for (name, asset) in assets.get_database().iter() {
             let Ok(asset) = asset.read() else { continue };
-            let AssetData::SkinnedAnimationAssetType(animation) = asset.get_data() else {
-                continue;
-            };
-            by_skin
-                .entry(animation.skin.clone())
-                .or_default()
-                .push(AnimationDescriptor {
-                    asset_name: name.clone(),
-                    skin: animation.skin.clone(),
-                    frames: animation.frames,
-                    fps: animation.fps,
-                });
+            match asset.get_data() {
+                AssetData::SkinnedAnimationAssetType(animation) => catalog
+                    .joints_by_skin
+                    .entry(animation.skin.clone())
+                    .or_default()
+                    .push(BakedTrack {
+                        source: animation.source.clone(),
+                        asset_name: name.clone(),
+                        frames: animation.frames,
+                        fps: animation.fps,
+                    }),
+                AssetData::VertexMorphAnimationAssetType(animation) => catalog
+                    .weights_by_mesh
+                    .entry(animation.mesh.clone())
+                    .or_default()
+                    .push(BakedTrack {
+                        source: animation.source.clone(),
+                        asset_name: name.clone(),
+                        frames: animation.frames,
+                        fps: animation.fps,
+                    }),
+                _ => {}
+            }
         }
 
-        for clips in by_skin.values_mut() {
-            clips.sort_by(|a, b| a.asset_name.cmp(&b.asset_name));
+        // Sorted by source, so the clip order (and therefore the default clip)
+        // does not depend on hash-map iteration. The asset name breaks ties.
+        for tracks in catalog.joints_by_skin.values_mut() {
+            tracks.sort_by(|a, b| (&a.source, &a.asset_name).cmp(&(&b.source, &b.asset_name)));
+        }
+        for tracks in catalog.weights_by_mesh.values_mut() {
+            tracks.sort_by(|a, b| (&a.source, &a.asset_name).cmp(&(&b.source, &b.asset_name)));
         }
 
-        Self { by_skin }
+        catalog
     }
 
-    fn clips_for_skin(&self, skin: &str) -> &[AnimationDescriptor] {
-        self.by_skin.get(skin).map(Vec::as_slice).unwrap_or(&[])
+    /// Assemble the clips `rig` can play, merged from both track kinds.
+    ///
+    /// Tracks that the rig cannot consume (e.g. a skeletal track for a
+    /// mesh whose skin is missing) are dropped here with an error instead
+    /// of failing later.
+    fn clips_for_rig(&self, rig: &RigSpec<'_>) -> Vec<ClipTracks> {
+        let mut merged: HashMap<String, ClipTracks> = HashMap::new();
+
+        if let Some(tracks) = rig.skin.and_then(|skin| self.joints_by_skin.get(skin)) {
+            if rig.has_skin {
+                for track in tracks {
+                    let clip = merged.entry(track.source.clone()).or_insert_with(|| ClipTracks::new(track));
+                    clip.joints = Some(track.asset_name.clone());
+                }
+            } else if !tracks.is_empty() {
+                log::error!(
+                    "Dropping {} skeletal track(s) of rig '{}': its skin '{}' was not imported.",
+                    tracks.len(),
+                    rig.mesh,
+                    rig.skin.unwrap_or("<unnamed>")
+                );
+            }
+        }
+
+        if let Some(tracks) = self.weights_by_mesh.get(rig.mesh) {
+            if rig.has_target {
+                for track in tracks {
+                    let clip = merged.entry(track.source.clone()).or_insert_with(|| ClipTracks::new(track));
+                    if clip.frames != track.frames {
+                        log::warn!(
+                            "Clip '{}' of rig '{}' has {} baked frames in its skeletal track but {} in its weight track; using the skeletal count.",
+                            track.source,
+                            rig.mesh,
+                            clip.frames,
+                            track.frames
+                        );
+                    }
+                    clip.weights = Some(track.asset_name.clone());
+                }
+            } else if !tracks.is_empty() {
+                log::error!(
+                    "Dropping {} morph weight track(s) of rig '{}': the mesh has no morph target asset.",
+                    tracks.len(),
+                    rig.mesh
+                );
+            }
+        }
+
+        let mut clips: Vec<ClipTracks> = merged.into_values().collect();
+        clips.sort_by(|a, b| (&a.source, &a.name).cmp(&(&b.source, &b.name)));
+        clips
     }
+}
+
+/// One clip of a rig, after rig-compatibility filtering.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClipTracks {
+    /// Clip name: the asset name of its primary track (joints first).
+    pub name: String,
+    /// Import source shared by both halves of the glTF animation.
+    pub source: String,
+    pub frames: u32,
+    pub fps: f32,
+    /// Baked skeletal track, if the clip carries one.
+    pub joints: Option<String>,
+    /// Baked morph weight track, if the clip carries one.
+    pub weights: Option<String>,
+}
+
+impl ClipTracks {
+    fn new(track: &BakedTrack) -> Self {
+        Self {
+            name: track.asset_name.clone(),
+            source: track.source.clone(),
+            frames: track.frames,
+            fps: track.fps,
+            joints: None,
+            weights: None,
+        }
+    }
+}
+
+/// How one deformable mesh asset looks to the clip catalog and the stage gate.
+#[derive(Debug, Clone, Copy)]
+pub struct RigSpec<'a> {
+    /// Asset name of the deformable mesh, i.e. the rig identity.
+    pub mesh: &'a str,
+    /// Skin named by the mesh, if any.
+    pub skin: Option<&'a str>,
+    /// `has_skin`: the mesh names a skin and that asset exists.
+    pub has_skin: bool,
+    /// `has_target`: the mesh names a morph target and that asset exists.
+    pub has_target: bool,
+    /// The target's `default_weights` exist and are not all zero.
+    pub base_weights_nonzero: bool,
+}
+
+/// The five inputs of the stage gate (section 3.2 of the plan).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RigCapabilities {
+    /// The mesh names a skin, and that skin asset exists.
+    pub has_skin: bool,
+    /// At least one clip of the rig carries a skeletal track.
+    pub has_joint_track: bool,
+    /// The mesh names a morph target, and that target asset exists.
+    pub has_target: bool,
+    /// At least one clip of the rig carries a weight track.
+    pub has_weight_track: bool,
+    /// The target has non-zero static base weights.
+    pub base_weights_nonzero: bool,
+}
+
+/// One vertex-deformation stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RigStage {
+    /// Reads the rest pose (or the skipped stage's output) and applies morph
+    /// target deltas.
+    Morph,
+    /// Reads the rest pose or the morph output and applies joint matrices.
+    Skin,
+}
+
+/// Buffer holding the vertex stream the rasterizer reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FinalBuffer {
+    /// Shared rest pose, no per-instance buffers at all.
+    Restpose,
+    /// Per-instance morph output.
+    MorphOut,
+    /// Per-instance skin output.
+    SkinOut,
+}
+
+/// The stage set of one rig, in dispatch order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RigStages {
+    None,
+    Morph,
+    Skin,
+    MorphThenSkin,
+}
+
+impl RigStages {
+    pub fn as_slice(self) -> &'static [RigStage] {
+        match self {
+            Self::None => &[],
+            Self::Morph => &[RigStage::Morph],
+            Self::Skin => &[RigStage::Skin],
+            Self::MorphThenSkin => &[RigStage::Morph, RigStage::Skin],
+        }
+    }
+
+    pub fn final_buffer(self) -> FinalBuffer {
+        match self {
+            Self::None => FinalBuffer::Restpose,
+            Self::Morph => FinalBuffer::MorphOut,
+            Self::Skin | Self::MorphThenSkin => FinalBuffer::SkinOut,
+        }
+    }
+
+    pub fn contains(self, stage: RigStage) -> bool { self.as_slice().contains(&stage) }
+}
+
+/// Which deformation stages one rig runs, and what its final vertex stream is.
+/// 
+/// TODO: maybe combine this struct with `RigStages`, as they are currently
+/// identical.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RigPlan {
+    stages: RigStages,
+}
+
+impl RigPlan {
+    /// Maps rig capabilities to rig plan.
+    /// 
+    /// - A rig with both skin and a joint track attached will have skin stage.
+    /// - A rig with both morph target and a weight track (or non zero base
+    /// weight) will have morph stage.
+    /// - A rig satisfying both conditions will have both stages enabled.
+    pub fn from_capabilities(caps: RigCapabilities) -> Self {
+        let skin = caps.has_skin && caps.has_joint_track;
+        let morph = caps.has_target && (caps.has_weight_track || caps.base_weights_nonzero);
+
+        let stages = match (morph, skin) {
+            (false, false) => RigStages::None,
+            (true, false) => RigStages::Morph,
+            (false, true) => RigStages::Skin,
+            (true, true) => RigStages::MorphThenSkin,
+        };
+
+        Self { stages }
+    }
+
+    /// Determine which stages are used for one rig from its assets and its clip catalog.
+    pub fn from_assets(rig: &RigSpec<'_>, clips: &[ClipTracks]) -> Self {
+        Self::from_capabilities(RigCapabilities {
+            has_skin: rig.has_skin,
+            has_joint_track: clips.iter().any(|clip| clip.joints.is_some()),
+            has_target: rig.has_target,
+            has_weight_track: clips.iter().any(|clip| clip.weights.is_some()),
+            base_weights_nonzero: rig.base_weights_nonzero,
+        })
+    }
+
+    pub fn stages(self) -> RigStages { self.stages }
+    /// Stages in dispatch order.
+    pub fn stage_list(self) -> &'static [RigStage] { self.stages.as_slice() }
+    pub fn final_buffer(self) -> FinalBuffer { self.stages.final_buffer() }
+    /// Whether any stage runs at all.
+    pub fn is_empty(self) -> bool { matches!(self.stages, RigStages::None) }
+    /// Whether the rig runs the skinning stage.
+    pub fn skins(self) -> bool { self.stages.contains(RigStage::Skin) }
+    /// Whether the rig runs the morphing stage.
+    pub fn morphs(self) -> bool { self.stages.contains(RigStage::Morph) }
 }
 
 /// Owns every GPU-resident resource uploaded from the asset database.
@@ -102,6 +332,12 @@ pub struct GpuAssetStore {
     skinned_geometry: HashMap<String, Arc<GpuSkinnedMesh>>,
     /// Animation subasset name -> baked animation texture handle.
     skinned_animations: HashMap<String, SampledTextureHandle>,
+    /// Morph target subasset name -> uploaded layout + deltas + base weights.
+    ///
+    /// Shared across instances, like the rest pose: only the weights vary.
+    morph_targets: HashMap<String, Arc<GpuMorphTargets>>,
+    /// Morph animation subasset name -> baked weight texture handle.
+    morph_animations: HashMap<String, SampledTextureHandle>,
 }
 
 impl GpuAssetStore {
@@ -111,6 +347,8 @@ impl GpuAssetStore {
             static_meshes: HashMap::new(),
             skinned_geometry: HashMap::new(),
             skinned_animations: HashMap::new(),
+            morph_targets: HashMap::new(),
+            morph_animations: HashMap::new(),
         }
     }
 
@@ -118,6 +356,13 @@ impl GpuAssetStore {
     pub fn static_mesh_count(&self) -> usize { self.static_meshes.len() }
     pub fn skinned_mesh_count(&self) -> usize { self.skinned_geometry.len() }
     pub fn animation_count(&self) -> usize { self.skinned_animations.len() }
+    pub fn morph_target_count(&self) -> usize { self.morph_targets.len() }
+    pub fn morph_animation_count(&self) -> usize { self.morph_animations.len() }
+
+    /// Uploaded morph targets of `name`, if they were uploaded.
+    pub fn morph_target(&self, name: &str) -> Option<&Arc<GpuMorphTargets>> {
+        self.morph_targets.get(name)
+    }
 
     /// Resolve a texture asset to its uploaded binding, uploading it at most once.
     pub(crate) fn texture<'s>(
@@ -249,6 +494,61 @@ impl GpuAssetStore {
         Ok(handle)
     }
 
+    /// Upload a morph target asset's layout, deltas and base weights.
+    ///
+    /// Cached by asset name: a target shared by several instances of the same
+    /// mesh is uploaded once.
+    fn upload_morph_target(
+        &mut self,
+        ctx: &mut SceneUploadContext<'_>,
+        name: &str,
+    ) -> Result<Arc<GpuMorphTargets>, UploadError> {
+        if let Some(cached) = self.morph_targets.get(name) {
+            return Ok(cached.clone());
+        }
+
+        let asset = ctx.asset(name)?;
+        let asset = asset.read().map_err(|_| UploadError::AssetLockPoisoned(name.to_string()))?;
+        let AssetData::VertexMorphTargetAssetType(target) = asset.get_data() else {
+            return Err(UploadError::WrongKind {
+                name: name.to_string(),
+                actual: asset.get_data().kind(),
+                expected: AssetKind::VertexMorphTarget,
+            });
+        };
+
+        let uploaded = Arc::new(target.upload(name, &mut ctx.upload)?);
+        self.morph_targets.insert(name.to_string(), uploaded.clone());
+        Ok(uploaded)
+    }
+
+    /// Upload a baked morph weight texture.
+    ///
+    /// Cached by asset name, like [`Self::animation_texture`].
+    fn upload_morph_animation(
+        &mut self,
+        ctx: &mut SceneUploadContext<'_>,
+        name: &str,
+    ) -> Result<SampledTextureHandle, UploadError> {
+        if let Some(cached) = self.morph_animations.get(name) {
+            return Ok(*cached);
+        }
+
+        let asset = ctx.asset(name)?;
+        let asset = asset.read().map_err(|_| UploadError::AssetLockPoisoned(name.to_string()))?;
+        let AssetData::VertexMorphAnimationAssetType(animation) = asset.get_data() else {
+            return Err(UploadError::WrongKind {
+                name: name.to_string(),
+                actual: asset.get_data().kind(),
+                expected: AssetKind::VertexMorphAnimation,
+            });
+        };
+
+        let handle = ctx.upload.upload_texture(name, &animation.texture)?.handle;
+        self.morph_animations.insert(name.to_string(), handle);
+        Ok(handle)
+    }
+
     /// Turn a scene asset into a draw list, uploading everything it references.
     ///
     /// Errors
@@ -268,12 +568,11 @@ impl GpuAssetStore {
         let graph = SceneGraph::from_asset(scene);
         let plans = graph.plan_mesh_batches();
 
-        // Discover every baked animation up front, grouped by skin and sorted
-        // deterministically. Textures are still uploaded lazily below, once per
-        // skin that the scene actually references.
-        let catalog = AnimationCatalog::from_assets(ctx.assets);
+        // Discover every baked track up front and sort deterministically.
+        // Textures are still uploaded lazily below, once per asset that the
+        // scene actually references.
+        let catalog = ClipCatalog::from_assets(ctx.assets);
         let mut animations = AnimationManager::new();
-        let mut uploaded_skins: HashSet<String> = HashSet::new();
 
         let mut static_batches = Vec::new();
         let mut static_instances = 0usize;
@@ -317,7 +616,6 @@ impl GpuAssetStore {
                 world_matrix,
                 &catalog,
                 &mut animations,
-                &mut uploaded_skins,
             )?);
         }
 
@@ -356,10 +654,16 @@ impl GpuAssetStore {
         )
     }
 
-    /// Create one skinned mesh instance and its animation player.
+    /// Create one animated mesh instance, its clips and its animation player.
     ///
-    /// Every clip of the mesh's skin is uploaded and registered, so the player
-    /// can switch between them at runtime without touching the upload phase.
+    /// Every clip of the rig is uploaded and registered, so the player can
+    /// switch between them at runtime without touching the upload phase. The
+    /// deforming stages ([`RigStages`]) are decided here and remains immutable.
+    /// 
+    /// TODO: Combining two halves of clips seems unnatural: glTF has
+    /// a unified animation description for both morph and joints,
+    /// but we split it in the asset system and recombine it here.
+    /// Figure out a better way as a part of the animation system rewrite.
     /// 
     /// TODO: maybe try lazy uploading?
     fn skinned_instance(
@@ -367,9 +671,8 @@ impl GpuAssetStore {
         ctx: &mut SceneUploadContext<'_>,
         name: &str,
         world_matrix: [[f32; 4]; 4],
-        catalog: &AnimationCatalog,
+        catalog: &ClipCatalog,
         animations: &mut AnimationManager,
-        uploaded_skins: &mut HashSet<String>,
     ) -> Result<AnimatedMesh, UploadError> {
         let asset = ctx.asset(name)?;
         let asset = asset.read().map_err(|_| UploadError::AssetLockPoisoned(name.to_string()))?;
@@ -384,37 +687,87 @@ impl GpuAssetStore {
         let geometry = self.skinned_mesh(ctx, name, mesh)?;
         let material = self.material(ctx, &mesh.restpose.material)?;
 
-        // TODO: key clips and players by rig instead of by skin, so that a
-        // morph-only mesh (no skin) can own clips too. Until then such a mesh
-        // simply has no clips and renders its rest pose.
-        let skin = mesh.skin.as_deref();
-        let mut animated = false;
-        if let Some(skin) = skin {
-            let clips = catalog.clips_for_skin(skin);
-            if clips.is_empty() {
-                log::warn!("Mesh {name} does not have animations attached to it.");
-            } else {
-                animated = true;
-                if uploaded_skins.insert(skin.to_string()) {
-                    for descriptor in clips {
-                        // TODO: lazy uploading of animation resources
-                        let texture = self.animation_texture(ctx, &descriptor.asset_name)?;
-                        animations.register_clip(AnimationClip::new(
-                            descriptor.asset_name.clone(),
-                            descriptor.skin.clone(),
-                            texture,
-                            descriptor.frames,
-                            descriptor.fps,
-                        ));
-                    }
+        // A missing morph target asset degrades the rig instead of failing the
+        // whole scene. The clip catalog drops the weight tracks and the gate
+        // falls back to a skin-only (or rest pose) plan.
+        let morph = match mesh.morph_target.as_deref() {
+            Some(target_name) => match self.upload_morph_target(ctx, target_name) {
+                Ok(target) => Some(target),
+                Err(error) => {
+                    log::error!(
+                        "Rig '{name}' names morph target '{target_name}', which cannot be uploaded ({error}); morphing is disabled for this rig."
+                    );
+                    None
                 }
+            },
+            None => None,
+        };
+        let has_skin = match mesh.skin.as_deref() {
+            Some(skin) => {
+                let exists = ctx.has_asset_of_kind(skin, AssetKind::Skin);
+                if !exists {
+                    log::error!(
+                        "Rig '{name}' names skin '{skin}', which cannot be uploaded; skinning is disabled for this rig."
+                    );
+                }
+                exists
             }
+            None => false,
+        };
+
+        let rig = RigSpec {
+            mesh: name,
+            skin: mesh.skin.as_deref(),
+            has_skin,
+            has_target: morph.is_some(),
+            base_weights_nonzero: morph.as_ref().is_some_and(|target| target.base_weights.is_some()),
+        };
+
+        // Merge the two baked halves of every animation into one clip per
+        // `(source, rig)`. tracks the rig cannot consume are dropped there.
+        let clips = catalog.clips_for_rig(&rig);
+        let rig_id = RigId::new(name);
+        for clip in &clips {
+            // TODO: lazy uploading of animation resources
+            let joints = match &clip.joints {
+                Some(asset_name) => Some(self.animation_texture(ctx, asset_name)?),
+                None => None,
+            };
+            let weights = match &clip.weights {
+                Some(asset_name) => Some(self.upload_morph_animation(ctx, asset_name)?),
+                None => None,
+            };
+            animations.register_clip(AnimationClip::new(
+                clip.name.clone(),
+                rig_id.clone(),
+                joints,
+                weights,
+                clip.frames,
+                clip.fps,
+            ));
+        }
+
+        let plan = RigPlan::from_assets(&rig, &clips);
+        if clips.is_empty() {
+            log::warn!("Rig '{name}' has no animation clips; it renders its rest pose.");
+        } else {
+            log::debug!(
+                "Rig '{name}': {:?}, {} clip(s), final {:?}.",
+                plan.stages(),
+                clips.len(),
+                plan.final_buffer()
+            );
         }
 
         // A player always exists, one per draw list entry, even without a clip.
-        let player_skin = skin.unwrap_or_default();
-        let default_clip = animations.clips_for_skin(player_skin).first().copied();
-        animations.add_player(player_skin, default_clip);
+        let default_clip = animations.clips_for_rig(&rig_id).first().copied();
+        animations.add_player(rig_id, default_clip);
+
+        // TODO: allocate the buffers of every planned stage and swap
+        // `get_vertex_buffer` over to `plan.final_buffer()`. Until then only a
+        // skinning stage allocates deformed buffers, and morph-only rigs render
+        // their rest pose.
+        let animated = plan.skins();
 
         AnimatedMesh::new(
             ctx.upload.device(),
@@ -463,5 +816,207 @@ impl<'a> SceneUploadContext<'a> {
         let asset = self.asset(name)?;
         let asset = asset.read().map_err(|_| UploadError::AssetLockPoisoned(name.to_string()))?;
         Ok(asset.get_data().kind())
+    }
+
+    /// Whether `name` is loaded and holds a `kind` asset.
+    ///
+    /// Used for capability checks, where a missing or mismatched asset only
+    /// disables a stage instead of failing the whole scene.
+    fn has_asset_of_kind(&self, name: &str, kind: AssetKind) -> bool {
+        self.asset_kind(name).is_ok_and(|actual| actual == kind)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn caps(
+        has_skin: bool,
+        has_joint_track: bool,
+        has_target: bool,
+        has_weight_track: bool,
+        base_weights_nonzero: bool,
+    ) -> RigCapabilities {
+        RigCapabilities {
+            has_skin,
+            has_joint_track,
+            has_target,
+            has_weight_track,
+            base_weights_nonzero,
+        }
+    }
+
+    /// Exhaustive table of all possible combinations of vertex morph or skinning
+    /// for mesh. Used for testing.
+    fn gate_rows() -> Vec<(&'static str, RigCapabilities, RigStages, FinalBuffer)> {
+        vec![
+            ("R1", caps(false, false, false, false, false), RigStages::None, FinalBuffer::Restpose),
+            ("R2", caps(false, false, true, false, false), RigStages::None, FinalBuffer::Restpose),
+            ("R3", caps(false, false, true, false, true), RigStages::Morph, FinalBuffer::MorphOut),
+            ("R4", caps(false, false, true, true, false), RigStages::Morph, FinalBuffer::MorphOut),
+            ("R5", caps(true, false, false, false, false), RigStages::None, FinalBuffer::Restpose),
+            ("R6", caps(true, false, true, false, false), RigStages::None, FinalBuffer::Restpose),
+            ("R7", caps(true, false, true, false, true), RigStages::Morph, FinalBuffer::MorphOut),
+            ("R8", caps(true, false, true, true, false), RigStages::Morph, FinalBuffer::MorphOut),
+            ("R9", caps(true, true, false, false, false), RigStages::Skin, FinalBuffer::SkinOut),
+            ("R10", caps(true, true, true, false, false), RigStages::Skin, FinalBuffer::SkinOut),
+            (
+                "R11",
+                caps(true, true, true, false, true),
+                RigStages::MorphThenSkin,
+                FinalBuffer::SkinOut,
+            ),
+            (
+                "R12",
+                caps(true, true, true, true, false),
+                RigStages::MorphThenSkin,
+                FinalBuffer::SkinOut,
+            ),
+        ]
+    }
+
+    #[test]
+    fn stage_gate_matches_all_twelve_rows() {
+        let rows = gate_rows();
+        assert_eq!(rows.len(), 12, "the table is exhaustive");
+
+        for (label, capabilities, expected_stages, expected_final) in rows {
+            let plan = RigPlan::from_capabilities(capabilities);
+            assert_eq!(plan.stages(), expected_stages, "{label}: stages");
+            assert_eq!(plan.final_buffer(), expected_final, "{label}: final buffer");
+        }
+    }
+
+    #[test]
+    fn morph_runs_before_skin_and_only_the_final_stage_feeds_the_rasterizer() {
+        assert_eq!(RigStages::None.as_slice(), &[]);
+        assert_eq!(RigStages::Morph.as_slice(), &[RigStage::Morph]);
+        assert_eq!(RigStages::Skin.as_slice(), &[RigStage::Skin]);
+        assert_eq!(
+            RigStages::MorphThenSkin.as_slice(),
+            &[RigStage::Morph, RigStage::Skin],
+            "morph feeds skin, never the other way around"
+        );
+
+        let plan = RigPlan::from_capabilities(caps(true, true, true, true, false));
+        assert!(plan.skins() && plan.morphs());
+        assert!(!plan.is_empty());
+    }
+
+    fn track(source: &str, asset_name: &str) -> BakedTrack {
+        BakedTrack {
+            source: source.to_string(),
+            asset_name: asset_name.to_string(),
+            frames: 30,
+            fps: 30.0,
+        }
+    }
+
+    fn rig<'a>(mesh: &'a str, skin: Option<&'a str>, has_skin: bool, has_target: bool) -> RigSpec<'a> {
+        RigSpec { mesh, skin, has_skin, has_target, base_weights_nonzero: false }
+    }
+
+    #[test]
+    fn both_halves_of_one_animation_merge_into_one_clip() {
+        let mut catalog = ClipCatalog::default();
+        catalog.joints_by_skin.insert("rig.skin".into(), vec![track("scene0/anim0", "rig.anim_0_0")]);
+        catalog.weights_by_mesh.insert("rig.skpr".into(), vec![track("scene0/anim0", "rig.morphanim_0_0_0_0")]);
+
+        let clips = catalog.clips_for_rig(&rig("rig.skpr", Some("rig.skin"), true, true));
+
+        assert_eq!(clips.len(), 1, "the halves share their source, so they are one clip");
+        assert_eq!(clips[0].joints.as_deref(), Some("rig.anim_0_0"));
+        assert_eq!(clips[0].weights.as_deref(), Some("rig.morphanim_0_0_0_0"));
+        assert_eq!(clips[0].name, "rig.anim_0_0", "the skeletal asset names a mixed clip");
+    }
+
+    #[test]
+    fn mixed_catalog_keeps_both_stages_when_one_clip_lacks_a_track() {
+        let mut catalog = ClipCatalog::default();
+        catalog.joints_by_skin.insert("rig.skin".into(), vec![track("scene0/anim0", "rig.anim_0_0")]);
+        catalog.weights_by_mesh.insert("rig.skpr".into(), vec![track("scene0/anim1", "rig.morphanim_0_1_0_0")]);
+
+        let rig = rig("rig.skpr", Some("rig.skin"), true, true);
+        let clips = catalog.clips_for_rig(&rig);
+
+        assert_eq!(clips.len(), 2);
+        assert_eq!(clips[0].source, "scene0/anim0");
+        assert!(clips[0].joints.is_some() && clips[0].weights.is_none(), "clip A drives only the skeleton");
+        assert_eq!(clips[1].source, "scene0/anim1");
+        assert!(clips[1].joints.is_none() && clips[1].weights.is_some(), "clip B drives only morph weights");
+
+        // The gates are a union over the rig's catalog, so both stages exist even
+        // though no single clip drives both.
+        let plan = RigPlan::from_assets(&rig, &clips);
+        assert_eq!(plan.stages(), RigStages::MorphThenSkin);
+        assert_eq!(plan.final_buffer(), FinalBuffer::SkinOut);
+    }
+
+    #[test]
+    fn joints_track_without_a_skin_is_dropped() {
+        let mut catalog = ClipCatalog::default();
+        catalog.joints_by_skin.insert("missing.skin".into(), vec![track("scene0/anim0", "missing.anim")]);
+
+        // The mesh names a skin, but that skin asset was never imported.
+        let rig = rig("rig.skpr", Some("missing.skin"), false, true);
+        let clips = catalog.clips_for_rig(&rig);
+
+        assert!(clips.is_empty(), "the only track is unusable: {clips:?}");
+        let plan = RigPlan::from_assets(&rig, &clips);
+        assert_eq!(plan.stages(), RigStages::None, "the rig falls back to its rest pose");
+        assert_eq!(plan.final_buffer(), FinalBuffer::Restpose);
+    }
+
+    #[test]
+    fn weight_track_without_a_morph_target_is_dropped() {
+        let mut catalog = ClipCatalog::default();
+        catalog.weights_by_mesh.insert("rig.skpr".into(), vec![track("scene0/anim0", "rig.morphanim_0_0_0_0")]);
+
+        // The weights exist, but the mesh has no morph target asset to apply them.
+        let rig = rig("rig.skpr", None, false, false);
+        let clips = catalog.clips_for_rig(&rig);
+
+        assert!(clips.is_empty(), "the only track is unusable: {clips:?}");
+        let plan = RigPlan::from_assets(&rig, &clips);
+        assert_eq!(plan.stages(), RigStages::None);
+        assert_eq!(plan.final_buffer(), FinalBuffer::Restpose);
+    }
+
+    #[test]
+    fn a_clip_survives_losing_one_of_its_tracks() {
+        let mut catalog = ClipCatalog::default();
+        catalog.joints_by_skin.insert("rig.skin".into(), vec![track("scene0/anim0", "rig.anim_0_0")]);
+        catalog.weights_by_mesh.insert("rig.skpr".into(), vec![track("scene0/anim0", "rig.morphanim_0_0_0_0")]);
+
+        // The skin is fine, but the mesh's morph target asset is gone.
+        let rig = rig("rig.skpr", Some("rig.skin"), true, false);
+        let clips = catalog.clips_for_rig(&rig);
+
+        assert_eq!(clips.len(), 1);
+        assert!(clips[0].joints.is_some(), "the skeletal half is still usable");
+        assert!(clips[0].weights.is_none(), "the weight half is dropped");
+
+        let plan = RigPlan::from_assets(&rig, &clips);
+        assert_eq!(plan.stages(), RigStages::Skin);
+    }
+
+    #[test]
+    fn base_weights_alone_enable_the_morph_stage() {
+        for (has_skin, has_joint_track, expected) in [
+            (false, false, RigStages::Morph),
+            (true, false, RigStages::Morph),
+        ] {
+            let mut rig = rig("rig.skpr", None, has_skin, true);
+            rig.base_weights_nonzero = true;
+            let caps = RigCapabilities {
+                has_skin: rig.has_skin,
+                has_joint_track,
+                has_target: rig.has_target,
+                has_weight_track: false,
+                base_weights_nonzero: true,
+            };
+            assert_eq!(RigPlan::from_capabilities(caps).stages(), expected);
+        }
     }
 }
