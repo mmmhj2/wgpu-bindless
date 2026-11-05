@@ -63,6 +63,9 @@ pub enum GltfImportError {
         actual: usize,
     },
 
+    #[error("morph weight channel is malformed: {0}")]
+    MalformedWeightChannel(&'static str),
+
     #[error("skin has {joints} joints but {matrices} inverse bind matrices")]
     SkinJointCountMismatch { joints: usize, matrices: usize },
 

@@ -34,6 +34,23 @@ const IDENTITY_MATRIX: [[f32; 4]; 4] = [
     [0.0, 0.0, 0.0, 1.0],
 ];
 
+/// First scene that can reach `node_index`, if any.
+///
+/// Morph weight animations are not bound to a skin, so the scene that scopes
+/// their clip `source` is derived from the animated node instead.
+pub(super) fn scene_of_node(document: &gltf::Document, node_index: usize) -> Option<usize> {
+    for scene in document.scenes() {
+        let mut stack: Vec<gltf::Node> = scene.nodes().collect();
+        while let Some(node) = stack.pop() {
+            if node.index() == node_index {
+                return Some(scene.index());
+            }
+            stack.extend(node.children());
+        }
+    }
+    None
+}
+
 impl GltfImporter {
     /// Walk every scene and resolve each skin to the first node that uses it.
     ///
@@ -55,26 +72,6 @@ impl GltfImporter {
             }
         }
         usage
-    }
-
-    /// Find the skin an animation belongs to.
-    ///
-    /// glTF animations target nodes rather than skins, so the association is
-    /// derived from the skin's joint set: the first skin that owns at least one
-    /// animated node wins.
-    pub(super) fn find_animation_skin(animation: &gltf::Animation, document: &gltf::Document) -> Option<usize> {
-        let targets: HashSet<usize> = animation
-            .channels()
-            .map(|channel| channel.target().node().index())
-            .collect();
-        if targets.is_empty() {
-            return None;
-        }
-
-        document
-            .skins()
-            .find(|skin| skin.joints().any(|joint| targets.contains(&joint.index())))
-            .map(|skin| skin.index())
     }
 
     /// Meshes that are placed on at least one node without a skin.

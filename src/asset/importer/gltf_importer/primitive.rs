@@ -18,7 +18,7 @@ use super::texture::MraoKey;
 /// Excess targets are dropped with a warning. The GPU layout reserves attribute
 /// slots rather than a target count, so raising this limit later needs no layout
 /// change.
-const MAX_MORPH_TARGETS: usize = 8;
+pub(super) const MAX_MORPH_TARGETS: usize = 8;
 
 /// glTF attribute names of the morph target slots, in layout order.
 const MORPH_ATTRIBUTE_NAMES: [&str; MorphTarget::CHANNEL_COUNT] =
@@ -259,6 +259,7 @@ impl GltfImporter {
         primitive: &gltf::Primitive,
         buffers: &[gltf::buffer::Data],
         mesh_name: String,
+        default_weights: Option<&[f32]>,
     ) -> Result<VertexMorphTargetAsset, GltfImportError> {
         let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
         let vertex_count = reader.read_positions().map_or(0, Iterator::count);
@@ -301,12 +302,49 @@ impl GltfImporter {
             targets.push(target);
         }
 
+        // `mesh.weights` is the static base shape; the number of weights must
+        // match the number of targets that were actually imported.
+        let default_weights = default_weights.map(|weights| {
+            if weights.len() != targets.len() {
+                log::warn!(
+                    "mesh.weights of {mesh_name} has {} entries but {} morph targets were imported; the base weights are padded with zero.",
+                    weights.len(),
+                    targets.len()
+                );
+            }
+            let mut weights = weights.to_vec();
+            weights.resize(targets.len(), 0.0);
+            weights
+        });
+
         Ok(VertexMorphTargetAsset {
             mesh: mesh_name,
             targets,
-            // TODO: take `mesh.weights` and warn about `node.weights` overrides.
-            default_weights: None,
+            default_weights,
         })
+    }
+
+    /// Warn about nodes that override the morph weights of `mesh`.
+    ///
+    /// Only `mesh.weights` is supported as the static base shape. A per-node
+    /// override would make two instances of one mesh differ, which the asset
+    /// model cannot express yet, so the override is ignored (§7.6).
+    pub(super) fn warn_about_node_weight_overrides(document: &gltf::Document, mesh: &gltf::Mesh) {
+        let mesh_weights = mesh.weights();
+        for node in document.nodes() {
+            let Some(node_weights) = node.weights() else { continue };
+            let Some(node_mesh) = node.mesh() else { continue };
+            if node_mesh.index() != mesh.index() {
+                continue;
+            }
+            if mesh_weights != Some(node_weights) {
+                log::warn!(
+                    "Node '{}' overrides the morph weights of mesh {}; the override is ignored and `mesh.weights` is used as the base shape.",
+                    node.name().unwrap_or("<unnamed>"),
+                    mesh.index()
+                );
+            }
+        }
     }
 
     /// Import a primitive as a [`SkinnedMeshAsset`].

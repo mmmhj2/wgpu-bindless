@@ -1,21 +1,26 @@
-//! Baking of glTF animation channels into a 2D texture of joint matrices.
+//! Baking of glTF animation channels into 2D textures.
 //!
 //! The renderer never evaluates glTF animation curves at runtime. Every frame of
 //! an animation is sampled here, the joint hierarchy is resolved on the CPU, and
 //! the resulting object-space skinning matrices are packed into an
 //! `Rgba16Float` texture: one row per frame, four texels per joint, holding the
 //! four columns of that joint's matrix.
+//!
+//! A glTF animation may drive morph target weights instead of (or in addition
+//! to) node transforms. Those channels are baked into a separate weight texture
+//! with the same frame count, so both tracks of one clip stay in sync.
 
-use std::num::NonZero;
+use std::{collections::{HashMap, HashSet}, num::NonZero};
 
 use cgmath::{InnerSpace, Matrix4, Quaternion, SquareMatrix, Vector3};
 
 use crate::asset::asset_types::{
-    animation_asset::SkinnedAnimationAsset,
+    animation_asset::{SkinnedAnimationAsset, VertexMorphAnimationAsset},
     texture_asset::{Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat},
 };
 
 use super::common::GltfImportError;
+use super::scene::SkinUsage;
 
 /// Rate at which animation frames are baked.
 pub(super) const BAKE_FPS: f32 = 30.0;
@@ -31,6 +36,131 @@ const MAX_FRAMES: u32 = 4096;
 /// into a single clip.
 pub(super) fn clip_source(scene: usize, animation: usize) -> String {
     format!("scene{scene}/anim{animation}")
+}
+
+/// Longest input time among *all* channels of an animation, in seconds.
+///
+/// glTF allows the channels of one animation to end at different times, so this
+/// is a maximum rather than an equality assertion (D12).
+pub(super) fn animation_duration(animation: &gltf::Animation, buffers: &[gltf::buffer::Data]) -> f32 {
+    let mut duration = 0.0f32;
+    for channel in animation.channels() {
+        let reader = channel.reader(|buffer| Some(&buffers[buffer.index()]));
+        if let Some(last) = reader.read_inputs().and_then(|times| times.last()) {
+            duration = duration.max(last);
+        }
+    }
+    duration
+}
+
+/// Number of baked frames of an animation that lasts `duration` seconds.
+pub(super) fn frame_count_for(duration: f32, fps: f32, max_frames: u32) -> u32 {
+    let frames = ((duration * fps).ceil() as u32).saturating_add(1);
+    if frames > max_frames {
+        log::warn!("Animation is {duration}s long; clamping the bake to {max_frames} frames.");
+        return max_frames;
+    }
+    frames
+}
+
+/// Split a flat morph weight sequence into one entry per keyframe.
+///
+/// glTF stores a weights channel as `keyframe_count * target_count` floats, with
+/// all targets of one keyframe adjacent. A trailing partial keyframe is dropped.
+pub(super) fn split_weights(flat: &[f32], target_count: usize) -> Vec<Vec<f32>> {
+    if target_count == 0 {
+        return Vec::new();
+    }
+    if flat.len() % target_count != 0 {
+        log::warn!(
+            "Morph weight channel has {} values, which is not a multiple of {} targets; the trailing partial keyframe is dropped.",
+            flat.len(),
+            target_count
+        );
+    }
+    flat.chunks_exact(target_count).map(<[f32]>::to_vec).collect()
+}
+
+/// One mesh whose morph weights an animation drives.
+pub(super) struct MorphWeightTrack<'a> {
+    /// Index of the glTF mesh the weights channel targets.
+    pub mesh: usize,
+    /// The weights channel; every morph primitive of `mesh` is baked from it.
+    pub channel: gltf::animation::Channel<'a>,
+}
+
+/// What one glTF animation drives.
+#[derive(Default)]
+pub(super) struct AnimationClassification<'a> {
+    /// Skin whose joints the transform channels animate.
+    pub skin: Option<usize>,
+    /// Meshes with an animated weights channel, deduplicated, first-seen order.
+    pub morph_tracks: Vec<MorphWeightTrack<'a>>,
+    /// Scene the animation is scoped to, used to build the clip `source`.
+    pub scene: Option<usize>,
+}
+
+/// Decide what a glTF animation drives.
+///
+/// Transform channels bind the animation to the first skin that owns one of the
+/// animated nodes; weights channels bind it to the mesh of the animated node.
+/// A weights-only animation therefore gets no skin, but still produces assets.
+pub(super) fn classify_animation<'a>(
+    animation: &gltf::Animation<'a>,
+    document: &gltf::Document,
+    skin_usage: &HashMap<usize, SkinUsage>,
+) -> AnimationClassification<'a> {
+    let mut animated_nodes = HashSet::new();
+    let mut morph_tracks: Vec<MorphWeightTrack<'a>> = Vec::new();
+    let mut morph_meshes = HashSet::new();
+
+    for channel in animation.channels() {
+        // glTF channels always target a node; `Target::node` panics otherwise.
+        let node = channel.target().node();
+        if !matches!(channel.target().property(), gltf::animation::Property::MorphTargetWeights) {
+            animated_nodes.insert(node.index());
+            continue;
+        }
+
+        let Some(mesh) = node.mesh() else {
+            log::warn!(
+                "Animation '{}' animates morph weights of node {} which has no mesh; the channel is ignored.",
+                animation.name().unwrap_or("<unnamed>"),
+                node.index()
+            );
+            continue;
+        };
+        if !morph_meshes.insert(mesh.index()) {
+            log::warn!(
+                "Animation '{}' drives morph weights of mesh {} from several nodes; only the first channel is baked.",
+                animation.name().unwrap_or("<unnamed>"),
+                mesh.index()
+            );
+            continue;
+        }
+
+        morph_tracks.push(MorphWeightTrack { mesh: mesh.index(), channel });
+    }
+
+    let skin = if animated_nodes.is_empty() {
+        None
+    } else {
+        document.skins()
+            .find(|skin| skin.joints().any(|joint| animated_nodes.contains(&joint.index())))
+            .map(|skin| skin.index())
+    };
+
+    // Both tracks of one animation must end up with the same `source`, so the
+    // scene is resolved once: from the skin when there is one, otherwise from
+    // the node that carries the morph weights.
+    let scene = skin
+        .and_then(|skin| skin_usage.get(&skin).map(|usage| usage.scene))
+        .or_else(|| {
+            morph_tracks.first()
+                .and_then(|track| super::scene::scene_of_node(document, track.channel.target().node().index()))
+        });
+
+    AnimationClassification { skin, morph_tracks, scene }
 }
 
 /// Local rest transform of one node, in TRS form.
@@ -239,9 +369,10 @@ fn bake_frame(
         .collect()
 }
 
-/// Read every usable channel of an animation.
+/// Read every usable transform channel of an animation.
 ///
-/// Morph target weights and channels without a target node are skipped.
+/// Morph weight channels are baked separately by [`bake_morph_animation`].
+/// Channels without keyframe times are skipped.
 fn read_channels(animation: &gltf::Animation, buffers: &[gltf::buffer::Data]) -> Result<Vec<Channel>, GltfImportError> {
     use gltf::animation::util::ReadOutputs;
 
@@ -264,7 +395,7 @@ fn read_channels(animation: &gltf::Animation, buffers: &[gltf::buffer::Data]) ->
             ReadOutputs::Translations(iter) => ChannelValues::Translation(iter.collect()),
             ReadOutputs::Rotations(rotations) => ChannelValues::Rotation(rotations.into_f32().collect()),
             ReadOutputs::Scales(iter) => ChannelValues::Scale(iter.collect()),
-            ReadOutputs::MorphTargetWeights(_) => return Err(GltfImportError::UnsupportedFeature("morph target")),
+            ReadOutputs::MorphTargetWeights(_) => continue,
         };
 
         let is_cubic = sampler.interpolation() == gltf::animation::Interpolation::CubicSpline;
@@ -284,6 +415,9 @@ fn read_channels(animation: &gltf::Animation, buffers: &[gltf::buffer::Data]) ->
 /// `skin` supplies the joint order and inverse bind matrices; `mesh_node_index`
 /// is the node the skinned mesh is attached to, whose *rest* world transform is
 /// removed so the result stays in mesh space.
+///
+/// `duration` is the animation's duration, shared with the morph weight track so
+/// that both bakes produce the same frame count.
 pub(super) fn bake_animation(
     document: &gltf::Document,
     buffers: &[gltf::buffer::Data],
@@ -293,6 +427,7 @@ pub(super) fn bake_animation(
     mesh_node_index: usize,
     skin_name: String,
     source: String,
+    duration: f32,
     fps: f32,
 ) -> Result<SkinnedAnimationAsset, GltfImportError> {
     let joint_indices: Vec<usize> = skin.joints().map(|node| node.index()).collect();
@@ -318,15 +453,7 @@ pub(super) fn bake_animation(
     // this inverse matrix is needed in case the root of the mesh is not identical to the origin.
     let inverse_mesh_world = mesh_world.invert().ok_or(GltfImportError::NonInvertibleMeshTransform)?;
 
-    let duration = channels
-        .iter()
-        .filter_map(|channel| channel.times.last().copied())
-        .fold(0.0f32, f32::max);
-    let mut frame_count = ((duration * fps).ceil() as u32).saturating_add(1);
-    if frame_count > MAX_FRAMES {
-        log::warn!("Animation '{}' is {duration}s long; clamping the bake to {MAX_FRAMES} frames.", animation.name().unwrap_or("<unnamed>"));
-        frame_count = MAX_FRAMES;
-    }
+    let frame_count = frame_count_for(duration, fps, MAX_FRAMES);
 
     let joint_count = joint_indices.len();
     // Four texels per joint, four `f16` channels per texel.
@@ -395,6 +522,124 @@ pub(super) fn bake_animation(
     };
 
     Ok(SkinnedAnimationAsset { skin: skin_name, source, frames: frame_count, fps, texture })
+}
+
+/// Sample one keyframe of morph weights.
+///
+/// `keyframes` holds one entry per baked keyframe, each with `target_count`
+/// weights. Missing values (a truncated or short channel) read as zero, which is
+/// the glTF default weight.
+fn sample_weights(
+    times: &[f32],
+    keyframes: &[Vec<f32>],
+    target_count: usize,
+    time: f32,
+    step: bool,
+) -> Vec<f32> {
+    let mut weights = vec![0.0f32; target_count];
+    if keyframes.is_empty() || times.is_empty() {
+        return weights;
+    }
+
+    let (first, second, amount) = segment(times, time);
+    let first = first.min(keyframes.len() - 1);
+    let second = second.min(keyframes.len() - 1);
+    let a = &keyframes[first];
+    let b = &keyframes[second];
+
+    for (target, slot) in weights.iter_mut().enumerate() {
+        let a = a.get(target).copied().unwrap_or(0.0);
+        *slot = if step || first == second {
+            a
+        } else {
+            let b = b.get(target).copied().unwrap_or(0.0);
+            a + (b - a) * amount
+        };
+    }
+
+    weights
+}
+
+/// Append one texture row of morph weights.
+///
+/// Weights of up to four targets share a texel, so the row is `width` RGBA16F
+/// texels wide; targets beyond `weights` are zero.
+fn write_weight_row(texels: &mut Vec<u8>, weights: &[f32], width: u32) {
+    for x in 0..width as usize {
+        for channel in 0..4usize {
+            let value = weights.get(x * 4 + channel).copied().unwrap_or(0.0);
+            texels.extend_from_slice(&f32_to_f16_bits(value).to_le_bytes());
+        }
+    }
+}
+
+/// Bake the morph weight track of one glTF animation into a weight texture.
+///
+/// `duration` is the animation's duration, shared with the skeletal track so
+/// both bakes produce the same frame count (I4). `target_count` is the number of
+/// targets the owning morph primitive was imported with.
+///
+/// The texture is `width = ceil(target_count / 4)` texels by
+/// `height = frames + 1` rows: one row per frame plus the wrap-around row that
+/// repeats frame 0, exactly like the joint-matrix texture.
+pub(super) fn bake_morph_animation(
+    channel: &gltf::animation::Channel<'_>,
+    buffers: &[gltf::buffer::Data],
+    target_count: usize,
+    duration: f32,
+    fps: f32,
+    mesh: String,
+    target: String,
+    source: String,
+) -> Result<VertexMorphAnimationAsset, GltfImportError> {
+    use gltf::animation::util::ReadOutputs;
+
+    let reader = channel.reader(|buffer| Some(&buffers[buffer.index()]));
+
+    let times: Vec<f32> = reader.read_inputs()
+        .ok_or(GltfImportError::MalformedWeightChannel("no keyframe times"))?
+        .collect();
+    if times.is_empty() {
+        return Err(GltfImportError::MalformedWeightChannel("empty keyframe times"));
+    }
+
+    let flat: Vec<f32> = match reader.read_outputs() {
+        Some(ReadOutputs::MorphTargetWeights(weights)) => weights.into_f32().collect(),
+        _ => return Err(GltfImportError::MalformedWeightChannel("outputs are not morph target weights")),
+    };
+
+    let interpolation = channel.sampler().interpolation();
+    if interpolation == gltf::animation::Interpolation::CubicSpline {
+        return Err(GltfImportError::UnsupportedFeature("cubic interpolation"));
+    }
+    let step = interpolation == gltf::animation::Interpolation::Step;
+
+    let keyframes = split_weights(&flat, target_count);
+    let frame_count = frame_count_for(duration, fps, MAX_FRAMES);
+    // At least one texel per row, even for a target-less channel.
+    let width = target_count.div_ceil(4).max(1) as u32;
+
+    let mut texels = Vec::with_capacity(frame_count as usize * width as usize * 8);
+    for frame in 0..frame_count {
+        let weights = sample_weights(&times, &keyframes, target_count, frame as f32 / fps, step);
+        write_weight_row(&mut texels, &weights, width);
+    }
+    // Append frame 0 again, so the shader can interpolate into the next loop
+    // without a modulo.
+    let weights = sample_weights(&times, &keyframes, target_count, 0.0, step);
+    write_weight_row(&mut texels, &weights, width);
+
+    let texture = TextureAsset {
+        format: TextureFormat::Rgba16Float,
+        dimension: D2,
+        width: NonZero::new(width).ok_or(GltfImportError::ZeroDimension)?,
+        height: Some(NonZero::new(frame_count + 1).ok_or(GltfImportError::ZeroDimension)?),
+        depth_or_array_slice: None,
+        sampler: Sampler::default(),
+        texels: TexelData::Plain(texels.into_boxed_slice()),
+    };
+
+    Ok(VertexMorphAnimationAsset { mesh, target, source, frames: frame_count, fps, texture })
 }
 
 /// Convert an `f32` to IEEE-754 binary16 bits.
@@ -470,6 +715,81 @@ mod test {
         assert_eq!(f32_to_f16_bits(0.5), 0x3800);
         assert_eq!(f32_to_f16_bits(2.0), 0x4000);
         assert_eq!(f32_to_f16_bits(-2.0), 0xC000);
+    }
+
+    #[test]
+    fn both_tracks_share_the_frame_count_of_the_longest_channel() {
+        // Two channels of one animation ending at different times. The tracks
+        // must agree even though neither of them reaches the animation duration
+        // on its own.
+        let ends = [0.5f32, 2.0];
+        let duration = ends.iter().copied().fold(0.0f32, f32::max);
+
+        let skeletal = frame_count_for(duration, BAKE_FPS, MAX_FRAMES);
+        let morph = frame_count_for(duration, BAKE_FPS, MAX_FRAMES);
+
+        assert_eq!(skeletal, morph);
+        assert_eq!(skeletal, 61, "ceil(2.0 * 30) + 1 rows");
+        assert_ne!(
+            frame_count_for(ends[0], BAKE_FPS, MAX_FRAMES),
+            skeletal,
+            "per-track durations would have desynchronized the tracks"
+        );
+    }
+
+    #[test]
+    fn frame_count_is_clamped() {
+        assert_eq!(frame_count_for(0.0, BAKE_FPS, MAX_FRAMES), 1);
+        assert_eq!(frame_count_for(f32::MAX, BAKE_FPS, MAX_FRAMES), MAX_FRAMES);
+    }
+
+    #[test]
+    fn split_weights_groups_targets_by_keyframe() {
+        let flat = [0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
+
+        assert_eq!(
+            split_weights(&flat, 2),
+            vec![vec![0.0, 1.0], vec![2.0, 3.0], vec![4.0, 5.0], vec![6.0, 7.0]]
+        );
+        assert_eq!(
+            split_weights(&flat, 4),
+            vec![vec![0.0, 1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0, 7.0]]
+        );
+
+        // A trailing partial keyframe is dropped instead of panicking.
+        assert_eq!(split_weights(&[1.0, 2.0, 3.0], 2), vec![vec![1.0, 2.0]]);
+        assert!(split_weights(&flat, 0).is_empty());
+    }
+
+    #[test]
+    fn classifies_morph_only_and_skeletal_animations() {
+        // The cube is driven purely by morph weights: no skin, one morph mesh.
+        let (document, buffers, _) = gltf::import("resource/AnimatedMorphCube.glb")
+            .expect("the morph cube should load");
+        let animation = document.animations().next().expect("the cube has one animation");
+        let classification = classify_animation(&animation, &document, &HashMap::new());
+        assert_eq!(classification.skin, None, "weights-only animations drive no skin");
+        assert_eq!(
+            classification.morph_tracks.iter().map(|track| track.mesh).collect::<Vec<_>>(),
+            vec![0]
+        );
+        assert_eq!(classification.scene, Some(0));
+        assert!(animation_duration(&animation, &buffers) > 0.0);
+
+        // The fox is driven purely by transforms: one skin, no morph track.
+        let (document, buffers, _) = gltf::import("resource/Fox.glb")
+            .expect("the fox should load");
+        let skin_usage = crate::asset::importer::gltf_importer::GltfImporter::resolve_skin_usage(&document);
+        assert!(document.animations().count() > 0, "the fox has baked animations");
+        for animation in document.animations() {
+            let classification = classify_animation(&animation, &document, &skin_usage);
+            assert_eq!(classification.skin, Some(0), "the fox has a single skin");
+            assert!(
+                classification.morph_tracks.is_empty(),
+                "the fox has no morph targets"
+            );
+            assert!(animation_duration(&animation, &buffers) > 0.0);
+        }
     }
 
     #[test]
