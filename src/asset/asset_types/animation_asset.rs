@@ -7,6 +7,11 @@ use crate::asset::asset_types::{ConcreteAssetType, texture_asset::TextureAsset};
 pub struct SkinnedAnimationAsset {
     /// Name of the skin asset that this animation applies to.
     pub skin: String,
+    /// Import source this clip was baked from, as `scene{scene}/anim{animation}`.
+    ///
+    /// Both the skeletal track and the morph-weight track of the same glTF
+    /// animation share this identifier, so they can be merged into one clip.
+    pub source: String,
     /// Number of unique baked frames.
     ///
     /// [`Self::texture`] is one row taller for wrapping in the compute shader.
@@ -23,82 +28,119 @@ pub struct SkinnedAnimationAsset {
 }
 
 impl ConcreteAssetType for SkinnedAnimationAsset {
-    const SCHEMA_VERSION: u32 = 1;
+    // 2: Added `source` field.
+    const SCHEMA_VERSION: u32 = 2;
 }
 
-/// Data storage for morph targets of a mesh.
-/// 
-/// glTF spec mandates support for TEXCOORD_n and COLOR_n, which we are currently
-/// not supporting for simplicity.
-#[derive(Debug, Serialize, Deserialize)]
-pub enum VertexMorphTargetData {
-    Position(Vec<[f32; 3]>),
-    Normal(Vec<[f32; 3]>),
-    // glTF spec says that tangets must have 4 components.
-    // However I don't believe any morph targets can change handiness,
-    // which is a transform that can definitely not be interpolated linearly.
-    // Correction: morph target for tangents has 3 components only.
-    Tangent(Vec<[f32; 3]>)
+/// One glTF morph target.
+///
+/// The index of a target in [`VertexMorphTargetAsset::targets`] is its index in
+/// the glTF `weights` array, so every attribute delta stored here shares one
+/// weight. Missing attributes are `None` and occupy no GPU space.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct MorphTarget {
+    /// Per-vertex position deltas.
+    pub position : Option<Vec<[f32; 3]>>,
+    /// Per-vertex normal deltas. Renormalized after accumulation.
+    pub normal   : Option<Vec<[f32; 3]>>,
+    /// Per-vertex tangent deltas.
+    /// The handedness (`w`) does not take part in morphing.
+    pub tangent  : Option<Vec<[f32; 3]>>,
+    /// Per-vertex UV deltas.
+    /// Note: Reserved. The importer does not produce them yet.
+    pub texcoord0: Option<Vec<[f32; 2]>>,
+    /// Per-vertex color deltas.
+    /// 
+    /// A `VEC3` source yields an alpha delta of zero.
+    /// Note: Reserved.  The importer does not produce them yet.
+    pub color0   : Option<Vec<[f32; 4]>>,
+}
+
+impl MorphTarget {
+    /// Number of attribute slots the GPU layout and shaders reserve per target.
+    ///
+    /// The slot order is exactly the field order above.
+    /// Growing this count is a layout change the shader and the layout buffer
+    /// must be updated together.
+    pub const CHANNEL_COUNT: usize = 5;
+
+    /// Deltas of one attribute by slot index, in [`Self::CHANNEL_COUNT`] order.
+    /// 
+    /// TODO: I suppose all target should have the same size according to glTF spec.
+    /// Needs confirmation.
+    pub fn attribute_vertex_count(&self, channel: usize) -> Option<usize> {
+        match channel {
+            0 => self.position.as_ref().map(Vec::len),
+            1 => self.normal.as_ref().map(Vec::len),
+            2 => self.tangent.as_ref().map(Vec::len),
+            3 => self.texcoord0.as_ref().map(Vec::len),
+            4 => self.color0.as_ref().map(Vec::len),
+            _ => None,
+        }
+    }
 }
 
 /// Asset of containing all morph targets to a single skinned mesh.
-/// 
+///
 /// Vertex morph targets should be uploaded to GPU as storage buffers to be
 /// used in compute shaders.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VertexMorphTargetAsset {
     /// Skinned mesh that the morph target is attached to.
     pub mesh: String,
-    /// Channels of morph targets.
-    /// 
-    /// Up to 8 channels can be specified according to glTF spec.
-    /// 
-    /// For glTF these channels can be grouped up, so one morph target can
-    /// control multiple properties. When processing on GPU, these groupings
-    /// are ignored, and only weights are used, so channels in a single group
-    /// have their morph weights duplicated.
-    pub data: Vec<VertexMorphTargetData>
+    /// Morph targets of the mesh, indexed like the glTF `weights` array.
+    ///
+    /// Up to 8 targets can be specified according to glTF spec.
+    pub targets: Vec<MorphTarget>,
+    /// `mesh.weights` of the source mesh.
+    ///
+    /// Acts as the base shape when the playing clip has no weights track, i.e
+    /// as the neutral input of the morphing stage. `None` or all-zero means the
+    /// mesh has no static deformation.
+    pub default_weights: Option<Vec<f32>>,
 }
 
 impl ConcreteAssetType for VertexMorphTargetAsset {
-    const SCHEMA_VERSION: u32 = todo!();
+    const SCHEMA_VERSION: u32 = 1;
 }
 
 /// Asset for vertex morph animation.
-/// 
+///
 /// Vertex morphs are attached to meshes with morph targets, instead of skins.
 /// So they are managed separately.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VertexMorphAnimationAsset {
-    /// Mesh that the animation is attached to.
-    /// 
+    /// Skinned mesh that the animation is attached to.
+    ///
     /// Contrary to skeletal animations, vertex morph targets does not need
     /// a skin to work. They are instead attached to primitives, which we
     /// process as skinned mesh assets.
     pub mesh: String,
+    /// Morph target asset of this animation.
+    pub target: String,
+    /// Import source this clip was baked from, as `scene{scene}/anim{animation}`.
+    ///
+    /// Shared with the skeletal track of the same glTF animation. Together with
+    /// [`Self::mesh`] it identifies the clip the weights belong to.
+    pub source: String,
+    /// Number of unique baked frames.
+    ///
+    /// Computed from the same animation duration as the skeletal track, so both
+    /// tracks of one clip have an equal frame count.
     pub frames: u32,
     /// Playback rate the frames were baked at.
     pub fps: f32,
-    /// Morph target asset of this animation.
-    pub target: String,
-    /// Whether a channel in the morph target is enabled.
-    /// 
-    /// Has the same length as channels in the morph target.
-    /// Different from a zero weight, this flag controls reading on GPU to avoid
-    /// undefined behavior.
-    pub channel_enabled: Vec<bool>,
     /// Baked weight texture.
-    /// 
-    /// The texture has `height == frames + 1` and `width = floor(channels/4)`,
-    /// meaning weights of up to four channels can share a single texel per
+    ///
+    /// The texture has `height == frames + 1` and `width = ceil(targets/4)`,
+    /// meaning weights of up to four targets can share a single texel per
     /// frame. Compute shader should load morph target weights from the texture
     /// and manipulate vertex attributes accordingly.
-    /// 
-    /// Uses RGBA16 format by default.
+    ///
+    /// Uses RGBA16F format, dimension 2D.
     pub texture: TextureAsset
 }
 
 impl ConcreteAssetType for VertexMorphAnimationAsset {
-    const SCHEMA_VERSION: u32 = todo!();
+    const SCHEMA_VERSION: u32 = 1;
 }
-
