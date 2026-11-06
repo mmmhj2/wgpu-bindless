@@ -4,6 +4,10 @@ use crate::asset::{
     asset_store::{EnsureOutcome, ImportJob, ImportManifest, LoadReport, ManifestEntry, walk_asset_files}, asset_types::{self, Asset, AssetKind, AssetMetadata}, error::{AssetError, AssetIoError}, importer::{AssetImporter, ImporterContext, gltf_importer::GltfImporter, image_file_importer::{ImageArrayImporter, ImageFileImporter}}, provenance::{AssetTypeStamp, ImportProvenance, fingerprint_all, now_unix_ms},
 };
 
+/// TODO: the database is keyed by `String` names, so every lookup re-hashes
+/// and every consumer (`GpuAssetStore`, `ClipCatalog`) clones strings. Intern
+/// asset names into u32 ids handed out at insert. Keep strings only at the
+/// serialization boundary.
 pub struct AssetManager {
     asset_database : RwLock<HashMap<String, Arc<RwLock<Asset>>>>
 }

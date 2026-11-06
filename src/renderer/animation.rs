@@ -5,11 +5,22 @@
 //! and players.
 //! - `AnimationPlayer`: CPU side animation playback state tracker.
 //! - `AnimationClip`: abstraction over GPU resources of a clip.
-//! - `AnimationFrame`: information for GPU skinning dispatch.
+//! - `AnimationTracks`: the sampled tracks handed to the deformation dispatch.
 //! 
-//! TODO: when designing this class morph targets were not considered.
-//! Code logic is already starting to bloat.
-//! A refactor or total rewrite may be needed.
+//! TODO: `SkinnedAnimationFrame` and `MorphAnimationFrame` are identical, and
+//! the manager exposes a duplicated accessor pair for them. Collapse the two
+//! sample types into one and keep a single resolution path.
+//!
+//! TODO: the two named slots on [`AnimationClip`] are intentional and should
+//! stay named. A clip is scoped to one rig, and a rig consumes at most one
+//! joint track and one weight track. The deformation pipeline has exactly two
+//! consumers. A generic track list belongs at the asset layer, where a glTF
+//! animation may carry any number of morph-weight tracks.
+//!
+//! TODO: clips are registered per rig at upload time, while the asset layer
+//! still stores the skeletal and morph-weight halves of one glTF animation as
+//! two separate assets recombined by their shared `source` string. See the
+//! TODOs in `gpu_asset_store.rs` and `clip_catalog.rs`.
 
 use std::collections::HashMap;
 

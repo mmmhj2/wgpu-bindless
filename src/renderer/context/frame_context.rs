@@ -5,7 +5,9 @@ use crate::renderer::context::surface_context::SurfaceContext;
 
 /// Unified manager for color and depth render targets.
 pub struct Backbuffers {
-    /// Color back buffer for headless mode. Currently unused.
+    /// Color back buffer for headless mode.
+    /// TODO: implement headless rendering (an offscreen color target with no
+    /// surface) or remove this field.
     #[allow(dead_code)]
     color: Option<wgpu::Texture>,
     depth_format: wgpu::TextureFormat,
@@ -40,6 +42,12 @@ impl Backbuffers{
         };
 
         if needs_recreation {
+            // TODO: the depth texture is missing `TEXTURE_BINDING` usage. The
+            // PostFx stack already routes it as a `PostFxInput::Depth` input,
+            // so the first pass that declares `requires: [Depth]` will fail
+            // binding validation. Add the usage flag, and note that
+            // `Depth32Float` is non-filterable: consuming passes must declare
+            // `filterable: false` in their bind group layouts.
             self.depth = Some(device.create_texture(&wgpu::TextureDescriptor{
                 label: Some("depth backbuffer"),
                 size: wgpu::Extent3d { width: size.0.into(), height: size.1.into(), depth_or_array_layers: 1 },
@@ -52,6 +60,8 @@ impl Backbuffers{
             }))
         };
 
+        // TODO: the depth view is re-created every frame; cache it next to
+        // the texture and rebuild only on resize.
         Some(FrameContext {
             surface_texture: color_surface,
             color: color_view,

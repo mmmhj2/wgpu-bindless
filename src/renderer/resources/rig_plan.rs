@@ -90,7 +90,8 @@ impl RigStages {
 /// Which deformation stages one rig runs, and what its final vertex stream is.
 /// 
 /// TODO: maybe combine this struct with `RigStages`, as they are currently
-/// identical.
+/// identical. Fold this into the animation rewrite (see the module TODO in
+/// `renderer/animation.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RigPlan {
     stages: RigStages,

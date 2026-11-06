@@ -104,6 +104,9 @@ impl AssetImporter for GltfImporter {
             }
 
             // TODO: this loop has become somewhat messy. Needs cleaning up.
+            // Planned direction: extract the per-primitive decision (static
+            // variant vs. deformable asset vs. morph targets) into a planning
+            // step.
             for primitive in mesh.primitives() {
                 let skinnable = Self::has_skinning_attributes(&primitive);
                 let morph_targets = Self::has_morph_targets(&primitive);

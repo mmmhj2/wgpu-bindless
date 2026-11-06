@@ -13,6 +13,12 @@ use crate::{
 /// TODO: implement real RAII with this resource handle. Do need to carefully
 /// consider lifetime problems, as it basically re-introduces what is eliminated
 /// by a bindless approach.
+///
+/// Planned direction: keep per-resource guards out of bindless and make
+/// `GpuAssetStore` the single owner of bindings, with an explicit release
+/// path that frees the bindless slot. This requires generation-based handles
+/// first, so a released slot cannot be confused with a stale handle (see the
+/// TODO in `bindless.rs`).
 #[derive(Debug)]
 pub struct TextureBinding {
     /// The uploaded texture.

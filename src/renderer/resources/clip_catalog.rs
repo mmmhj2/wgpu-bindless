@@ -33,6 +33,9 @@ pub(crate) struct ClipCatalog {
 }
 
 impl ClipCatalog {
+    /// TODO: this scans (and string-clones out of) the entire asset database
+    /// on every `prepare_scene`. Once assets carry interned ids, build the
+    /// catalog incrementally on insert, or at least avoid the clones.
     pub(crate) fn from_assets(assets: &AssetManager) -> Self {
         let mut catalog = Self::default();
 

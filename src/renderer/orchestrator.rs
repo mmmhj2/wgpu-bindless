@@ -245,6 +245,9 @@ impl RenderOrchestrator {
     /// Returns `None` when the frame is skipped (vsync, occlusion, outdated
     /// swapchain), which is not an error.
     pub fn begin_frame(&mut self) -> Option<Frame<'_>> {
+        // TODO: move the redraw request to the caller (app layer). It is a
+        // windowing side effect hidden inside frame acquisition, and it blocks
+        // a future headless path.
         self.window.request_redraw();
 
         let frame = self
@@ -328,6 +331,12 @@ impl<'a> Frame<'a> {
     /// 
     /// TODO: Getting around this lifetime problem is awful. 
     /// Maybe we should redesign the interface around `Frame` and pipelines.
+    ///
+    /// Planned direction: callback-scoped entry points (e.g.
+    /// `with_scene_pass` / `with_compute_pass`) that borrow the pass and the
+    /// resources inside one closure, so nothing needs to outlive a call. The
+    /// frame can also ensure bound state internally, which makes the
+    /// panicking draw path unreachable (see the TODO in `draw_list.rs`).
     pub fn compute_pipelines(&self) -> &'a ComputePipelineLibrary { self.compute_pipelines }
 
     /// Read-only bindless resources, for passes that need the bind group.

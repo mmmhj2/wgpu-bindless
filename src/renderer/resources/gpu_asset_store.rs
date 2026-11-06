@@ -51,6 +51,13 @@ use crate::{
 /// instance that references it. Uploads only happen through
 /// [`Self::prepare_scene`] (or the individual accessors), which need an explicit
 /// [`SceneUploadContext`] and should be unreachable from the frame loop.
+///
+/// TODO: every map here is keyed by `String`, forcing clones on each lookup.
+/// We should intern asset names into ids (see the TODO in `asset_manager.rs`).
+/// TODO: the asset -> read -> kind-check boilerplate repeats in `texture`,
+/// `animation_texture`, `upload_morph_target`, `upload_morph_animation`,
+/// `static_batch` and `skinned_instance`. Factor it into a generic
+/// `asset_of_kind` helper.
 pub struct GpuAssetStore {
     /// Texture asset name -> uploaded texture + its bindless slots.
     textures: HashMap<String, TextureBinding>,
@@ -395,7 +402,9 @@ impl GpuAssetStore {
     /// TODO: Combining two halves of clips seems unnatural: glTF has
     /// a unified animation description for both morph and joints,
     /// but we split it in the asset system and recombine it here.
-    /// Figure out a better way as a part of the animation system rewrite.
+    /// Figure out a better way as a part of the animation system rewrite,
+    /// which plans to model a clip as a generic list of baked tracks (see
+    /// the module TODO in `renderer/animation.rs`).
     /// 
     /// TODO: maybe try lazy uploading?
     fn skinned_instance(

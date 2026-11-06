@@ -225,6 +225,8 @@ impl RendererState for State {
     }
 }
 
+// TODO: this handler duplicates `DefaultAppHandler` from the library. Extend
+// the library handler with a keyboard-input hook and use it here instead.
 struct MyAppState {
     state: Option<State>,
 }

@@ -6,12 +6,22 @@ use crate::{
     util::slot_table::SlotTable,
 };
 
+/// TODO: assert or clamp these against the adapter limits
+/// (`max_sampled_textures_per_shader_stage` and the sampler array limits) in
+/// `BindlessResources::new` instead of assuming every device accepts them.
 pub const MAX_TEXTURE_SLOTS: usize = 512;
 pub const MAX_SAMPLER_SLOTS: usize = 128;
 
 const TEXTURE_BITFIELD_WORDS: usize = MAX_TEXTURE_SLOTS / 64;
 const SAMPLER_BITFIELD_WORDS: usize = MAX_SAMPLER_SLOTS / 64;
 
+/// TODO: generation-based handles. This is a bare slot index, so a freed slot
+/// reused by a different texture silently aliases every stale handle (the
+/// classic ABA problem). It is currently masked only by the fact that nothing
+/// ever frees a slot. Pack `index + generation` into the `u32` (512 slots
+/// need only 9 index bits), store a per-slot generation in `SlotTable` that
+/// is bumped on removal, and resolve handles through a checked lookup
+/// instead of trusting the index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SampledTextureHandle(u32);
 
@@ -64,7 +74,9 @@ pub struct BindlessResources {
     bind_group_layout: wgpu::BindGroupLayout,
 
     // bind group is cached via interior mutability.
-    // Replace with mutex for multithreading.
+    // TODO: an explicit dirty flag checked when the bind group is bound
+    // (e.g. in `SceneContext::bind_globals`) removes the interior mutability
+    // while keeping the lazy rebuild, and is thread-ready without a mutex.
     cached_bind_group: RefCell<Option<wgpu::BindGroup>>
 }
 
@@ -238,7 +250,13 @@ impl BindlessResources {
     /// which is not supported by WGPU.
     /// (Apparently WGPU does not supports Vulkan null descriptor feature yet.)
     /// 
-    /// TODO: Cache the bind group to avoid rebuilding it every frame.
+    /// The bind group is cached (see `cached_bind_group`) and only rebuilt
+    /// after a table mutation invalidates it, so frames without uploads do
+    /// not pay a rebuild. Rebuilds still allocate the fallback-filled entry
+    /// vectors every time.
+    ///
+    /// TODO: pre-reserve the entry vectors so invalidation bursts (e.g. a
+    /// whole `prepare_scene`) do not reallocate per rebuild.
     pub fn get_bind_group(&self, device: &wgpu::Device) -> wgpu::BindGroup {
         assert!(self.sampled_textures.len() > 0);
         assert!(self.samplers.len() > 0);

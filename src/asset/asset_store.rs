@@ -14,8 +14,9 @@ use crate::asset::{
 /// stale. The objects here record only the configuration needed to rebuild a
 /// concrete [`AssetImporter`], not the runtime importer state.
 /// 
-/// *TODO:* Is it really necessary to create separate structs?
-/// Maybe we can just store the importer object.
+/// The separate structs are necessary, as [`ImportJob`] is the
+/// serialization object that round-trips through the flexbuffers manifest,
+/// while importers are stateful objects and cannot be serialized.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ImportJob {
     Gltf { path: PathBuf },

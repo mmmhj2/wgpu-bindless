@@ -68,7 +68,9 @@ impl DrawList {
     /// Must run before [`Self::draw`]. Drawing an unbound mesh panics.
     /// 
     /// TODO: return a token for safe drawing after bound, and make the panicking
-    /// unreachable.
+    /// unreachable. The other way around is the frame rework (see the TODO in
+    /// `orchestrator.rs`), which plans to use callback-scoped passes that ensure
+    /// bound state internally, which achieves the same guarantee without a token type.
     pub fn ensure_bound(
         &mut self,
         device: &wgpu::Device,
@@ -100,6 +102,11 @@ impl DrawList {
     }
 
     /// Issue draw calls to draw this list.
+    ///
+    /// TODO: no culling of any kind happens before recording: every batch and
+    /// every skinned mesh is drawn regardless of visibility. Add CPU frustum
+    /// culling against the camera planes; this needs per-mesh bounds, which
+    /// the importer should compute.
     /// 
     /// Panic
     /// ---

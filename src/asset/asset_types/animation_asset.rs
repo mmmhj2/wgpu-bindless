@@ -72,8 +72,10 @@ impl MorphTarget {
 
     /// Deltas of one attribute by slot index, in [`Self::CHANNEL_COUNT`] order.
     /// 
-    /// TODO: I suppose all target should have the same size according to glTF spec.
-    /// Needs confirmation.
+    /// TODO: since gltF channels have identical size, as the importer already
+    /// enforces, there is no need to pass the channel argument. Maybe two
+    /// methods (one for counts, one to query whether the channel exists)
+    /// are better.
     pub fn attribute_vertex_count(&self, channel: usize) -> Option<usize> {
         match channel {
             0 => self.position.as_ref().map(Vec::len),

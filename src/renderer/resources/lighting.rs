@@ -210,8 +210,18 @@ pub(crate) struct LightingUniform {
 /// The buffer is persistent: lights are uploaded by rewriting it in place, so
 /// the bind group can be created once and reused every frame.
 /// 
-/// TODO: Investigate sychronization implementation of WGPU. Maybe separate
-/// buffer per frame in rotation can improve performance.
+/// Synchronization note: no per-frame buffer rotation is needed. Per the
+/// wgpu specification, `Queue::write_buffer` transfers begin GPU execution
+/// "only on the next call to `Queue::submit()`, just before the explicitly
+/// submitted commands", i.e. ordered after all previously submitted work.
+/// A frame that is already submitted reads the data staged at its own
+/// submit, and later writes cannot corrupt it.
+///
+/// The remaining cost is that each `write_buffer` takes a fresh staging
+/// allocation that is only released after the next submission finishes.
+/// 
+/// TODO: add a dirty flag so an unchanged light set skips the per-frame
+/// upload (and its staging allocation) entirely.
 pub struct LightingManager {
     uniform_buffer: wgpu::Buffer,
     bind_group_layout: wgpu::BindGroupLayout,
