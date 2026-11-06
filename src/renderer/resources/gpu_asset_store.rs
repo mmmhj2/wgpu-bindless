@@ -14,9 +14,11 @@ use crate::{
             Asset,
             AssetData,
             AssetKind,
+            animation_asset::BakedTrack,
             scene_asset::SceneAsset,
             deformable_mesh_asset::DeformableMeshAsset,
             static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial},
+            texture_asset::TextureAsset,
         },
     },
     renderer::{
@@ -55,9 +57,8 @@ use crate::{
 /// TODO: every map here is keyed by `String`, forcing clones on each lookup.
 /// We should intern asset names into ids (see the TODO in `asset_manager.rs`).
 /// TODO: the asset -> read -> kind-check boilerplate repeats in `texture`,
-/// `animation_texture`, `upload_morph_target`, `upload_morph_animation`,
-/// `static_batch` and `skinned_instance`. Factor it into a generic
-/// `asset_of_kind` helper.
+/// `upload_clip_tracks`, `upload_morph_target`, `static_batch` and
+/// `skinned_instance`. Factor it into a generic `asset_of_kind` helper.
 pub struct GpuAssetStore {
     /// Texture asset name -> uploaded texture + its bindless slots.
     textures: HashMap<String, TextureBinding>,
@@ -68,14 +69,17 @@ pub struct GpuAssetStore {
     /// Shared across instances: only the deformed vertex buffers are
     /// per-instance, the rest pose geometry is immutable.
     skinned_geometry: HashMap<String, Arc<GpuSkinnedMesh>>,
-    /// Animation subasset name -> baked animation texture handle.
-    skinned_animations: HashMap<String, SampledTextureHandle>,
+    /// `(animation asset name, track index)` -> baked joint-matrix texture.
+    ///
+    /// Keyed per track, so a clip shared by several skinned instances occupies
+    /// one bindless slot per track instead of one per instance.
+    joint_textures: HashMap<(String, usize), SampledTextureHandle>,
     /// Morph target subasset name -> uploaded layout + deltas + base weights.
     ///
     /// Shared across instances, like the rest pose: only the weights vary.
     morph_targets: HashMap<String, Arc<GpuMorphTargets>>,
-    /// Morph animation subasset name -> baked weight texture handle.
-    morph_animations: HashMap<String, SampledTextureHandle>,
+    /// `(animation asset name, track index)` -> baked morph weight texture.
+    weight_textures: HashMap<(String, usize), SampledTextureHandle>,
 }
 
 impl GpuAssetStore {
@@ -84,18 +88,18 @@ impl GpuAssetStore {
             textures: HashMap::new(),
             static_meshes: HashMap::new(),
             skinned_geometry: HashMap::new(),
-            skinned_animations: HashMap::new(),
+            joint_textures: HashMap::new(),
             morph_targets: HashMap::new(),
-            morph_animations: HashMap::new(),
+            weight_textures: HashMap::new(),
         }
     }
 
     pub fn texture_count(&self) -> usize { self.textures.len() }
     pub fn static_mesh_count(&self) -> usize { self.static_meshes.len() }
     pub fn skinned_mesh_count(&self) -> usize { self.skinned_geometry.len() }
-    pub fn animation_count(&self) -> usize { self.skinned_animations.len() }
+    pub fn animation_count(&self) -> usize { self.joint_textures.len() }
     pub fn morph_target_count(&self) -> usize { self.morph_targets.len() }
-    pub fn morph_animation_count(&self) -> usize { self.morph_animations.len() }
+    pub fn morph_animation_count(&self) -> usize { self.weight_textures.len() }
 
     /// Uploaded morph targets of `name`, if they were uploaded.
     pub fn morph_target(&self, name: &str) -> Option<&Arc<GpuMorphTargets>> {
@@ -204,31 +208,69 @@ impl GpuAssetStore {
         Ok(uploaded)
     }
 
-    /// Upload a baked animation texture.
+    /// Upload the tracks of one animation asset that `rig` can consume.
     ///
-    /// Cached by asset name, so a clip shared by several skinned instances only
-    /// occupies one bindless texture slot.
-    fn animation_texture(
+    /// Each texture is cached per `(asset, track index)`, so a clip shared
+    /// by several instances of one rig uploads each texture once.
+    fn upload_clip_tracks(
         &mut self,
         ctx: &mut SceneUploadContext<'_>,
-        name: &str,
-    ) -> Result<SampledTextureHandle, UploadError> {
-        if let Some(cached) = self.skinned_animations.get(name) {
-            return Ok(*cached);
-        }
-
-        let asset = ctx.asset(name)?;
-        let asset = asset.read().map_err(|_| UploadError::AssetLockPoisoned(name.to_string()))?;
-        let AssetData::SkinnedAnimationAssetType(animation) = asset.get_data() else {
+        asset_name: &str,
+        rig: &RigSpec<'_>,
+    ) -> Result<(Option<SampledTextureHandle>, Option<SampledTextureHandle>), UploadError> {
+        let asset = ctx.asset(asset_name)?;
+        let asset = asset.read().map_err(|_| UploadError::AssetLockPoisoned(asset_name.to_string()))?;
+        let AssetData::AnimationAssetType(animation) = asset.get_data() else {
             return Err(UploadError::WrongKind {
-                name: name.to_string(),
+                name: asset_name.to_string(),
                 actual: asset.get_data().kind(),
-                expected: AssetKind::SkinnedAnimation,
+                expected: AssetKind::Animation,
             });
         };
 
-        let handle = ctx.upload.upload_texture(name, &animation.texture)?.handle;
-        self.skinned_animations.insert(name.to_string(), handle);
+        let mut joints = None;
+        let mut weights = None;
+        for (index, track) in animation.tracks.iter().enumerate() {
+            match track {
+                BakedTrack::Joints { skin, texture } if rig.has_skin && rig.skin == Some(skin.as_str()) => {
+                    joints = Some(Self::upload_track_texture(
+                        &mut self.joint_textures,
+                        ctx,
+                        format!("{asset_name}.joints"),
+                        (asset_name.to_string(), index),
+                        texture,
+                    )?);
+                }
+                BakedTrack::MorphWeights { mesh, texture, .. } if rig.has_target && mesh == rig.mesh => {
+                    weights = Some(Self::upload_track_texture(
+                        &mut self.weight_textures,
+                        ctx,
+                        format!("{asset_name}.weights"),
+                        (asset_name.to_string(), index),
+                        texture,
+                    )?);
+                }
+                _ => {}
+            }
+        }
+
+        Ok((joints, weights))
+    }
+
+    /// Upload one baked track texture, cached by `key`.
+    fn upload_track_texture(
+        cache: &mut HashMap<(String, usize), SampledTextureHandle>,
+        ctx: &mut SceneUploadContext<'_>,
+        label: String,
+        key: (String, usize),
+        texture: &TextureAsset,
+    ) -> Result<SampledTextureHandle, UploadError> {
+        if let Some(cached) = cache.get(&key) {
+            return Ok(*cached);
+        }
+
+        let handle = ctx.upload.upload_texture(&label, texture)?.handle;
+        cache.insert(key, handle);
         Ok(handle)
     }
 
@@ -258,33 +300,6 @@ impl GpuAssetStore {
         let uploaded = Arc::new(target.upload(name, &mut ctx.upload)?);
         self.morph_targets.insert(name.to_string(), uploaded.clone());
         Ok(uploaded)
-    }
-
-    /// Upload a baked morph weight texture.
-    ///
-    /// Cached by asset name, like [`Self::animation_texture`].
-    fn upload_morph_animation(
-        &mut self,
-        ctx: &mut SceneUploadContext<'_>,
-        name: &str,
-    ) -> Result<SampledTextureHandle, UploadError> {
-        if let Some(cached) = self.morph_animations.get(name) {
-            return Ok(*cached);
-        }
-
-        let asset = ctx.asset(name)?;
-        let asset = asset.read().map_err(|_| UploadError::AssetLockPoisoned(name.to_string()))?;
-        let AssetData::VertexMorphAnimationAssetType(animation) = asset.get_data() else {
-            return Err(UploadError::WrongKind {
-                name: name.to_string(),
-                actual: asset.get_data().kind(),
-                expected: AssetKind::VertexMorphAnimation,
-            });
-        };
-
-        let handle = ctx.upload.upload_texture(name, &animation.texture)?.handle;
-        self.morph_animations.insert(name.to_string(), handle);
-        Ok(handle)
     }
 
     /// Turn a scene asset into a draw list, uploading everything it references.
@@ -474,20 +489,12 @@ impl GpuAssetStore {
             base_weights_nonzero: morph.as_ref().is_some_and(|target| target.base_weights.is_some()),
         };
 
-        // Merge the two baked halves of every animation into one clip per
-        // `(source, rig)`. tracks the rig cannot consume are dropped there.
+        // Filter every animation asset down to the tracks this rig can consume.
         let clips = catalog.clips_for_rig(&rig);
         let rig_id = RigId::new(name);
         for clip in &clips {
             // TODO: lazy uploading of animation resources
-            let joints = match &clip.joints {
-                Some(asset_name) => Some(self.animation_texture(ctx, asset_name)?),
-                None => None,
-            };
-            let weights = match &clip.weights {
-                Some(asset_name) => Some(self.upload_morph_animation(ctx, asset_name)?),
-                None => None,
-            };
+            let (joints, weights) = self.upload_clip_tracks(ctx, &clip.asset, &rig)?;
             animations.register_clip(AnimationClip::new(
                 clip.name.clone(),
                 rig_id.clone(),

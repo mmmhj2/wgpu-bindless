@@ -4,7 +4,7 @@ mod test {
 
     use rust_renderer::asset::{
         asset_manager::AssetManager,
-        asset_types::{AssetData, texture_asset::TextureFormat},
+        asset_types::{animation_asset::BakedTrack, AssetData, texture_asset::TextureFormat},
         importer::gltf_importer::GltfImporter,
     };
 
@@ -164,11 +164,10 @@ mod test {
             let asset = manager.get_asset(&name)
                 .unwrap_or_else(|| panic!("animation '{name}' should be imported"));
             let asset = asset.read().unwrap();
-            let AssetData::SkinnedAnimationAssetType(animation) = asset.get_data() else {
-                panic!("'{name}' is not a skinned animation asset");
+            let AssetData::AnimationAssetType(animation) = asset.get_data() else {
+                panic!("'{name}' is not an animation asset");
             };
 
-            assert_eq!(animation.skin, skin_name);
             assert_eq!(
                 animation.source,
                 format!("scene0/anim{animation_index}"),
@@ -177,18 +176,22 @@ mod test {
             assert_eq!(animation.fps, 30.0);
             assert!(animation.frames > 1, "'{name}' should span more than one frame");
 
+            let texture = animation.joint_track(&skin_name)
+                .expect("a Fox animation must carry a joint track for the Fox skin")
+                .texture();
+
             // Four texels per joint, one row per baked frame plus the appended
             // wrap row that repeats frame 0, `Rgba16Float`.
-            assert_eq!(animation.texture.format, TextureFormat::Rgba16Float);
-            assert_eq!(animation.texture.width.get(), JOINT_COUNT as u32 * 4);
+            assert_eq!(texture.format, TextureFormat::Rgba16Float);
+            assert_eq!(texture.width.get(), JOINT_COUNT as u32 * 4);
             let rows = animation.frames + 1;
-            assert_eq!(animation.texture.height.unwrap().get(), rows);
+            assert_eq!(texture.height.unwrap().get(), rows);
 
-            let texels = match &animation.texture.texels {
+            let texels = match &texture.texels {
                 rust_renderer::asset::asset_types::texture_asset::TexelData::Plain(texels) => texels,
                 _ => panic!("baked animation must be a plain texture"),
             };
-            let frame_bytes = animation.texture.width.get() as usize * 8;
+            let frame_bytes = texture.width.get() as usize * 8;
             assert_eq!(texels.len(), frame_bytes * rows as usize);
 
             // The bake must actually vary over time. Looping animations repeat
@@ -270,14 +273,18 @@ mod test {
 
         let animation = manager.get_asset(&animation_name).expect("animation should be imported");
         let animation = animation.read().unwrap();
-        let AssetData::SkinnedAnimationAssetType(animation) = animation.get_data() else {
-            panic!("'{animation_name}' is not a skinned animation asset");
+        let AssetData::AnimationAssetType(animation) = animation.get_data() else {
+            panic!("'{animation_name}' is not an animation asset");
         };
-        let texels = match &animation.texture.texels {
+        let texture = animation.tracks.iter()
+            .find(|track| matches!(track, BakedTrack::Joints { .. }))
+            .expect("the Fox animation must carry a joint track")
+            .texture();
+        let texels = match &texture.texels {
             rust_renderer::asset::asset_types::texture_asset::TexelData::Plain(texels) => texels,
             _ => panic!("baked animation must be a plain texture"),
         };
-        let width = animation.texture.width.get() as usize;
+        let width = texture.width.get() as usize;
 
         // Skin the rest pose with frame 0 and compare the two bounding boxes.
         // A transposed matrix, a wrong texture layout or a wrong space would

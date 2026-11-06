@@ -88,6 +88,8 @@ impl RigId {
 /// loop without a modulo.
 #[derive(Debug, Clone)]
 pub struct AnimationClip {
+    /// Tthe `source` of the animation asset it was built from (e.g. `scene0/anim1`),
+    /// identifying the animation.
     name: String,
     rig: RigId,
     /// Baked joint matrices, or `None` when this clip does not drive a skeleton.

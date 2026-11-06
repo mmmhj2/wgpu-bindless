@@ -12,10 +12,10 @@
 use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::{Arc, RwLock}};
 
 use crate::asset::{
-    asset_types::{animation_asset::MAX_MORPH_TARGETS, Asset, AssetData, AssetMetadata},
+    asset_types::{animation_asset::{AnimationAsset, MAX_MORPH_TARGETS}, Asset, AssetData, AssetMetadata},
     error::ImportError,
     importer::{AssetImporter, ImporterContext, gltf_importer::{
-        animation::{animation_duration, bake_animation, bake_morph_animation, classify_animation, clip_source, BAKE_FPS},
+        animation::{animation_duration, bake_joint_track, bake_weight_track, classify_animation, clip_frame_count, clip_source, BAKE_FPS},
         common::GltfImportError,
         naming::SubAssetType,
         texture::MraoKey,
@@ -43,7 +43,9 @@ impl AssetImporter for GltfImporter {
     /// 7: morph target assets, and a clip `source` shared by both tracks.
     /// 8: `DeformableMeshAsset.skinning` is optional. Morph-only meshes store
     ///    `None` instead of an empty sentinel stream.
-    const IMPORTER_VERSION: u32 = 8;
+    /// 9: one glTF animation bakes into one `AnimationAsset` holding every
+    ///    track it drives, replacing the split skeletal / morph-weight assets.
+    const IMPORTER_VERSION: u32 = 9;
 
     fn import(mut self, context: &ImporterContext) -> Result<(), ImportError> {
         if !self.path.is_file() {
@@ -255,9 +257,8 @@ impl AssetImporter for GltfImporter {
         // Animations are baked right away: every frame is sampled on the CPU and
         // packed into a texture, so the runtime only has to pick a row per draw.
         //
-        // One glTF animation may drive a skin, morph weights, or both. Each half
-        // is baked into its own asset, but both share the frame count and the
-        // clip `source`, so the runtime can merge them back into one clip.
+        // One glTF animation becomes one asset holding every track it drives.
+        // Keeping the tracks together guarantees they share one clock.
         for animation in document.animations() {
             let classification = classify_animation(&animation, &document, &skin_usage);
             if classification.skin.is_none() && classification.morph_tracks.is_empty() {
@@ -276,8 +277,10 @@ impl AssetImporter for GltfImporter {
                 0
             });
             let source = clip_source(scene, animation.index());
-            // Shared by both tracks: same duration, same frame count.
+            // Every track of this clip is baked from the same duration.
             let duration = animation_duration(&animation, &buffers);
+
+            let mut tracks = Vec::new();
 
             if let Some(skin_index) = classification.skin {
                 match skin_inverse_bind_matrices.get(&skin_index) {
@@ -285,20 +288,10 @@ impl AssetImporter for GltfImporter {
                         let skin = document.skins().nth(skin_index)
                             .ok_or(GltfImportError::IndexOutOfRange(skin_index))?;
                         let usage = skin_usage[&skin_index];
-
-                        let asset_type = SubAssetType::Animation { scene: usage.scene, animation: animation.index() };
-                        let subasset_path = Self::generate_subasset_filename(path, asset_type)?;
-                        let subasset_name = Self::generate_subasset_name(path, asset_type)?.into_string()
-                            .map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
-                        log::info!(
-                            "Baking animation '{}' as {}.",
-                            animation.name().unwrap_or("<unnamed>"),
-                            subasset_name
-                        );
-
                         let skin_name = Self::generate_subasset_name(path, SubAssetType::Skin { scene: usage.scene, skin: skin_index })?
                             .into_string().map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
-                        let baked = bake_animation(
+
+                        tracks.push(bake_joint_track(
                             &document,
                             &buffers,
                             &animation,
@@ -306,15 +299,13 @@ impl AssetImporter for GltfImporter {
                             inverse_bind_matrices,
                             usage.node,
                             skin_name,
-                            source.clone(),
                             duration,
                             BAKE_FPS,
-                        )?;
-                        Self::queue_asset(context, subasset_name, subasset_path, AssetData::SkinnedAnimationAssetType(baked));
+                        )?);
                     }
                     None => {
                         log::warn!(
-                            "Skipping the skeletal track of animation '{}': skin {} was not imported.",
+                            "Skipping the joint track of animation '{}': skin {} was not imported.",
                             animation.name().unwrap_or("<unnamed>"),
                             skin_index
                         );
@@ -343,17 +334,7 @@ impl AssetImporter for GltfImporter {
                         SubAssetType::SkinnedPrimitive { mesh: mesh.index(), primitive: primitive.index() }
                     )?.into_string().map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
 
-                    let asset_type = SubAssetType::MorphAnimation {
-                        scene,
-                        animation: animation.index(),
-                        mesh: mesh.index(),
-                        primitive: primitive.index(),
-                    };
-                    let subasset_path = Self::generate_subasset_filename(path, asset_type)?;
-                    let subasset_name = Self::generate_subasset_name(path, asset_type)?.into_string()
-                        .map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
-
-                    let baked = bake_morph_animation(
+                    tracks.push(bake_weight_track(
                         &track.channel,
                         &buffers,
                         target_count,
@@ -361,11 +342,35 @@ impl AssetImporter for GltfImporter {
                         BAKE_FPS,
                         mesh_name,
                         target_name,
-                        source.clone(),
-                    )?;
-                    Self::queue_asset(context, subasset_name, subasset_path, AssetData::VertexMorphAnimationAssetType(baked));
+                    )?);
                 }
             }
+
+            if tracks.is_empty() {
+                log::warn!(
+                    "Animation '{}' produced no usable track; it is skipped.",
+                    animation.name().unwrap_or("<unnamed>")
+                );
+                continue;
+            }
+
+            let asset_type = SubAssetType::Animation { scene, animation: animation.index() };
+            let subasset_path = Self::generate_subasset_filename(path, asset_type)?;
+            let subasset_name = Self::generate_subasset_name(path, asset_type)?.into_string()
+                .map_err(|_| GltfImportError::InvalidSubresourceName(path.to_path_buf()))?;
+            log::info!(
+                "Baking animation '{}' as {} with {} track(s).",
+                animation.name().unwrap_or("<unnamed>"),
+                subasset_name,
+                tracks.len()
+            );
+
+            Self::queue_asset(context, subasset_name, subasset_path, AssetData::AnimationAssetType(AnimationAsset {
+                source,
+                tracks,
+                frames: clip_frame_count(duration),
+                fps: BAKE_FPS,
+            }));
         }
 
         Ok(())

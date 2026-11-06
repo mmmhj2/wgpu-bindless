@@ -2,34 +2,94 @@ use serde::{Deserialize, Serialize};
 
 use crate::asset::asset_types::{ConcreteAssetType, texture_asset::TextureAsset};
 
-
+/// One baked track of an animation.
+///
+/// A baked texture plus the identity of what it drives.
+/// 
+/// The list stays open-ended because an animation is a set of channels over
+/// different targets, so a future track kind (displacement, events) belongs here
+/// rather than in a new asset kind.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SkinnedAnimationAsset {
-    /// Name of the skin asset that this animation applies to.
-    pub skin: String,
+pub enum BakedTrack {
+    /// Joint matrices driving one skin.
+    Joints {
+        /// Skin asset this track animates.
+        skin: String,
+        /// Baked joint matrices.
+        ///
+        /// `width == joint_count * 4` and `height == frames + 1`. Each joint owns
+        /// four consecutive texels holding the four *columns* of its object-space
+        /// skinning matrix, so a joint matrix can be rebuilt with four
+        /// `textureLoad` calls.
+        texture: TextureAsset,
+    },
+    /// Morph weights driving one deformable mesh.
+    MorphWeights {
+        /// Deformable mesh asset this track animates.
+        mesh: String,
+        /// Morph target asset of that mesh.
+        target: String,
+        /// Baked weights.
+        ///
+        /// `width == ceil(targets / 4)` and `height == frames + 1`. Weights of up
+        /// to four targets share one texel per frame.
+        texture: TextureAsset,
+    },
+}
+
+impl BakedTrack {
+    /// The baked texture of this track.
+    pub fn texture(&self) -> &TextureAsset {
+        match self {
+            Self::Joints { texture, .. } | Self::MorphWeights { texture, .. } => texture,
+        }
+    }
+}
+
+/// One baked animation.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AnimationAsset {
     /// Import source this clip was baked from, as `scene{scene}/anim{animation}`.
     ///
-    /// Both the skeletal track and the morph-weight track of the same glTF
-    /// animation share this identifier, so they can be merged into one clip.
+    /// This is the clip identity: it names the clip in the runtime manager and is
+    /// the only identifier shared by every track of the animation.
     pub source: String,
-    /// Number of unique baked frames.
+    /// Every track the animation drives.
     ///
-    /// [`Self::texture`] is one row taller for wrapping in the compute shader.
+    /// At most one [`BakedTrack::Joints`] and any number of
+    /// [`BakedTrack::MorphWeights`], one per morphing primitive.
+    pub tracks: Vec<BakedTrack>,
+    /// Number of unique baked frames, shared by every track.
+    ///
+    /// Each track texture is one row taller, repeating frame 0 so looping needs
+    /// no modulo in the compute shader.
     pub frames: u32,
     /// Playback rate the frames were baked at.
     pub fps: f32,
-    /// Baked joint matrices.
-    ///
-    /// `width == joint_count * 4` and `height == frames + 1`. Each joint owns four
-    /// consecutive texels holding the four *columns* of its object-space
-    /// skinning matrix, so a joint matrix can be rebuilt with four `textureLoad`
-    /// calls.
-    pub texture: TextureAsset
 }
 
-impl ConcreteAssetType for SkinnedAnimationAsset {
-    // 2: Added `source` field.
-    const SCHEMA_VERSION: u32 = 2;
+impl AnimationAsset {
+    /// The joint track driving `skin`, if this animation carries one.
+    pub fn joint_track(&self, skin: &str) -> Option<&BakedTrack> {
+        self.tracks.iter().find(|track| match track {
+            BakedTrack::Joints { skin: track_skin, .. } => track_skin == skin,
+            BakedTrack::MorphWeights { .. } => false,
+        })
+    }
+
+    /// The weight track driving `mesh`, if this animation carries one.
+    pub fn weight_track(&self, mesh: &str) -> Option<&BakedTrack> {
+        self.tracks.iter().find(|track| match track {
+            BakedTrack::MorphWeights { mesh: track_mesh, .. } => track_mesh == mesh,
+            BakedTrack::Joints { .. } => false,
+        })
+    }
+}
+
+impl ConcreteAssetType for AnimationAsset {
+    /// 1: initial. Replaces the split skeletal and morph-weight animation assets,
+    ///    so both tracks of one glTF animation share one clock.
+    const SCHEMA_VERSION: u32 = 1;
 }
 
 /// Upper bound on morph targets per mesh primitive, matching the glTF limit.
@@ -109,46 +169,5 @@ pub struct VertexMorphTargetAsset {
 }
 
 impl ConcreteAssetType for VertexMorphTargetAsset {
-    const SCHEMA_VERSION: u32 = 1;
-}
-
-/// Asset for vertex morph animation.
-///
-/// Vertex morphs are attached to meshes with morph targets, instead of skins.
-/// So they are managed separately.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct VertexMorphAnimationAsset {
-    /// Skinned mesh that the animation is attached to.
-    ///
-    /// Contrary to skeletal animations, vertex morph targets does not need
-    /// a skin to work. They are instead attached to primitives, which we
-    /// process as skinned mesh assets.
-    pub mesh: String,
-    /// Morph target asset of this animation.
-    pub target: String,
-    /// Import source this clip was baked from, as `scene{scene}/anim{animation}`.
-    ///
-    /// Shared with the skeletal track of the same glTF animation. Together with
-    /// [`Self::mesh`] it identifies the clip the weights belong to.
-    pub source: String,
-    /// Number of unique baked frames.
-    ///
-    /// Computed from the same animation duration as the skeletal track, so both
-    /// tracks of one clip have an equal frame count.
-    pub frames: u32,
-    /// Playback rate the frames were baked at.
-    pub fps: f32,
-    /// Baked weight texture.
-    ///
-    /// The texture has `height == frames + 1` and `width = ceil(targets/4)`,
-    /// meaning weights of up to four targets can share a single texel per
-    /// frame. Compute shader should load morph target weights from the texture
-    /// and manipulate vertex attributes accordingly.
-    ///
-    /// Uses RGBA16F format, dimension 2D.
-    pub texture: TextureAsset
-}
-
-impl ConcreteAssetType for VertexMorphAnimationAsset {
     const SCHEMA_VERSION: u32 = 1;
 }

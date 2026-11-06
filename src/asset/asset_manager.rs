@@ -122,7 +122,7 @@ impl AssetManager {
             match self.load_asset_file(&path) {
                 Ok(_) => report.loaded += 1,
                 Err(e) => {
-                    log::warn!("skipping unreadable asset '{}': {e}", path.display());
+                    log::warn!("skipping unreadable asset '{}': {e:?}", path.display());
                     report.failed += 1;
                 }
             }

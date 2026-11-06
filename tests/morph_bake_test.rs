@@ -1,5 +1,5 @@
 //! Morph weight baking: weight texture layout, sampling against a CPU
-//! reference, and the clip identity shared with the skeletal track.
+//! reference, and the clip identity shared by every track of one animation.
 
 #[cfg(test)]
 mod test {
@@ -7,7 +7,7 @@ mod test {
 
     use rust_renderer::asset::{
         asset_manager::AssetManager,
-        asset_types::{AssetData, texture_asset::{TexelData, TextureFormat}},
+        asset_types::{animation_asset::BakedTrack, AssetData, texture_asset::{TexelData, TextureFormat}},
         importer::gltf_importer::GltfImporter,
     };
 
@@ -127,60 +127,63 @@ mod test {
         let (manager, glb) = import(&dir, "AnimatedMorphCube.glb");
         let (times, keyframes, duration) = cpu_weights(&glb);
 
-        let name = GltfImporter::morph_animation_subasset_name(&glb, 0, 0, 0, 0)
-            .expect("morph animation name should resolve");
+        let name = GltfImporter::animation_subasset_name(&glb, 0, 0)
+            .expect("animation name should resolve");
         assert!(
-            name.ends_with(".morphanim_0_0_0_0"),
-            "morph animations must follow `.morphanim_<scene>_<anim>_<mesh>_<prim>`, got '{name}'"
+            name.ends_with(".anim_0_0"),
+            "one glTF animation is one asset, named `.anim_<scene>_<anim>`, got '{name}'"
         );
 
-        let asset = manager.get_asset(&name).expect("morph animation should be imported");
+        let asset = manager.get_asset(&name).expect("the animation should be imported");
         let asset = asset.read().unwrap();
-        let AssetData::VertexMorphAnimationAssetType(morph) = asset.get_data() else {
-            panic!("'{name}' is not a morph animation asset");
+        let AssetData::AnimationAssetType(animation) = asset.get_data() else {
+            panic!("'{name}' is not an animation asset");
         };
 
+        let mesh_name = GltfImporter::skinned_primitive_subasset_name(&glb, 0, 0).unwrap();
+        let BakedTrack::MorphWeights { mesh, target, texture } = animation.weight_track(&mesh_name)
+            .expect("the cube animation must carry a weight track for the cube")
+        else {
+            panic!("the cube's track must be a morph weight track");
+        };
+
+        assert_eq!(mesh, &mesh_name, "the track must reference its deformable mesh");
         assert_eq!(
-            morph.mesh,
-            GltfImporter::skinned_primitive_subasset_name(&glb, 0, 0).unwrap(),
-            "the track must reference its deformable mesh"
-        );
-        assert_eq!(
-            morph.target,
-            GltfImporter::morph_target_subasset_name(&glb, 0, 0).unwrap(),
+            target,
+            &GltfImporter::morph_target_subasset_name(&glb, 0, 0).unwrap(),
             "the track must reference its morph target asset"
         );
-        assert_eq!(morph.source, "scene0/anim0", "the clip source identifies the glTF animation");
-        assert_eq!(morph.fps, 30.0);
+        assert_eq!(animation.source, "scene0/anim0", "the clip source identifies the glTF animation");
+        assert_eq!(animation.fps, 30.0);
 
-        // The frame count comes from the animation duration, which the skeletal
-        // track uses too, so both tracks stay in sync.
-        let expected_frames = ((duration * morph.fps).ceil() as u32) + 1;
-        assert_eq!(morph.frames, expected_frames, "frames = ceil(duration * fps) + 1");
-        assert!(morph.frames > 2, "the cube animation should span several frames");
+        // One clock for the whole clip, shared by every track of the animation.
+        let frames = animation.frames;
+        let expected_frames = ((duration * animation.fps).ceil() as u32) + 1;
+        assert_eq!(frames, expected_frames, "frames = ceil(duration * fps) + 1");
+        assert!(frames > 2, "the cube animation should span several frames");
 
-        assert_eq!(morph.texture.format, TextureFormat::Rgba16Float);
+        assert_eq!(texture.format, TextureFormat::Rgba16Float);
         assert_eq!(
-            morph.texture.width.get(),
+            texture.width.get(),
             1,
             "two targets must share a single texel per frame"
         );
         assert_eq!(
-            morph.texture.height.unwrap().get(),
-            morph.frames + 1,
+            texture.height.unwrap().get(),
+            frames + 1,
             "the texture needs one wrapping row on top of the baked frames"
         );
 
-        let texels = match &morph.texture.texels {
+        let texels = match &texture.texels {
             TexelData::Plain(texels) => texels,
             _ => panic!("baked weights must be a plain texture"),
         };
-        let width = morph.texture.width.get() as usize;
+        let width = texture.width.get() as usize;
         let frame_bytes = width * 8;
-        assert_eq!(texels.len(), frame_bytes * (morph.frames as usize + 1));
+        assert_eq!(texels.len(), frame_bytes * (frames as usize + 1));
 
-        for frame in [0, morph.frames / 2, morph.frames - 1] {
-            let time = frame as f32 / morph.fps;
+        for frame in [0, frames / 2, frames - 1] {
+            let time = frame as f32 / animation.fps;
             let expected = cpu_sample(&times, &keyframes, time);
             let texel = texel_at(texels, width, 0, frame as usize);
 
@@ -202,19 +205,19 @@ mod test {
 
         // The animation must actually animate.
         let first = texel_at(texels, width, 0, 0);
-        let middle = texel_at(texels, width, 0, morph.frames as usize / 2);
+        let middle = texel_at(texels, width, 0, frames as usize / 2);
         assert_ne!(first, middle, "the baked weights look constant");
 
         // The last row repeats frame 0, so the shader can wrap without a modulo.
         assert_eq!(
             &texels[..frame_bytes],
-            &texels[morph.frames as usize * frame_bytes..],
+            &texels[frames as usize * frame_bytes..],
             "the wrap row must repeat frame 0"
         );
     }
 
     #[test]
-    fn weights_only_animation_has_no_skeletal_track() {
+    fn weights_only_animation_has_no_joint_track() {
         let dir = temp_workspace(SOURCE_GLTF, "no_skeletal");
         let (manager, glb) = import(&dir, "AnimatedMorphCube.glb");
 
@@ -222,10 +225,16 @@ mod test {
         // the importer must not bake a joint-matrix track.
         let animation_name = GltfImporter::animation_subasset_name(&glb, 0, 0)
             .expect("animation name should resolve");
+        let asset = manager.get_asset(&animation_name).expect("the cube animation is one asset");
+        let asset = asset.read().unwrap();
+        let AssetData::AnimationAssetType(animation) = asset.get_data() else {
+            panic!("'{animation_name}' is not an animation asset");
+        };
         assert!(
-            manager.get_asset(&animation_name).is_none(),
-            "'{animation_name}' must not exist: the cube animation drives no skin"
+            animation.tracks.iter().all(|track| !matches!(track, BakedTrack::Joints { .. })),
+            "a weights-only animation must carry no joint track"
         );
+        assert_eq!(animation.tracks.len(), 1, "the cube has one morphing primitive");
 
         // `mesh.weights` becomes the static base shape of the target asset.
         let target_name = GltfImporter::morph_target_subasset_name(&glb, 0, 0)
@@ -253,21 +262,20 @@ mod test {
             let asset = manager.get_asset(&name)
                 .unwrap_or_else(|| panic!("animation '{name}' should be imported"));
             let asset = asset.read().unwrap();
-            let AssetData::SkinnedAnimationAssetType(animation) = asset.get_data() else {
-                panic!("'{name}' is not a skeletal animation asset");
+            let AssetData::AnimationAssetType(animation) = asset.get_data() else {
+                panic!("'{name}' is not an animation asset");
             };
             assert_eq!(
                 animation.source,
                 format!("scene0/anim{animation_index}"),
-                "the skeletal track must carry the clip source"
+                "every track of a clip is identified by the clip source"
+            );
+
+            // The fox has no morph targets, so no weight track may be baked.
+            assert!(
+                animation.tracks.iter().all(|track| !matches!(track, BakedTrack::MorphWeights { .. })),
+                "a mesh without morph targets must not produce a weight track"
             );
         }
-
-        // The fox has no morph targets, so no morph weight track may be baked.
-        let database = manager.get_database();
-        assert!(
-            database.iter().all(|(name, _)| !name.contains(".morphanim_")),
-            "a mesh without morph targets must not produce a morph animation asset"
-        );
     }
 }

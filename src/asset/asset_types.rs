@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::asset::{
     asset_types::{
-        animation_asset::{SkinnedAnimationAsset, VertexMorphAnimationAsset, VertexMorphTargetAsset}, deformable_mesh_asset::DeformableMeshAsset, scene_asset::SceneAsset, skin_asset::SkinAsset, static_mesh_asset::StaticMeshAsset, texture_asset::TextureAsset
+        animation_asset::{AnimationAsset, VertexMorphTargetAsset}, deformable_mesh_asset::DeformableMeshAsset, scene_asset::SceneAsset, skin_asset::SkinAsset, static_mesh_asset::StaticMeshAsset, texture_asset::TextureAsset
     }, error::AssetIoError, provenance::ImportProvenance
 };
 
@@ -58,10 +58,9 @@ pub enum AssetData {
     /// Asset type `SkinnedMeshAsset` has been renamed to [`DeformableMeshAsset`].
     /// The enum variant is kept intact for stable deserialization.
     SkinnedMeshAssetType(DeformableMeshAsset),
-    SkinnedAnimationAssetType(SkinnedAnimationAsset),
+    AnimationAssetType(AnimationAsset),
     SkinAssetType(SkinAsset),
-    VertexMorphTargetAssetType(VertexMorphTargetAsset),
-    VertexMorphAnimationAssetType(VertexMorphAnimationAsset)
+    VertexMorphTargetAssetType(VertexMorphTargetAsset)
 }
 
 impl AssetData {
@@ -72,10 +71,9 @@ impl AssetData {
             AssetData::TextureAssetType(_) => AssetKind::Texture,
             AssetData::SceneAssetType(_) => AssetKind::Scene,
             AssetData::SkinnedMeshAssetType(_) => AssetKind::SkinnedMesh,
-            AssetData::SkinnedAnimationAssetType(_) => AssetKind::SkinnedAnimation,
+            AssetData::AnimationAssetType(_) => AssetKind::Animation,
             AssetData::SkinAssetType(_) => AssetKind::Skin,
             AssetData::VertexMorphTargetAssetType(_) => AssetKind::VertexMorphTarget,
-            AssetData::VertexMorphAnimationAssetType(_) => AssetKind::VertexMorphAnimation,
         }
     }
 }
@@ -90,9 +88,19 @@ pub enum AssetKind {
     Texture,
     Scene,
     SkinnedMesh,
-    SkinnedAnimation,
+    Animation,
     Skin,
     VertexMorphTarget,
+    /// Legacy kind, never produced any more: one glTF animation now bakes into a
+    /// single [`Animation`](Self::Animation) asset.
+    ///
+    /// Kept because provenance stamps the whole set of kinds an import job
+    /// produced, so dropping the variant would make every container of that job
+    /// undecodable instead of just its animations.
+    /// 
+    /// TODO: maybe delete all imported assets, re-import, and remove these.
+    SkinnedAnimation,
+    /// Legacy kind, see [`SkinnedAnimation`](Self::SkinnedAnimation).
     VertexMorphAnimation
 }
 
@@ -104,10 +112,11 @@ impl AssetKind {
             AssetKind::Texture => <TextureAsset as ConcreteAssetType>::SCHEMA_VERSION,
             AssetKind::Scene => <SceneAsset as ConcreteAssetType>::SCHEMA_VERSION,
             AssetKind::SkinnedMesh => <DeformableMeshAsset as ConcreteAssetType>::SCHEMA_VERSION,
-            AssetKind::SkinnedAnimation => <SkinnedAnimationAsset as ConcreteAssetType>::SCHEMA_VERSION,
+            AssetKind::Animation => <AnimationAsset as ConcreteAssetType>::SCHEMA_VERSION,
             AssetKind::Skin => <SkinAsset as ConcreteAssetType>::SCHEMA_VERSION,
             AssetKind::VertexMorphTarget => <VertexMorphTargetAsset as ConcreteAssetType>::SCHEMA_VERSION,
-            AssetKind::VertexMorphAnimation => <VertexMorphAnimationAsset as ConcreteAssetType>::SCHEMA_VERSION,
+            AssetKind::SkinnedAnimation => 2,
+            AssetKind::VertexMorphAnimation => 1,
         }
     }
 }

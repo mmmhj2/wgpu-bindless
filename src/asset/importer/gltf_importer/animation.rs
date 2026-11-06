@@ -15,7 +15,7 @@ use std::{collections::{HashMap, HashSet}, num::NonZero};
 use cgmath::{InnerSpace, Matrix4, Quaternion, SquareMatrix, Vector3};
 
 use crate::asset::asset_types::{
-    animation_asset::{SkinnedAnimationAsset, VertexMorphAnimationAsset},
+    animation_asset::BakedTrack,
     texture_asset::{Sampler, TexelData, TextureAsset, TextureDimension::D2, TextureFormat},
 };
 use crate::util::f16::f32_to_f16_bits;
@@ -32,9 +32,10 @@ const MAX_FRAMES: u32 = 4096;
 
 /// Import source identifier of one glTF animation inside one glTF scene.
 ///
-/// The skeletal track and the morph weight track of the same glTF animation
-/// share this identifier, which is how the runtime merges the two halves back
-/// into a single clip.
+/// Every track of one glTF animation belongs to the same [`AnimationAsset`], and
+/// this string is that asset's clip identity.
+///
+/// [`AnimationAsset`]: crate::asset::asset_types::animation_asset::AnimationAsset
 pub(super) fn clip_source(scene: usize, animation: usize) -> String {
     format!("scene{scene}/anim{animation}")
 }
@@ -62,6 +63,16 @@ pub(super) fn frame_count_for(duration: f32, fps: f32, max_frames: u32) -> u32 {
         return max_frames;
     }
     frames
+}
+
+/// Number of frames every track of one clip is baked at.
+///
+/// Exposed so the importer can stamp the count on the [`AnimationAsset`] without
+/// having to re-derive it from a baked texture.
+///
+/// [`AnimationAsset`]: crate::asset::asset_types::animation_asset::AnimationAsset
+pub(super) fn clip_frame_count(duration: f32) -> u32 {
+    frame_count_for(duration, BAKE_FPS, MAX_FRAMES)
 }
 
 /// Split a flat morph weight sequence into one entry per keyframe.
@@ -143,13 +154,26 @@ pub(super) fn classify_animation<'a>(
         morph_tracks.push(MorphWeightTrack { mesh: mesh.index(), channel });
     }
 
-    let skin = if animated_nodes.is_empty() {
-        None
+    // A glTF animation may drive joints of more than one skin.
+    // Issue a warning and degrade gracefully.
+    let animated_skins: Vec<usize> = if animated_nodes.is_empty() {
+        Vec::new()
     } else {
-        document.skins()
-            .find(|skin| skin.joints().any(|joint| animated_nodes.contains(&joint.index())))
+        document
+            .skins()
+            .filter(|skin| skin.joints().any(|joint| animated_nodes.contains(&joint.index())))
             .map(|skin| skin.index())
+            .collect()
     };
+    if animated_skins.len() > 1 {
+        log::warn!(
+            "Animation '{}' drives {} skins ({animated_skins:?}); only skin {} is baked, the rest stay unanimated.",
+            animation.name().unwrap_or("<unnamed>"),
+            animated_skins.len(),
+            animated_skins[0]
+        );
+    }
+    let skin = animated_skins.first().copied();
 
     // Both tracks of one animation must end up with the same `source`, so the
     // scene is resolved once: from the skin when there is one, otherwise from
@@ -372,7 +396,7 @@ fn bake_frame(
 
 /// Read every usable transform channel of an animation.
 ///
-/// Morph weight channels are baked separately by [`bake_morph_animation`].
+/// Morph weight channels are baked separately by [`bake_weight_track`].
 /// Channels without keyframe times are skipped.
 fn read_channels(animation: &gltf::Animation, buffers: &[gltf::buffer::Data]) -> Result<Vec<Channel>, GltfImportError> {
     use gltf::animation::util::ReadOutputs;
@@ -411,15 +435,15 @@ fn read_channels(animation: &gltf::Animation, buffers: &[gltf::buffer::Data]) ->
     Ok(channels)
 }
 
-/// Bake one glTF animation into a joint-matrix texture.
+/// Bake the joint track of one glTF animation into a joint-matrix texture.
 ///
 /// `skin` supplies the joint order and inverse bind matrices; `mesh_node_index`
 /// is the node the skinned mesh is attached to, whose *rest* world transform is
 /// removed so the result stays in mesh space.
 ///
-/// `duration` is the animation's duration, shared with the morph weight track so
-/// that both bakes produce the same frame count.
-pub(super) fn bake_animation(
+/// `duration` is the animation's duration, shared with the weight tracks so that
+/// every track of one clip produces the same frame count.
+pub(super) fn bake_joint_track(
     document: &gltf::Document,
     buffers: &[gltf::buffer::Data],
     animation: &gltf::Animation,
@@ -427,10 +451,9 @@ pub(super) fn bake_animation(
     inverse_bind_matrices: &[[[f32; 4]; 4]],
     mesh_node_index: usize,
     skin_name: String,
-    source: String,
     duration: f32,
     fps: f32,
-) -> Result<SkinnedAnimationAsset, GltfImportError> {
+) -> Result<BakedTrack, GltfImportError> {
     let joint_indices: Vec<usize> = skin.joints().map(|node| node.index()).collect();
     if joint_indices.is_empty() {
         return Err(GltfImportError::MissingSkinningAttributes);
@@ -522,7 +545,7 @@ pub(super) fn bake_animation(
         texels: TexelData::Plain(texels.into_boxed_slice()),
     };
 
-    Ok(SkinnedAnimationAsset { skin: skin_name, source, frames: frame_count, fps, texture })
+    Ok(BakedTrack::Joints { skin: skin_name, texture })
 }
 
 /// Sample one keyframe of morph weights.
@@ -574,16 +597,16 @@ fn write_weight_row(texels: &mut Vec<u8>, weights: &[f32], width: u32) {
     }
 }
 
-/// Bake the morph weight track of one glTF animation into a weight texture.
+/// Bake the weight track of one glTF animation into a weight texture.
 ///
-/// `duration` is the animation's duration, shared with the skeletal track so
-/// both bakes produce the same frame count. `target_count` is the number of
+/// `duration` is the animation's duration, shared with every other track of the
+/// clip so they all produce the same frame count. `target_count` is the number of
 /// targets the owning morph primitive was imported with.
 ///
 /// The texture is `width = ceil(target_count / 4)` texels by
 /// `height = frames + 1` rows: one row per frame plus the wrap-around row that
 /// repeats frame 0, exactly like the joint-matrix texture.
-pub(super) fn bake_morph_animation(
+pub(super) fn bake_weight_track(
     channel: &gltf::animation::Channel<'_>,
     buffers: &[gltf::buffer::Data],
     target_count: usize,
@@ -591,8 +614,7 @@ pub(super) fn bake_morph_animation(
     fps: f32,
     mesh: String,
     target: String,
-    source: String,
-) -> Result<VertexMorphAnimationAsset, GltfImportError> {
+) -> Result<BakedTrack, GltfImportError> {
     use gltf::animation::util::ReadOutputs;
 
     let reader = channel.reader(|buffer| Some(&buffers[buffer.index()]));
@@ -640,7 +662,7 @@ pub(super) fn bake_morph_animation(
         texels: TexelData::Plain(texels.into_boxed_slice()),
     };
 
-    Ok(VertexMorphAnimationAsset { mesh, target, source, frames: frame_count, fps, texture })
+    Ok(BakedTrack::MorphWeights { mesh, target, texture })
 }
 
 #[cfg(test)]

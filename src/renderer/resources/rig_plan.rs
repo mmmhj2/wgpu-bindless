@@ -119,9 +119,9 @@ impl RigStages {
     pub fn from_assets(rig: &RigSpec<'_>, clips: &[ClipTracks]) -> Self {
         Self::from_capabilities(RigCapabilities {
             has_skin: rig.has_skin,
-            has_joint_track: clips.iter().any(|clip| clip.joints.is_some()),
+            has_joint_track: clips.iter().any(|clip| clip.joints),
             has_target: rig.has_target,
-            has_weight_track: clips.iter().any(|clip| clip.weights.is_some()),
+            has_weight_track: clips.iter().any(|clip| clip.weights),
             base_weights_nonzero: rig.base_weights_nonzero,
         })
     }

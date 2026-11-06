@@ -4,7 +4,7 @@ use bytemuck::Zeroable;
 
 use crate::{
     asset::asset_types::{
-        animation_asset::{MorphTarget, SkinnedAnimationAsset, VertexMorphAnimationAsset, VertexMorphTargetAsset, MAX_MORPH_TARGETS},
+        animation_asset::{MorphTarget, VertexMorphTargetAsset, MAX_MORPH_TARGETS},
         texture_asset::{Sampler, TexelData, TextureAsset, TextureDimension, TextureFormat},
     },
     renderer::upload::{
@@ -15,26 +15,6 @@ use crate::{
     },
     util::f16::f32_to_f16_bits,
 };
-
-impl GpuAssetType for SkinnedAnimationAsset {
-    type GpuObjectType = wgpu::Texture;
-
-    /// Upload the baked animation texture onto the GPU.
-    ///
-    /// Joint animations are baked into a 2D texture at import time, one row per
-    /// frame.
-    ///
-    /// The texture has the format of RGBA16 by default. If bandwidth turns out to
-    /// be a problem, RGBA8 may be used in the future. All transform data is baked
-    /// *in model space*, to be used directly in the compute shader.
-    fn upload(
-        &self,
-        name: &str,
-        ctx: &mut UploadContext<'_>,
-    ) -> Result<Self::GpuObjectType, UploadError> {
-        self.texture.upload(name, ctx)
-    }
-}
 
 /// Append one attribute block of a morph target to `deltas`.
 ///
@@ -173,17 +153,5 @@ fn base_weight_texture(weights: &[f32], channel_count: usize) -> TextureAsset {
         depth_or_array_slice: None,
         sampler: Sampler::default(),
         texels: TexelData::Plain(texels.into_boxed_slice()),
-    }
-}
-
-impl GpuAssetType for VertexMorphAnimationAsset {
-    type GpuObjectType = wgpu::Texture;
-
-    fn upload(
-        &self,
-        name: &str,
-        ctx: &mut UploadContext<'_>,
-    ) -> Result<Self::GpuObjectType, UploadError> {
-        self.texture.upload(name, ctx)
     }
 }

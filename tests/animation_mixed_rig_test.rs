@@ -27,7 +27,7 @@ mod test {
             asset_manager::AssetManager,
             asset_types::{
                 animation_asset::{
-                    MorphTarget, SkinnedAnimationAsset, VertexMorphAnimationAsset, VertexMorphTargetAsset,
+                    AnimationAsset, BakedTrack, MorphTarget, VertexMorphTargetAsset,
                 },
                 scene_asset::{SceneAsset, SceneNodeAsset},
                 skin_asset::{SkinAsset, SkinJoint},
@@ -209,24 +209,28 @@ mod test {
         save_asset(
             dir,
             "mixed.anim",
-            AssetData::SkinnedAnimationAssetType(SkinnedAnimationAsset {
-                skin: "mixed.skin".into(),
+            AssetData::AnimationAssetType(AnimationAsset {
                 source: "scene0/anim0".into(),
+                tracks: vec![BakedTrack::Joints {
+                    skin: "mixed.skin".into(),
+                    texture: joint_texture(),
+                }],
                 frames: 1,
                 fps: 30.0,
-                texture: joint_texture(),
             }),
         );
         save_asset(
             dir,
             "mixed.morphanim",
-            AssetData::VertexMorphAnimationAssetType(VertexMorphAnimationAsset {
-                mesh: "mixed.skpr".into(),
-                target: "mixed.morphtgt".into(),
+            AssetData::AnimationAssetType(AnimationAsset {
                 source: "scene0/anim1".into(),
+                tracks: vec![BakedTrack::MorphWeights {
+                    mesh: "mixed.skpr".into(),
+                    target: "mixed.morphtgt".into(),
+                    texture: weight_texture(1, &[vec![1.0], vec![1.0]]),
+                }],
                 frames: 1,
                 fps: 30.0,
-                texture: weight_texture(1, &[vec![1.0], vec![1.0]]),
             }),
         );
         save_asset(dir, "mixed.scene", AssetData::SceneAssetType(scene(&["mixed.skpr"])));
@@ -385,8 +389,8 @@ mod test {
         let default_clip = draw_list.animations().player(player).clip().expect("a default clip");
         assert_eq!(
             draw_list.animations().clip(default_clip).name(),
-            "mixed.anim",
-            "the joints-only clip sorts first"
+            "scene0/anim0",
+            "clips are named by source, and the joints-only one sorts first"
         );
 
         ensure_bound(&mut draw_list, &gpu, &compute);
@@ -409,7 +413,7 @@ mod test {
         // Clip B drives weights only. Morph applies +0.5 X, then skinning takes
         // the identity path and copies its input through.
         assert!(
-            draw_list.animations_mut().play_by_name(player, "mixed.morphanim"),
+            draw_list.animations_mut().play_by_name(player, "scene0/anim1"),
             "the weights-only clip should be registered for the rig"
         );
         dispatch(&draw_list, &gpu, &bindless, &compute);
