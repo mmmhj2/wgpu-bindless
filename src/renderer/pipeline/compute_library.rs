@@ -2,7 +2,9 @@ use std::{collections::HashMap, ops::Index};
 
 use wgpu::{BindGroupLayout, ComputePipeline, PipelineLayout};
 
-use crate::renderer::pipeline::compute_recipe::{ComputeRecipe, GpuSkinningComputeRecipe};
+use crate::renderer::pipeline::compute_recipe::{
+    ComputeRecipe, GpuSkinningComputeRecipe, GpuVertexMorphingRecipe,
+};
 
 
 /// Key for compute pipelines.
@@ -40,11 +42,23 @@ impl ComputePipelineLibrary {
     pub fn new(device: &wgpu::Device, bindless_layout: &wgpu::BindGroupLayout) -> Self {
         let mut cache = HashMap::new();
 
-        let recipe = GpuSkinningComputeRecipe::new(device);
-        let extra_bind_group_layouts = vec![recipe.bind_group_layout().clone()];
-        let (layout, pipeline) = recipe.build_pipeline_and_layout(device, bindless_layout);
+        let skinning = GpuSkinningComputeRecipe::new(device);
+        let skinning_bgl = skinning.bind_group_layout().clone();
+        let extra_bind_group_layouts = vec![skinning_bgl.clone()];
+        let (layout, pipeline) = skinning.build_pipeline_and_layout(device, bindless_layout);
         cache.insert(
             ComputePipelineKey::GpuSkinning,
+            ComputeEntry { layout, pipeline, extra_bind_group_layouts },
+        );
+
+        let morphing = GpuVertexMorphingRecipe::new(device, skinning_bgl);
+        let extra_bind_group_layouts = vec![
+            morphing.skinning_bind_group_layout().clone(),
+            morphing.morph_bind_group_layout().clone(),
+        ];
+        let (layout, pipeline) = morphing.build_pipeline_and_layout(device, bindless_layout);
+        cache.insert(
+            ComputePipelineKey::GpuVertexMorphing,
             ComputeEntry { layout, pipeline, extra_bind_group_layouts },
         );
 

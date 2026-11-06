@@ -79,6 +79,18 @@ fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
+    // A negative frame is the neutral input for a clip that carries no joints
+    // track. Return before reading joint data or any texture.
+    if (imm.frame < 0.0) {
+        let rest_attribute = attribute_in[index];
+        position_out[index].position = position_in[index].position;
+        attribute_out[index]._color = rest_attribute._color;
+        attribute_out[index].normal = rest_attribute.normal;
+        attribute_out[index].tangent = rest_attribute.tangent;
+        attribute_out[index]._uv0 = rest_attribute._uv0;
+        return;
+    }
+
     let bone = bones[index];
     let rest_attribute = attribute_in[index];
     let rest_position = unpack_vec3(position_in[index].position);

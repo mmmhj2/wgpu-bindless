@@ -59,6 +59,7 @@ mod test {
         bindless: &mut BindlessResources,
         compute: &ComputePipelineLibrary,
         animation: &TextureAsset,
+        frame: f32,
         positions: &[VertexBufferPosition],
         attributes: &[VertexBufferOthers],
         bones: &[VertexBufferSkinning],
@@ -81,10 +82,20 @@ mod test {
                 .handle
         };
 
+        // Initialize the outputs to zero so a skipped or partially written
+        // dispatch cannot pass by comparing against stale input data.
+        let zero_positions = vec![VertexBufferPosition { position: [0.0; 3] }; positions.len()];
+        let zero_attributes = vec![VertexBufferOthers {
+            color: [0.0; 4],
+            normal: [0.0; 3],
+            tangent: [0.0; 4],
+            uv0: [0.0; 2],
+        }; attributes.len()];
+
         let position_in = storage_buffer(device, queue, "test position in", positions, wgpu::BufferUsages::empty());
         let attribute_in = storage_buffer(device, queue, "test attribute in", attributes, wgpu::BufferUsages::empty());
-        let position_out = storage_buffer(device, queue, "test position out", positions, wgpu::BufferUsages::COPY_SRC);
-        let attribute_out = storage_buffer(device, queue, "test attribute out", attributes, wgpu::BufferUsages::COPY_SRC);
+        let position_out = storage_buffer(device, queue, "test position out", &zero_positions, wgpu::BufferUsages::COPY_SRC);
+        let attribute_out = storage_buffer(device, queue, "test attribute out", &zero_attributes, wgpu::BufferUsages::COPY_SRC);
         let bones_buffer = storage_buffer(device, queue, "test bones", bones, wgpu::BufferUsages::empty());
 
         let skinning_layout = compute
@@ -128,7 +139,7 @@ mod test {
             // Layout must stay in sync with `Immediate` in `gpu_skinning.wgsl`.
             let mut immediates = [0u8; 8];
             immediates[..4].copy_from_slice(&(animation_handle.index() as u32).to_le_bytes());
-            immediates[4..].copy_from_slice(&0u32.to_le_bytes());
+            immediates[4..].copy_from_slice(&frame.to_le_bytes());
             cp.set_immediates(0, &immediates);
 
             cp.dispatch_workgroups(1, 1, 1);
@@ -211,7 +222,7 @@ mod test {
 
         let animation = common::joint_matrix_texture(&ROTATION_Z_90);
         let (deformed_positions, deformed_attributes) =
-            run_skinning(&gpu, &mut bindless, &compute, &animation, &positions, &attributes, &bones);
+            run_skinning(&gpu, &mut bindless, &compute, &animation, 0.0, &positions, &attributes, &bones);
 
         // 90 degree rotation about +Z maps (x, y, z) to (-y, x, z).
         assert_vec3(deformed_positions[0], [0.0, 1.0, 0.0], "p0");
@@ -279,7 +290,7 @@ mod test {
         ];
 
         let (deformed_positions, deformed_attributes) =
-            run_skinning(&gpu, &mut bindless, &compute, &animation, &positions, &attributes, &bones);
+            run_skinning(&gpu, &mut bindless, &compute, &animation, 0.0, &positions, &attributes, &bones);
 
         assert_vec3(deformed_positions[0], [0.5, 0.5, 0.0], "blended");
         assert_vec3(deformed_positions[1], [0.0, 1.0, 0.0], "second slot only");
@@ -289,5 +300,47 @@ mod test {
         // 0.5*(0,1,0) + 0.5*(-1,0,0) = (-0.5,0.5,0) -> (-1,1,0)/sqrt(2).
         let expected_normal = [-0.707_106_8, 0.707_106_8, 0.0];
         assert_vec3(deformed_attributes[0].normal, expected_normal, "blended normal");
+    }
+
+    #[test]
+    fn negative_frame_copies_the_rest_pose_without_reading_joint_data() {
+        let (gpu, mut bindless, compute) = setup();
+
+        let positions = [
+            VertexBufferPosition { position: [1.0, 0.0, 0.0] },
+            VertexBufferPosition { position: [2.0, 3.0, 4.0] },
+        ];
+        let attributes = [
+            VertexBufferOthers {
+                color: [1.0, 0.0, 0.0, 1.0],
+                normal: [0.0, 1.0, 0.0],
+                tangent: [1.0, 0.0, 0.0, -1.0],
+                uv0: [0.25, 0.75],
+            },
+            VertexBufferOthers {
+                color: [0.0, 1.0, 0.0, 1.0],
+                normal: [1.0, 0.0, 0.0],
+                tangent: [0.0, 1.0, 0.0, 1.0],
+                uv0: [0.5, 0.5],
+            },
+        ];
+        let bones = [
+            VertexBufferSkinning { bone_indices: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            VertexBufferSkinning { bone_indices: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+        ];
+
+        let animation = common::joint_matrix_texture(&ROTATION_Z_90);
+        let (deformed_positions, deformed_attributes) =
+            run_skinning(&gpu, &mut bindless, &compute, &animation, -1.0, &positions, &attributes, &bones);
+
+        for (before, after) in positions.iter().zip(deformed_positions.iter()) {
+            assert_eq!(before.position, *after, "identity must preserve the position bit-for-bit");
+        }
+        for (before, after) in attributes.iter().zip(deformed_attributes.iter()) {
+            assert_eq!(before.color, after.color, "identity must preserve color");
+            assert_eq!(before.normal, after.normal, "identity must preserve normal");
+            assert_eq!(before.tangent, after.tangent, "identity must preserve tangents, including w");
+            assert_eq!(before.uv0, after.uv0, "identity must preserve uv0");
+        }
     }
 }

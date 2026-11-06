@@ -15,9 +15,13 @@ use rust_renderer::{app::{DefaultAppHandler, build_event_loop}, asset::asset_typ
 pub fn f16_bits(value: f32) -> u16 {
     match value {
         0.0 => 0x0000,
+        0.25 => 0x3400,
+        0.5 => 0x3800,
+        0.75 => 0x3A00,
         1.0 => 0x3C00,
+        2.0 => 0x4000,
         -1.0 => 0xBC00,
-        other => panic!("this helper only encodes 0/±1, got {other}"),
+        other => panic!("this helper only encodes the exact values the tests use, got {other}"),
     }
 }
 

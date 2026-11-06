@@ -136,37 +136,65 @@ impl ComputeRecipe for GpuSkinningComputeRecipe {
 }
 
 pub(super) struct GpuVertexMorphingRecipe {
-    bgl: wgpu::BindGroupLayout
+    /// Group 1: the same five storage buffers the skinning shader uses.
+    skinning_bgl: wgpu::BindGroupLayout,
+    /// Group 2: the morph layout table and the packed delta buffer.
+    morph_bgl: wgpu::BindGroupLayout,
 }
 
 impl GpuVertexMorphingRecipe {
     /// Predetermined bind group layouts for the morphing compute shader.
-    ///
-    /// TODO: `(layout, deltas)`. Kept empty until the shader side lands, so
-    /// that the constant stays evaluable.
-    const BGL_MORPHING: [wgpu::BindGroupLayoutEntry; 0] = [];
+    const BGL_MORPHING: [wgpu::BindGroupLayoutEntry; 2] = [
+        // Data-driven layout table: channel count, masks and offsets.
+        wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+        // Packed attribute deltas for every channel.
+        wgpu::BindGroupLayoutEntry {
+            binding: 1,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+    ];
 
-    pub fn new(device: &wgpu::Device) -> Self {
-        let bgl = device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor { 
-                label: None,
-                entries: &Self::BGL_MORPHING
+    pub fn new(device: &wgpu::Device, skinning_bgl: wgpu::BindGroupLayout) -> Self {
+        let morph_bgl = device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("GPU Vertex morphing bind group"),
+                entries: &Self::BGL_MORPHING,
             }
         );
 
-        Self { bgl }
+        Self { skinning_bgl, morph_bgl }
     }
-    pub fn bind_group_layout(&self) -> &wgpu::BindGroupLayout { &self.bgl }
+
+    /// Group 1 layout, shared with the skinning pipeline.
+    pub fn skinning_bind_group_layout(&self) -> &wgpu::BindGroupLayout { &self.skinning_bgl }
+
+    /// Group 2 layout, owned by the morphing pipeline.
+    pub fn morph_bind_group_layout(&self) -> &wgpu::BindGroupLayout { &self.morph_bgl }
 }
 
 impl ComputeRecipe for GpuVertexMorphingRecipe {
     const LABEL: &'static str = "GPU Vertex morphing";
     const SHADER_STRING: &'static str = include_str!("shaders/gpu_vertex_morph.wgsl");
     const ENTRY_POINT: &'static str = "cs_main";
-    /// TODO: determine push constant size.
-    const IMMEDIATE_SIZE: u32 = 0;
+    /// `{ tex: u32, frame: f32, channels: u32 }`.
+    const IMMEDIATE_SIZE: u32 = (std::mem::size_of::<u32>() * 3) as u32;
 
     fn get_extra_bind_groups<'a>(&'a self) -> Vec<Option<&'a wgpu::BindGroupLayout>> {
-        vec![Some(&self.bgl)]
+        vec![Some(&self.skinning_bgl), Some(&self.morph_bgl)]
     }
 }
