@@ -170,14 +170,13 @@ impl RenderOrchestrator {
     /// holds the per-batch and per-instance GPU state. Only buffers are created
     /// here: bind groups need a pipeline layout, so they are materialized on
     /// first use by [`DrawList::ensure_bound`] and
-    /// [`DrawList::ensure_skinning_bound`], which must run before drawing.
+    /// [`DrawList::ensure_deformation_bound`], which must run before drawing.
     /// On the other hand, textures stay owned by the store and the bindless
     /// table, so keeping the store alive may let a second scene reuse them
     /// instead of re-uploading.
     ///
     /// Errors
     /// ---
-    ///
     /// Any [`UploadError`] the individual assets produce are forwarded.
     /// 
     /// Panic

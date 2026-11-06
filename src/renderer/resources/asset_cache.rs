@@ -769,19 +769,14 @@ impl GpuAssetStore {
         let default_clip = animations.clips_for_rig(&rig_id).first().copied();
         animations.add_player(rig_id, default_clip);
 
-        // TODO: allocate the buffers of every planned stage and swap
-        // `get_vertex_buffer` over to `plan.final_buffer()`. Until then only a
-        // skinning stage allocates deformed buffers, and morph-only rigs render
-        // their rest pose.
-        let animated = plan.skins();
-
         AnimatedMesh::new(
             ctx.upload.device(),
             ctx.upload.queue(),
             geometry,
             material,
             world_matrix,
-            animated,
+            plan,
+            morph,
         )
     }
 }

@@ -1,7 +1,7 @@
 use crate::renderer::{
     animation::AnimationManager,
     drawable::{drawable_mesh_traits::DrawableMesh, skinned_mesh::AnimatedMesh, static_mesh_batch::StaticMeshBatch},
-    pipeline::compute_library::ComputeDispatchBindingSource,
+    pipeline::compute_library::{ComputeDispatchBindingSource, ComputePipelineLibrary},
     resources::mesh_layout::ModelMatrixBindingSource,
 };
 
@@ -41,26 +41,19 @@ impl DrawList {
     /// Advance every animation player by `dt` seconds.
     pub fn update_animations(&mut self, dt: f32) { self.animations.update(dt); }
 
-    /// Record one morphing dispatch per animated mesh.
-    /// 
-    /// Vertex morphing should be performed before any skinning.
-    /// 
-    /// The caller must already have bound the GPU morphing pipeline and the
-    /// global bindless bind group (group 0).
-    pub fn record_morphing(&self, cp: &mut wgpu::ComputePass) -> &Self {
-        todo!()
-    }
-
-    /// Record one skinning dispatch per animated mesh.
+    /// Record every deformation dispatch of every animated mesh.
     ///
-    /// The caller must already have bound the GPU skinning pipeline and the
-    /// global bindless bind group (group 0). Meshes without a clip (rest pose)
-    /// are skipped.
-    pub fn record_skinning(&self, cp: &mut wgpu::ComputePass) -> &Self {
+    /// Morphing runs before skinning for each mesh. Missing clip tracks are
+    /// deformed with a netural value. No stage is skipped because of a missing
+    /// track. The caller must already have bound the global bindless bind group
+    /// (group 0).
+    pub fn record_deformation(
+        &self,
+        cp: &mut wgpu::ComputePass,
+        pipelines: &ComputePipelineLibrary,
+    ) -> &Self {
         for (index, mesh) in self.skinned_opaque.iter().enumerate() {
-            if let Some(frame) = self.animations.skinned_frame(index) {
-                mesh.skin_with(cp, frame);
-            }
+            mesh.record_deformation(cp, pipelines, self.animations.frame(index));
         }
 
         self
@@ -90,38 +83,18 @@ impl DrawList {
         self
     }
 
-    /// Materialize the skinning dispatch bind groups.
+    /// Materialize the deformation dispatch bind groups.
     ///
-    /// Must run before the skinning compute pass records
-    /// [`crate::renderer::drawable::skinned_mesh::SkinnedMesh::skin_with`].
-    /// A no-op for static-only lists and for meshes without an animation.
-    /// 
-    /// Drawing an unbound skinned mesh panics.
-    pub fn ensure_skinning_bound(
+    /// Must run before the compute pass records
+    /// [`Self::record_deformation`]. A no-op for static-only lists and for rigs
+    /// without a deformation stage.
+    pub fn ensure_deformation_bound(
         &mut self,
         device: &wgpu::Device,
         bindings: &impl ComputeDispatchBindingSource,
     ) -> &mut Self {
         for mesh in &mut self.skinned_opaque {
-            mesh.ensure_skinning_bound(device, bindings);
-        }
-        self
-    }
-
-    /// Materialize the morphing dispatch bind groups.
-    ///
-    /// Must run before the morphing compute pass records
-    /// [`crate::renderer::drawable::skinned_mesh::AnimatedMesh::morph_with`].
-    /// A no-op for static-only lists and for meshes without an animation.
-    /// 
-    /// Drawing an unbound mesh with vertex morph panics.
-    pub fn ensure_morphing_bound(
-        &mut self,
-        device: &wgpu::Device,
-        bindings: &impl ComputeDispatchBindingSource
-    ) -> &mut Self {
-        for mesh in &mut self.skinned_opaque {
-            mesh.ensure_morphing_bound(device, bindings);
+            mesh.ensure_deformation_bound(device, bindings);
         }
         self
     }
