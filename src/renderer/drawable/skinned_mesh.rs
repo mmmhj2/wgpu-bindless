@@ -9,8 +9,8 @@ use crate::{
             pbr_material::PBRMaterial,
         },
         resources::{
-            asset_cache::{FinalBuffer, RigPlan, RigStages},
             mesh_layout::ModelMatrixBindingSource,
+            rig_plan::{FinalBuffer, RigPlan, RigStages},
         },
         upload::{
             buffer::upload_buffer,

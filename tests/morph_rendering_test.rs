@@ -23,9 +23,10 @@ mod test {
             },
             pipeline::compute_library::ComputePipelineLibrary,
             resources::{
-                asset_cache::{FinalBuffer, GpuAssetStore, RigStages, SceneUploadContext},
                 bindless::BindlessResources,
+                gpu_asset_store::{GpuAssetStore, SceneUploadContext},
                 mesh_layout::MeshLayout,
+                rig_plan::{FinalBuffer, RigStages},
             },
             upload::UploadContext,
         },

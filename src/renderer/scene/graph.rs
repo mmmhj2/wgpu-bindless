@@ -228,7 +228,7 @@ impl SceneGraph {
     /// performed (See [`prepare_scene`]). Whether or not multiple meshes are
     /// grouped and actually instanced is determined at upload time.
     /// 
-    /// [`prepare_scene`]: crate::renderer::resources::asset_cache::GpuAssetStore::prepare_scene
+    /// [`prepare_scene`]: crate::renderer::resources::gpu_asset_store::GpuAssetStore::prepare_scene
     pub fn plan_mesh_batches(&self) -> Vec<MeshBatchPlan<'_>> {
         plan_batches(self)
     }

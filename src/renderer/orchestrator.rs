@@ -18,9 +18,9 @@ use crate::{
             build_context::PostFxBuildContext,
             postfx_stack::{BindlessFrame, PostFxExtraInputs, PostFxInput, PostFxStack},
         }, resources::{
-            asset_cache::{GpuAssetStore, SceneUploadContext},
             bindless::BindlessResources,
             camera::CameraManager,
+            gpu_asset_store::{GpuAssetStore, SceneUploadContext},
             lighting::LightingManager,
             mesh_layout::MeshLayout,
         }, scene::context::SceneContext, upload::{context::UploadContext, error::UploadError},

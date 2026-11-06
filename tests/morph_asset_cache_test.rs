@@ -19,8 +19,8 @@ mod test {
             context::gpu_context::GpuContext,
             drawable::draw_list::DrawableType,
             resources::{
-                asset_cache::{GpuAssetStore, SceneUploadContext},
                 bindless::BindlessResources,
+                gpu_asset_store::{GpuAssetStore, SceneUploadContext},
             },
             upload::{GpuAssetType, UploadContext, UploadError, MAX_MORPH_TARGETS},
         },
