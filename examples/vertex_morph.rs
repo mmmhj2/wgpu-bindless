@@ -107,7 +107,7 @@ impl RendererState for State {
         let now = Instant::now();
         let dt = now.duration_since(self.last_tick).as_secs_f32();
         self.last_tick = now;
-        self.draw_list.update_animations(dt);
+        self.draw_list.animations_mut().update(dt);
 
         self.draw_list
             .ensure_bound(self.orchestrator.device(), self.orchestrator.mesh_layout())

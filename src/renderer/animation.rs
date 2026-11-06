@@ -5,12 +5,8 @@
 //! and players.
 //! - `AnimationPlayer`: CPU side animation playback state tracker.
 //! - `AnimationClip`: abstraction over GPU resources of a clip.
-//! - `AnimationTracks`: the sampled tracks handed to the deformation dispatch.
+//! - `ResolvedTracks`: the sampled tracks handed to the deformation dispatch.
 //! 
-//! TODO: `SkinnedAnimationFrame` and `MorphAnimationFrame` are identical, and
-//! the manager exposes a duplicated accessor pair for them. Collapse the two
-//! sample types into one and keep a single resolution path.
-//!
 //! TODO: the two named slots on [`AnimationClip`] are intentional and should
 //! stay named. A clip is scoped to one rig, and a rig consumes at most one
 //! joint track and one weight track. The deformation pipeline has exactly two
@@ -40,6 +36,20 @@ pub const MAX_ANIMATION_DELTA: f32 = 0.25;
 pub struct AnimationClipId(usize);
 
 impl AnimationClipId {
+    pub fn index(self) -> usize { self.0 }
+}
+
+/// Stable identifier of one player inside an [`AnimationManager`].
+///
+/// A player is created during `prepare_scene` and its id is stored on the
+/// [`AnimatedMesh`] it drives, so the draw path looks a player up by identity
+/// instead of by list position.
+///
+/// [`AnimatedMesh`]: crate::renderer::drawable::skinned_mesh::AnimatedMesh
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PlayerId(usize);
+
+impl PlayerId {
     pub fn index(self) -> usize { self.0 }
 }
 
@@ -170,16 +180,17 @@ impl AnimationClip {
     }
 }
 
-/// Resolved skinning input for one dispatch.
+/// One sampled track: which texture to read, and where in it.
+///
+/// Both deformation consumers address their texture the same way.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SkinnedAnimationFrame {
+pub struct TrackSample {
     texture: SampledTextureHandle,
     frame: f32,
 }
 
-impl SkinnedAnimationFrame {
-    /// Build a skinning input from a bindless texture handle and a fractional
-    /// frame.
+impl TrackSample {
+    /// Build a sample from a bindless texture handle and a fractional frame.
     ///
     /// This is the low-level escape hatch for callers that dispatch manually.
     /// Use [`AnimationManager::frame`] whenever possible.
@@ -188,36 +199,7 @@ impl SkinnedAnimationFrame {
     pub fn new(texture: SampledTextureHandle, frame: f32) -> Self {
         assert!(
             frame.is_finite() && frame >= 0.0,
-            "skinning frame must be finite and non-negative, got {frame}"
-        );
-        Self { texture, frame }
-    }
-
-    pub fn texture(&self) -> SampledTextureHandle { self.texture }
-    pub fn frame(&self) -> f32 { self.frame }
-}
-
-/// Resolved morph weight input for one dispatch.
-///
-/// `frame` indexes the baked weight rows exactly like [`SkinnedAnimationFrame`].
-/// 
-/// The morph shader also needs the target count, which comes from the mesh, not
-/// from the clip.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MorphAnimationFrame {
-    texture: SampledTextureHandle,
-    frame: f32,
-}
-
-impl MorphAnimationFrame {
-    /// Build a morph input from a bindless weights texture and a fractional
-    /// frame.
-    ///
-    /// Panics if `frame` is negative or not finite.
-    pub fn new(texture: SampledTextureHandle, frame: f32) -> Self {
-        assert!(
-            frame.is_finite() && frame >= 0.0,
-            "morph frame must be finite and non-negative, got {frame}"
+            "track sample frame must be finite and non-negative, got {frame}"
         );
         Self { texture, frame }
     }
@@ -228,13 +210,13 @@ impl MorphAnimationFrame {
 
 /// Both tracks of one clip at one instant.
 ///
-/// A track is `None` when the clip does not carry it. The deformation
-/// shaders then runs with its neutral input. No shader stages will
-/// be skipped to maintain a coherent pipeline topology.
+/// A track is `None` when the clip does not carry it. The deformation shader
+/// then runs with its neutral input. No shader stage is skipped, to keep the
+/// pipeline topology coherent.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AnimationTracks {
-    pub joints: Option<SkinnedAnimationFrame>,
-    pub weights: Option<MorphAnimationFrame>,
+pub struct ResolvedTracks {
+    pub joints: Option<TrackSample>,
+    pub weights: Option<TrackSample>,
 }
 
 
@@ -304,7 +286,7 @@ impl AnimationPlayer {
 /// The manager encapsulates CPU side management only. Actual skinning on the 
 /// GPU side is performed via [`DrawList`].
 /// 
-/// [`DrawList`]: crate::renderer:drawable::draw_list::DrawList
+/// [`DrawList`]: crate::renderer::drawable::draw_list::DrawList
 #[derive(Debug)]
 pub struct AnimationManager {
     clips: Vec<AnimationClip>,
@@ -349,11 +331,11 @@ impl AnimationManager {
         id
     }
 
-    /// Append one player, returning the index used by every player accessor.
+    /// Append one player, returning its stable identity.
     ///
-    /// The index is expected to line up with the owning draw list's animated
-    /// mesh order.
-    pub(crate) fn add_player(&mut self, rig: RigId, default: Option<AnimationClipId>) -> usize {
+    /// The id is stored on the mesh the player drives, so nothing depends on the
+    /// order players were created in.
+    pub(crate) fn add_player(&mut self, rig: RigId, default: Option<AnimationClipId>) -> PlayerId {
         if let Some(clip) = default {
             let clip_rig = self.clip(clip).rig();
             assert_eq!(
@@ -365,9 +347,9 @@ impl AnimationManager {
             );
         }
 
-        let index = self.players.len();
+        let id = PlayerId(self.players.len());
         self.players.push(AnimationPlayer::new(rig, default));
-        index
+        id
     }
 
     /// Advance every active player by `dt` seconds of wall-clock time.
@@ -444,59 +426,51 @@ impl AnimationManager {
 
     pub fn player_count(&self) -> usize { self.players.len() }
 
-    /// Player state by draw-list index.
+    /// Player state by id.
     ///
-    /// Panics if `index` is out of range.
-    pub fn player(&self, index: usize) -> &AnimationPlayer {
-        self.players.get(index).unwrap_or_else(|| {
+    /// Panics if `id` does not belong to this manager.
+    pub fn player(&self, id: PlayerId) -> &AnimationPlayer {
+        self.players.get(id.index()).unwrap_or_else(|| {
             panic!(
-                "animation player index {index} is out of range (player count {})",
+                "animation player {} is out of range (player count {})",
+                id.index(),
                 self.players.len()
             )
         })
     }
 
-    fn player_mut(&mut self, index: usize) -> &mut AnimationPlayer {
+    fn player_mut(&mut self, id: PlayerId) -> &mut AnimationPlayer {
         let count = self.players.len();
-        self.players.get_mut(index).unwrap_or_else(|| {
-            panic!("animation player index {index} is out of range (player count {count})")
+        self.players.get_mut(id.index()).unwrap_or_else(|| {
+            panic!("animation player {} is out of range (player count {count})", id.index())
         })
     }
 
     /// Resolve both tracks of one player's clip.
     ///
     /// Returns `None` when the player has no clip (the mesh renders its rest
-    /// pose) or when `index` is out of range. A missing track inside the returned
+    /// pose) or when `id` is out of range. A missing track inside the returned
     /// value means the clip does not carry it. Deformation shaders will still be
     /// run however.
-    pub fn frame(&self, index: usize) -> Option<AnimationTracks> {
-        let player = self.players.get(index)?;
+    pub fn frame(&self, id: PlayerId) -> Option<ResolvedTracks> {
+        let player = self.players.get(id.index())?;
         let clip_id = player.clip?;
         let clip = self.clip(clip_id);
         let frame = clip.frame_at(player.time, player.loop_mode);
 
-        Some(AnimationTracks {
-            joints: clip.joints_texture().map(|texture| SkinnedAnimationFrame::new(texture, frame)),
-            weights: clip.weights_texture().map(|texture| MorphAnimationFrame::new(texture, frame)),
+        Some(ResolvedTracks {
+            joints: clip.joints_texture().map(|texture| TrackSample::new(texture, frame)),
+            weights: clip.weights_texture().map(|texture| TrackSample::new(texture, frame)),
         })
-    }
-
-    /// Resolve the skinning track of one player.
-    ///
-    /// Convenience wrapper over [`Self::frame`] for callers that only dispatch
-    /// skinning. Returns `None` when there is no clip or the clip carries no
-    /// joints track.
-    pub fn skinned_frame(&self, index: usize) -> Option<SkinnedAnimationFrame> {
-        self.frame(index)?.joints
     }
 
     /// Select a clip and restart playback from time zero.
     ///
     /// Panics if the clip belongs to a different rig than the player, or if
     /// either id is out of range.
-    pub fn play(&mut self, index: usize, clip: AnimationClipId) {
+    pub fn play(&mut self, id: PlayerId, clip: AnimationClipId) {
         let clip_rig = self.clip(clip).rig().clone();
-        let player = self.player_mut(index);
+        let player = self.player_mut(id);
         assert_eq!(
             player.rig, clip_rig,
             "cannot play a clip of rig '{}' on a '{}' player",
@@ -513,11 +487,11 @@ impl AnimationManager {
     /// Select a clip by name, scoped to the player's rig.
     ///
     /// Returns `false` (and logs a warning) when the name is unknown for that rig.
-    pub fn play_by_name(&mut self, index: usize, name: &str) -> bool {
-        let rig = self.player(index).rig().clone();
+    pub fn play_by_name(&mut self, id: PlayerId, name: &str) -> bool {
+        let rig = self.player(id).rig().clone();
         match self.find_clip(&rig, name) {
             Some(clip) => {
-                self.play(index, clip);
+                self.play(id, clip);
                 true
             }
             None => {
@@ -530,12 +504,12 @@ impl AnimationManager {
         }
     }
 
-    pub fn pause(&mut self, index: usize) { self.player_mut(index).paused = true; }
-    pub fn resume(&mut self, index: usize) { self.player_mut(index).paused = false; }
+    pub fn pause(&mut self, id: PlayerId) { self.player_mut(id).paused = true; }
+    pub fn resume(&mut self, id: PlayerId) { self.player_mut(id).paused = false; }
 
     /// Restart the current clip from time zero without changing the selection.
-    pub fn restart(&mut self, index: usize) {
-        let player = self.player_mut(index);
+    pub fn restart(&mut self, id: PlayerId) {
+        let player = self.player_mut(id);
         player.time = 0.0;
         player.finished = false;
         player.paused = false;
@@ -544,15 +518,15 @@ impl AnimationManager {
     /// Jump to `time`, normalizing it for the player's loop mode.
     ///
     /// Panics if `time` is not finite.
-    pub fn seek(&mut self, index: usize, time: f32) {
+    pub fn seek(&mut self, id: PlayerId, time: f32) {
         assert!(time.is_finite(), "animation seek time must be finite, got {time}");
 
         let (clip, mode) = {
-            let player = self.player(index);
+            let player = self.player(id);
             (player.clip, player.loop_mode)
         };
         let Some(clip_id) = clip else {
-            self.player_mut(index).time = 0.0;
+            self.player_mut(id).time = 0.0;
             return;
         };
         let (duration, end) = {
@@ -560,7 +534,7 @@ impl AnimationManager {
             (clip.duration(), clip.last_unique_time())
         };
 
-        let player = self.player_mut(index);
+        let player = self.player_mut(id);
         match mode {
             LoopMode::Loop => {
                 player.time = time.rem_euclid(duration);
@@ -576,22 +550,22 @@ impl AnimationManager {
     /// Set one player's local time scale.
     ///
     /// Panics unless `speed` is finite and non-negative.
-    pub fn set_player_speed(&mut self, index: usize, speed: f32) {
+    pub fn set_player_speed(&mut self, id: PlayerId, speed: f32) {
         assert!(
             speed.is_finite() && speed >= 0.0,
             "animation player speed must be finite and non-negative, got {speed}"
         );
-        self.player_mut(index).speed = speed;
+        self.player_mut(id).speed = speed;
     }
 
     /// Switch one player between looping and one-shot playback.
-    pub fn set_player_loop_mode(&mut self, index: usize, mode: LoopMode) {
+    pub fn set_player_loop_mode(&mut self, id: PlayerId, mode: LoopMode) {
         let end = {
-            let player = self.player(index);
+            let player = self.player(id);
             player.clip.map(|clip| self.clip(clip).last_unique_time())
         };
 
-        let player = self.player_mut(index);
+        let player = self.player_mut(id);
         if player.loop_mode == mode {
             return;
         }
@@ -669,62 +643,64 @@ mod test {
     fn update_advances_looping_players_and_clamps_dt() {
         let mut manager = AnimationManager::new();
         let id = manager.register_clip(clip("a", "skin", 30, 30.0));
-        manager.add_player(rig("skin"), Some(id));
+        let player = manager.add_player(rig("skin"), Some(id));
 
         manager.update(0.1);
-        approx(manager.player(0).time(), 0.1);
+        approx(manager.player(player).time(), 0.1);
 
         // A stalled frame must not teleport the animation.
         manager.update(10.0);
-        approx(manager.player(0).time(), 0.35);
+        approx(manager.player(player).time(), 0.35);
 
         // And looping wraps around.
         for _ in 0..10 {
             manager.update(0.1);
         }
-        approx(manager.player(0).time(), 0.35);
+        approx(manager.player(player).time(), 0.35);
     }
 
     #[test]
     fn pause_freeze_and_speed_scale_are_independent() {
         let mut manager = AnimationManager::new();
         let id = manager.register_clip(clip("a", "skin", 30, 30.0));
-        manager.add_player(rig("skin"), Some(id));
+        let player = manager.add_player(rig("skin"), Some(id));
 
-        manager.pause(0);
+        manager.pause(player);
         manager.update(0.1);
-        approx(manager.player(0).time(), 0.0);
+        approx(manager.player(player).time(), 0.0);
 
-        manager.resume(0);
-        manager.set_player_speed(0, 2.0);
+        manager.resume(player);
+        manager.set_player_speed(player, 2.0);
         manager.update(0.1);
-        approx(manager.player(0).time(), 0.2);
+        approx(manager.player(player).time(), 0.2);
 
         manager.set_paused(true);
         manager.update(0.1);
-        approx(manager.player(0).time(), 0.2);
+        approx(manager.player(player).time(), 0.2);
 
         manager.set_paused(false);
         manager.set_time_scale(0.5);
         manager.update(0.1);
-        approx(manager.player(0).time(), 0.3);
+        approx(manager.player(player).time(), 0.3);
     }
 
     #[test]
     fn once_players_finish_and_hold_the_last_frame() {
         let mut manager = AnimationManager::new();
         let id = manager.register_clip(clip("a", "skin", 30, 30.0));
-        manager.add_player(rig("skin"), Some(id));
-        manager.set_player_loop_mode(0, LoopMode::Once);
+        let player = manager.add_player(rig("skin"), Some(id));
+        manager.set_player_loop_mode(player, LoopMode::Once);
 
         for _ in 0..20 {
             manager.update(0.1);
         }
 
-        let player = manager.player(0);
-        assert!(player.is_finished());
-        approx(player.time(), 29.0 / 30.0);
-        approx(manager.skinned_frame(0).expect("player has a clip").frame(), 29.0);
+        let state = manager.player(player);
+        assert!(state.is_finished());
+        approx(state.time(), 29.0 / 30.0);
+
+        let joints = manager.frame(player).expect("player has a clip").joints;
+        approx(joints.expect("joints track").frame(), 29.0);
     }
 
     #[test]
@@ -733,26 +709,26 @@ mod test {
         let first = manager.register_clip(clip("a", "skin", 30, 30.0));
         let second = manager.register_clip(clip("b", "skin", 60, 30.0));
         let foreign = manager.register_clip(clip("c", "other", 30, 30.0));
-        manager.add_player(rig("skin"), Some(first));
-        manager.add_player(rig("skin"), Some(first));
+        let a = manager.add_player(rig("skin"), Some(first));
+        let b = manager.add_player(rig("skin"), Some(first));
 
         manager.update(0.5);
-        manager.play(0, second);
-        assert_eq!(manager.player(0).clip(), Some(second));
-        approx(manager.player(0).time(), 0.0);
+        manager.play(a, second);
+        assert_eq!(manager.player(a).clip(), Some(second));
+        approx(manager.player(a).time(), 0.0);
 
         manager.update(0.5);
-        assert_eq!(manager.player(1).clip(), Some(first));
-        approx(manager.player(1).time(), 0.5);
+        assert_eq!(manager.player(b).clip(), Some(first));
+        approx(manager.player(b).time(), 0.5);
 
-        assert!(!manager.play_by_name(0, "c"));
-        assert!(!manager.play_by_name(0, "missing"));
-        assert!(manager.play_by_name(0, "a"));
-        assert_eq!(manager.player(0).clip(), Some(first));
+        assert!(!manager.play_by_name(a, "c"));
+        assert!(!manager.play_by_name(a, "missing"));
+        assert!(manager.play_by_name(a, "a"));
+        assert_eq!(manager.player(a).clip(), Some(first));
 
         // Cross-rig selection through the id API is a programmer error.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            manager.play(0, foreign);
+            manager.play(a, foreign);
         }));
         assert!(result.is_err());
     }
@@ -780,35 +756,31 @@ mod test {
         let weights_only = manager.register_clip(bundled_clip("weights", "rig", None, Some(3)));
         // Clip with joints only, i.e. the classic skeletal case.
         let joints_only = manager.register_clip(bundled_clip("joints", "rig", Some(4), None));
-        manager.add_player(rig("rig"), Some(both));
+        let player = manager.add_player(rig("rig"), Some(both));
 
-        let tracks = manager.frame(0).expect("the player has a clip");
+        let tracks = manager.frame(player).expect("the player has a clip");
         assert!(tracks.joints.is_some() && tracks.weights.is_some());
 
-        manager.play(0, weights_only);
-        let tracks = manager.frame(0).expect("the player has a clip");
+        manager.play(player, weights_only);
+        let tracks = manager.frame(player).expect("the player has a clip");
         assert!(tracks.joints.is_none(), "a weights-only clip has no joints track");
         assert_eq!(tracks.weights.expect("weights track").frame(), 0.0);
-        assert!(
-            manager.skinned_frame(0).is_none(),
-            "the skinning stage must see a missing joints track"
-        );
 
-        manager.play(0, joints_only);
-        let tracks = manager.frame(0).expect("the player has a clip");
+        manager.play(player, joints_only);
+        let tracks = manager.frame(player).expect("the player has a clip");
         assert!(tracks.joints.is_some());
         assert!(tracks.weights.is_none(), "a joints-only clip has no weights track");
 
         // Both tracks share one clock and one frame count.
-        manager.play(0, both);
+        manager.play(player, both);
         manager.update(0.2);
-        let tracks = manager.frame(0).expect("the player has a clip");
+        let tracks = manager.frame(player).expect("the player has a clip");
         approx(tracks.joints.expect("joints").frame(), 6.0);
         approx(tracks.weights.expect("weights").frame(), 6.0);
 
         // A player without a clip has no tracks at all.
-        manager.add_player(rig("rig"), None);
-        assert!(manager.frame(1).is_none());
+        let empty = manager.add_player(rig("rig"), None);
+        assert!(manager.frame(empty).is_none());
     }
 
     #[test]
@@ -817,7 +789,7 @@ mod test {
         manager.register_clip(clip("a1", "skin", 30, 30.0));
         manager.register_clip(clip("a0", "skin", 30, 30.0));
         manager.register_clip(clip("b0", "other", 30, 30.0));
-        manager.add_player(rig("skin"), None);
+        let player = manager.add_player(rig("skin"), None);
 
         let clips = manager.clips_for_rig(&rig("skin"));
         assert_eq!(clips.len(), 2);
@@ -826,24 +798,24 @@ mod test {
         assert_eq!(manager.clips_for_rig(&rig("other")).len(), 1);
         assert!(manager.clips_for_rig(&rig("missing")).is_empty());
         assert_eq!(manager.find_clip(&rig("skin"), "a0"), Some(clips[1]));
-        assert!(manager.skinned_frame(0).is_none());
+        assert!(manager.frame(player).is_none());
     }
 
     #[test]
     fn seek_normalizes_for_the_loop_mode() {
         let mut manager = AnimationManager::new();
         let id = manager.register_clip(clip("a", "skin", 30, 30.0));
-        manager.add_player(rig("skin"), Some(id));
+        let player = manager.add_player(rig("skin"), Some(id));
 
-        manager.seek(0, 1.25);
-        approx(manager.player(0).time(), 0.25);
+        manager.seek(player, 1.25);
+        approx(manager.player(player).time(), 0.25);
 
-        manager.set_player_loop_mode(0, LoopMode::Once);
-        manager.seek(0, 99.0);
-        approx(manager.player(0).time(), 29.0 / 30.0);
-        assert!(manager.player(0).is_finished());
+        manager.set_player_loop_mode(player, LoopMode::Once);
+        manager.seek(player, 99.0);
+        approx(manager.player(player).time(), 29.0 / 30.0);
+        assert!(manager.player(player).is_finished());
 
-        manager.set_player_loop_mode(0, LoopMode::Loop);
-        assert!(!manager.player(0).is_finished());
+        manager.set_player_loop_mode(player, LoopMode::Loop);
+        assert!(!manager.player(player).is_finished());
     }
 }

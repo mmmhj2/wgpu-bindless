@@ -26,10 +26,11 @@ impl DrawList {
         skinned_opaque: Vec<AnimatedMesh>,
         animations: AnimationManager,
     ) -> Self {
-        assert_eq!(
-            animations.player_count(),
-            skinned_opaque.len(),
-            "every skinned mesh needs exactly one animation player"
+        debug_assert!(
+            skinned_opaque
+                .iter()
+                .all(|mesh| mesh.player().index() < animations.player_count()),
+            "every skinned mesh must own a player of the same manager"
         );
         Self { static_opaque_batch, skinned_opaque, animations }
     }
@@ -37,9 +38,6 @@ impl DrawList {
     /// CPU animation state of this draw list.
     pub fn animations(&self) -> &AnimationManager { &self.animations }
     pub fn animations_mut(&mut self) -> &mut AnimationManager { &mut self.animations }
-
-    /// Advance every animation player by `dt` seconds.
-    pub fn update_animations(&mut self, dt: f32) { self.animations.update(dt); }
 
     /// Record every deformation dispatch of every animated mesh.
     ///
@@ -52,8 +50,8 @@ impl DrawList {
         cp: &mut wgpu::ComputePass,
         pipelines: &ComputePipelineLibrary,
     ) -> &Self {
-        for (index, mesh) in self.skinned_opaque.iter().enumerate() {
-            mesh.record_deformation(cp, pipelines, self.animations.frame(index));
+        for mesh in &self.skinned_opaque {
+            mesh.record_deformation(cp, pipelines, self.animations.frame(mesh.player()));
         }
 
         self

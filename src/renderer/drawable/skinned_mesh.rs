@@ -2,7 +2,7 @@ use std::{num::NonZero, sync::Arc};
 
 use crate::{
     asset::asset_types::vertex::{VertexBufferOthers, VertexBufferPosition}, renderer::{
-        animation::{AnimationTracks, MorphAnimationFrame, SkinnedAnimationFrame},
+        animation::{PlayerId, ResolvedTracks, TrackSample},
         drawable::{drawable_mesh_traits::{DrawableMesh, Mesh}, vertex_types::VertexType},
         pipeline::{
             compute_library::{ComputeDispatchBindingSource, ComputePipelineKey, ComputePipelineLibrary},
@@ -61,6 +61,8 @@ pub struct AnimatedMesh {
     geometry: Arc<GpuSkinnedMesh>,
     /// Stage set and final vertex stream, decided during `prepare_scene`.
     stages: RigStages,
+    /// The player that drives this mesh, assigned during `prepare_scene`.
+    player: PlayerId,
     /// Morph targets of this mesh, shared with every instance.
     morph_targets: Option<Arc<GpuMorphTargets>>,
     material: PBRMaterial,
@@ -88,6 +90,7 @@ impl AnimatedMesh {
         geometry: Arc<GpuSkinnedMesh>,
         material: PBRMaterial,
         world_matrix: [[f32; 4]; 4],
+        player: PlayerId,
         stages: RigStages,
         morph_targets: Option<Arc<GpuMorphTargets>>,
     ) -> Result<Self, UploadError> {
@@ -104,6 +107,7 @@ impl AnimatedMesh {
         Ok(Self {
             geometry,
             stages,
+            player,
             morph_targets,
             material,
             animation,
@@ -273,6 +277,9 @@ impl AnimatedMesh {
     /// Stage set decided during `prepare_scene`.
     pub fn stages(&self) -> RigStages { self.stages }
 
+    /// The player that drives this mesh, assigned during `prepare_scene`.
+    pub fn player(&self) -> PlayerId { self.player }
+
     /// Vertex stream the rasterizer reads.
     pub fn final_buffer(&self) -> FinalBuffer { self.stages.final_buffer() }
 
@@ -296,7 +303,7 @@ impl AnimatedMesh {
     /// The caller must already have bound group 0 (bindless resources). A
     /// missing clip track uses the target's base weights, or the `channels = 0`
     /// rest-pose copy when the target has no base weights.
-    pub fn morph_with(&self, cp: &mut wgpu::ComputePass, frame: Option<MorphAnimationFrame>) {
+    pub fn morph_with(&self, cp: &mut wgpu::ComputePass, frame: Option<TrackSample>) {
         let Some(animation) = &self.animation else { return };
         if !self.stages.morphs() {
             return;
@@ -336,7 +343,7 @@ impl AnimatedMesh {
     ///
     /// A missing joints track is encoded as `frame = -1`, which makes the shader
     /// copy its input to the output before reading any joint data.
-    pub fn skin_with(&self, cp: &mut wgpu::ComputePass, frame: Option<SkinnedAnimationFrame>) {
+    pub fn skin_with(&self, cp: &mut wgpu::ComputePass, frame: Option<TrackSample>) {
         let Some(animation) = &self.animation else { return };
         if !self.stages.skins() {
             return;
@@ -354,7 +361,7 @@ impl AnimatedMesh {
     /// Encode the skinning immediates. `None` is the identity sentinel.
     ///
     /// Layout must stay in sync with `Immediate` in `gpu_skinning.wgsl`.
-    fn skin_immediates(frame: Option<SkinnedAnimationFrame>) -> [u8; 8] {
+    fn skin_immediates(frame: Option<TrackSample>) -> [u8; 8] {
         let (texture, frame) = match frame {
             Some(frame) => (frame.texture().index() as u32, frame.frame()),
             None => (0, -1.0),
@@ -374,7 +381,7 @@ impl AnimatedMesh {
         &self,
         cp: &mut wgpu::ComputePass,
         pipelines: &ComputePipelineLibrary,
-        tracks: Option<AnimationTracks>,
+        tracks: Option<ResolvedTracks>,
     ) {
         let (joints, weights) = match tracks {
             Some(tracks) => (tracks.joints, tracks.weights),
@@ -451,7 +458,7 @@ mod test {
 
     #[test]
     fn present_joints_encode_the_texture_and_frame() {
-        let frame = SkinnedAnimationFrame::new(SampledTextureHandle::from_index(7), 1.5);
+        let frame = TrackSample::new(SampledTextureHandle::from_index(7), 1.5);
         let immediates = AnimatedMesh::skin_immediates(Some(frame));
         assert_eq!(u32::from_ne_bytes(immediates[..4].try_into().unwrap()), 7);
         assert_eq!(f32::from_le_bytes(immediates[4..].try_into().unwrap()), 1.5);

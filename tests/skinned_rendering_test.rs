@@ -101,23 +101,24 @@ mod test {
             // All baked clips of the skin must be registered, and the default
             // clip must be the first one in deterministic order.
             {
+                let player = draw_list.get_skinned_meshes()[0].player();
                 let animations = draw_list.animations_mut();
                 assert_eq!(animations.clips().len(), 3, "Fox has three baked animations");
                 assert_eq!(animations.player_count(), 1, "one player per skinned instance");
 
-                let rig = animations.player(0).rig().clone();
+                let rig = animations.player(player).rig().clone();
                 let clips = animations.clips_for_rig(&rig).to_vec();
                 assert_eq!(clips.len(), 3);
                 assert_eq!(
-                    animations.player(0).clip(),
+                    animations.player(player).clip(),
                     Some(clips[0]),
                     "the default clip should be the first sorted clip"
                 );
 
                 // Runtime switching must reset the playhead.
-                animations.play(0, clips[1]);
-                assert_eq!(animations.player(0).clip(), Some(clips[1]));
-                assert_eq!(animations.player(0).time(), 0.0);
+                animations.play(player, clips[1]);
+                assert_eq!(animations.player(player).clip(), Some(clips[1]));
+                assert_eq!(animations.player(player).time(), 0.0);
             }
 
             orchestrator.lighting_mut().set_ambient([0.05, 0.05, 0.05]);
@@ -150,10 +151,13 @@ mod test {
             let camera = self.camera.clone();
             let light = self.light.clone();
 
-            self.draw_list.update_animations(PLAYBACK_SECONDS_PER_FRAME);
+            self.draw_list.animations_mut().update(PLAYBACK_SECONDS_PER_FRAME);
             if self.rendered_frames == 1 {
-                let frame = self.draw_list.animations().skinned_frame(0)
+                let player = self.draw_list.get_skinned_meshes()[0].player();
+                let frame = self.draw_list.animations().frame(player)
                     .expect("the Fox player should have a clip")
+                    .joints
+                    .expect("the Fox clip drives joints")
                     .frame();
                 assert!(frame > 0.0, "the manager should advance the playback frame");
             }

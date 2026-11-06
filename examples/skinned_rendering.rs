@@ -52,24 +52,24 @@ struct State {
 
 /// Select the next clip of the first player, demonstrating runtime switching.
 fn play_next_clip(draw_list: &mut DrawList) {
-    let animations = draw_list.animations_mut();
-    if animations.player_count() == 0 {
+    let Some(player) = draw_list.get_skinned_meshes().first().map(|mesh| mesh.player()) else {
         return;
-    }
+    };
 
-    let rig = animations.player(0).rig().clone();
+    let animations = draw_list.animations_mut();
+    let rig = animations.player(player).rig().clone();
     let clips = animations.clips_for_rig(&rig);
     if clips.len() < 2 {
         return;
     }
 
-    let current = animations.player(0).clip();
+    let current = animations.player(player).clip();
     let next_index = current
         .and_then(|current| clips.iter().position(|&clip| clip == current))
         .map_or(0, |index| (index + 1) % clips.len());
     let next = clips[next_index];
 
-    animations.play(0, next);
+    animations.play(player, next);
     log::info!("Playing animation clip '{}'.", animations.clip(next).name());
 }
 
@@ -149,7 +149,7 @@ impl RendererState for State {
             self.clip_timer = 0.0;
             play_next_clip(&mut self.draw_list);
         }
-        self.draw_list.update_animations(dt);
+        self.draw_list.animations_mut().update(dt);
 
         self.draw_list
             .ensure_bound(self.orchestrator.device(), self.orchestrator.mesh_layout())

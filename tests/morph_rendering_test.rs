@@ -154,17 +154,17 @@ mod test {
         assert_eq!(mesh.final_buffer(), FinalBuffer::MorphOut);
         assert_eq!(mesh.deformed_buffer_count(), 2, "morph only allocates one buffer pair");
         assert_eq!(mesh.get_vertex_buffer().len(), 2);
+        let player = mesh.player();
 
-        let tracks = draw_list.animations().frame(0).expect("the cube has an animation clip");
+        let tracks = draw_list.animations().frame(player).expect("the cube has an animation clip");
         assert!(tracks.weights.is_some(), "the clip drives morph weights");
         assert!(tracks.joints.is_none(), "a morph-only clip has no joints track");
-        assert!(draw_list.animations().skinned_frame(0).is_none());
 
         let first_frame = tracks.weights.expect("weights track").frame();
-        draw_list.update_animations(FRAME_SECONDS);
+        draw_list.animations_mut().update(FRAME_SECONDS);
         let second_frame = draw_list
             .animations()
-            .frame(0)
+            .frame(player)
             .expect("the clip is still playing")
             .weights
             .expect("weights track")
@@ -184,7 +184,7 @@ mod test {
             )
         };
         let rest_pose = read_positions(gpu.device(), gpu.queue(), &rest_buffer);
-        draw_list.update_animations(0.5);
+        draw_list.animations_mut().update(0.5);
         dispatch_deformation(&draw_list, gpu.device(), gpu.queue(), &bindless, &compute);
         let deformed = read_positions(gpu.device(), gpu.queue(), &final_buffer);
         assert!(
@@ -196,7 +196,7 @@ mod test {
 
         for _ in 0..FRAMES_TO_DISPATCH {
             dispatch_deformation(&draw_list, gpu.device(), gpu.queue(), &bindless, &compute);
-            draw_list.update_animations(FRAME_SECONDS);
+            draw_list.animations_mut().update(FRAME_SECONDS);
         }
     }
 }

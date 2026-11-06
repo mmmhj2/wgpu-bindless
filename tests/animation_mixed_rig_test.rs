@@ -381,7 +381,8 @@ mod test {
         }
         assert_eq!(draw_list.animations().clips().len(), 2, "two mixed-catalog clips");
 
-        let default_clip = draw_list.animations().player(0).clip().expect("a default clip");
+        let player = draw_list.get_skinned_meshes()[0].player();
+        let default_clip = draw_list.animations().player(player).clip().expect("a default clip");
         assert_eq!(
             draw_list.animations().clip(default_clip).name(),
             "mixed.anim",
@@ -408,7 +409,7 @@ mod test {
         // Clip B drives weights only. Morph applies +0.5 X, then skinning takes
         // the identity path and copies its input through.
         assert!(
-            draw_list.animations_mut().play_by_name(0, "mixed.morphanim"),
+            draw_list.animations_mut().play_by_name(player, "mixed.morphanim"),
             "the weights-only clip should be registered for the rig"
         );
         dispatch(&draw_list, &gpu, &bindless, &compute);
@@ -435,10 +436,11 @@ mod test {
             assert_eq!(mesh.final_buffer(), FinalBuffer::MorphOut);
             assert_eq!(mesh.deformed_buffer_count(), 2);
         }
+        let player = draw_list.get_skinned_meshes()[0].player();
         assert_eq!(draw_list.animations().player_count(), 1);
         assert_eq!(draw_list.animations().clips().len(), 0);
         assert!(
-            draw_list.animations().frame(0).is_none(),
+            draw_list.animations().frame(player).is_none(),
             "a player without a clip must report no tracks"
         );
 
@@ -476,9 +478,11 @@ mod test {
             2,
             "two unique clips, not one copy per instance"
         );
+        let first = draw_list.get_skinned_meshes()[0].player();
+        let second = draw_list.get_skinned_meshes()[1].player();
         assert_eq!(
-            draw_list.animations().player(0).clip(),
-            draw_list.animations().player(1).clip(),
+            draw_list.animations().player(first).clip(),
+            draw_list.animations().player(second).clip(),
             "both instances start on the same clip id"
         );
         assert_eq!(store.skinned_mesh_count(), 1, "the rest pose is shared");

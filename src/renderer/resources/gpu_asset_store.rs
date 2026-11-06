@@ -512,7 +512,7 @@ impl GpuAssetStore {
 
         // A player always exists, one per draw list entry, even without a clip.
         let default_clip = animations.clips_for_rig(&rig_id).first().copied();
-        animations.add_player(rig_id, default_clip);
+        let player = animations.add_player(rig_id, default_clip);
 
         AnimatedMesh::new(
             ctx.upload.device(),
@@ -520,6 +520,7 @@ impl GpuAssetStore {
             geometry,
             material,
             world_matrix,
+            player,
             stages,
             morph,
         )

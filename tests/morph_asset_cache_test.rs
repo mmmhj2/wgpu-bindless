@@ -127,11 +127,13 @@ mod test {
         );
         assert_eq!(store.morph_animation_count(), 1, "the weight track is shared too");
 
+        let first = draw_list.get_skinned_meshes()[0].player();
+        let second = draw_list.get_skinned_meshes()[1].player();
         let players = draw_list.animations();
         assert_eq!(players.player_count(), 2, "one player per instance");
         assert_eq!(
-            players.player(0).rig(),
-            players.player(1).rig(),
+            players.player(first).rig(),
+            players.player(second).rig(),
             "both instances play the same rig"
         );
 
