@@ -1,7 +1,7 @@
 use std::num::NonZero;
 
 use crate::{
-    asset::asset_types::animation_asset::{MorphTarget, MAX_MORPH_TARGETS},
+    asset::asset_types::animation_asset::MAX_MORPH_TARGETS,
     renderer::resources::bindless::SampledTextureHandle,
 };
 

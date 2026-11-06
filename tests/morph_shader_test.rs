@@ -543,4 +543,53 @@ mod test {
 
         assert_vec3(positions[0], [0.25, 0.75, 0.0], "static base weights");
     }
+
+    /// Eight targets need two weight texels. Channel 4 is lane 0 of the second
+    /// texel and channel 7 is lane 3, so this covers both ends of the `x = 1`
+    /// texel that a single-texel test never reaches.
+    #[test]
+    fn eight_targets_read_the_second_weight_texel() {
+        let (gpu, mut bindless, compute) = setup();
+        let asset = target(
+            (0..8)
+                .map(|target| {
+                    let delta = match target {
+                        4 => [1.0, 0.0, 0.0],
+                        7 => [0.0, 1.0, 0.0],
+                        _ => [0.0, 0.0, 0.0],
+                    };
+                    MorphTarget {
+                        position: Some(vec![delta]),
+                        ..Default::default()
+                    }
+                })
+                .collect(),
+            None,
+        );
+        let mut row = vec![0.0; 8];
+        row[4] = 1.0;
+        row[7] = 1.0;
+        let weights = weight_texture(&[row], 8);
+        let (gpu_target, handle) = upload_target(&gpu, &mut bindless, &asset, &weights);
+
+        assert_eq!(weights.width.get(), 2, "eight targets span two texels");
+
+        let (positions, _) = run_morph(
+            &gpu,
+            &mut bindless,
+            &compute,
+            &gpu_target,
+            handle,
+            0.0,
+            8,
+            &[position(0.0, 0.0, 0.0)],
+            &[attribute()],
+        );
+
+        assert_vec3(
+            positions[0],
+            [1.0, 1.0, 0.0],
+            "channels 4 and 7 must read the second weight texel",
+        );
+    }
 }

@@ -817,4 +817,34 @@ mod test {
             }
         }
     }
+
+    /// Targets beyond the first four share a second texel, so the baker must
+    /// not clamp the row to one texel. This is the packing half of the
+    /// multi-texel weight path the shader test exercises.
+    #[test]
+    fn weight_rows_span_multiple_texels() {
+        let mut texels = Vec::new();
+        write_weight_row(&mut texels, &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], 2);
+
+        assert_eq!(texels.len(), 2 * 8, "two RGBA16F texels, four lanes each");
+        assert!(
+            texels[..8].iter().all(|byte| *byte == 0),
+            "the first texel only carries targets 0..4"
+        );
+
+        // Target 7 is lane 3 of the second texel.
+        let offset = 8 + 3 * 2;
+        let bits = u16::from_le_bytes([texels[offset], texels[offset + 1]]);
+        assert_eq!(bits, f32_to_f16_bits(1.0));
+    }
+
+    #[test]
+    fn split_weights_handles_more_than_four_targets() {
+        let flat: Vec<f32> = (0..16).map(|value| value as f32).collect();
+        let keyframes = split_weights(&flat, 8);
+
+        assert_eq!(keyframes.len(), 2);
+        assert_eq!(keyframes[0], (0..8).map(|value| value as f32).collect::<Vec<_>>());
+        assert_eq!(keyframes[1], (8..16).map(|value| value as f32).collect::<Vec<_>>());
+    }
 }
