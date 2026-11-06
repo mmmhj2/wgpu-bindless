@@ -22,7 +22,7 @@ mod test {
                 asset_cache::{GpuAssetStore, SceneUploadContext},
                 bindless::BindlessResources,
             },
-            upload::{GpuAssetType, UploadContext, UploadError, MAX_MORPH_TARGETS, MORPH_LAYOUT_WORDS},
+            upload::{GpuAssetType, UploadContext, UploadError, MAX_MORPH_TARGETS},
         },
     };
 
@@ -136,13 +136,6 @@ mod test {
         );
 
         let target = store.morph_target(&target_name).expect("morph target should be uploaded");
-        assert_eq!(
-            target.layout.size(),
-            (MORPH_LAYOUT_WORDS * std::mem::size_of::<u32>()) as u64,
-            "the layout table is {} u32 words",
-            MORPH_LAYOUT_WORDS
-        );
-        assert_eq!(MORPH_LAYOUT_WORDS, 49);
         assert!(target.deltas.size() >= 4, "the delta buffer is never zero-sized");
         assert_eq!(target.channel_count, 2, "the cube has two morph targets");
 

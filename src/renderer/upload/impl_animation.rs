@@ -1,5 +1,7 @@
 use std::num::{NonZero, NonZeroU32};
 
+use bytemuck::Zeroable;
+
 use crate::{
     asset::asset_types::{
         animation_asset::{MorphTarget, SkinnedAnimationAsset, VertexMorphAnimationAsset, VertexMorphTargetAsset, MAX_MORPH_TARGETS},
@@ -8,7 +10,7 @@ use crate::{
     renderer::upload::{
         context::UploadContext,
         error::UploadError,
-        gpu_mesh::{GpuMorphTargets, MORPH_LAYOUT_WORDS},
+        gpu_mesh::GpuMorphTargets,
         gpu_type::GpuAssetType,
     },
     util::f16::f32_to_f16_bits,
@@ -53,6 +55,20 @@ fn push_attribute<const N: usize>(
     }
 }
 
+#[derive(Debug, Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
+#[repr(C)]
+struct AttributeOffset {
+    pub offsets: [u32; 5]
+}
+
+#[derive(Debug, Clone, Copy, bytemuck::Zeroable, bytemuck::Pod)]
+#[repr(C)]
+struct MorphLayout {
+    pub channel_count: u32,
+    pub attribute_masks: [u32; 8],
+    pub attribute_offsets: [AttributeOffset; 8]
+}
+
 impl GpuAssetType for VertexMorphTargetAsset {
     type GpuObjectType = GpuMorphTargets;
 
@@ -78,8 +94,8 @@ impl GpuAssetType for VertexMorphTargetAsset {
         let channel_count = channel_count as u32;
 
         // `[0]` channel count, `[1..9]` masks, `[9..49]` offsets.
-        let mut layout = [0u32; MORPH_LAYOUT_WORDS];
-        layout[0] = channel_count;
+        let mut layout = MorphLayout::zeroed();
+        layout.channel_count = channel_count;
 
         let mut deltas: Vec<f32> = Vec::new();
         for (channel, target) in self.targets.iter().enumerate() {
@@ -92,10 +108,8 @@ impl GpuAssetType for VertexMorphTargetAsset {
             push_attribute(&mut deltas, &mut mask, &mut offsets[3], 3, target.texcoord0.as_deref());
             push_attribute(&mut deltas, &mut mask, &mut offsets[4], 4, target.color0.as_deref());
 
-            layout[1 + channel] = mask;
-            let offset_base = 1 + MAX_MORPH_TARGETS;
-            layout[offset_base + channel * MorphTarget::CHANNEL_COUNT
-                ..offset_base + (channel + 1) * MorphTarget::CHANNEL_COUNT]
+            layout.attribute_masks[channel] = mask;
+            layout.attribute_offsets[channel].offsets
                 .copy_from_slice(&offsets);
         }
 
@@ -107,7 +121,7 @@ impl GpuAssetType for VertexMorphTargetAsset {
         let layout_buffer = ctx.upload_buffer(
             &format!("{name}.morph.layout"),
             wgpu::BufferUsages::STORAGE,
-            layout.as_slice(),
+            bytemuck::bytes_of(&layout),
         )?;
         let delta_buffer = ctx.upload_buffer(
             &format!("{name}.morph.deltas"),

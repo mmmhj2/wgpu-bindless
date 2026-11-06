@@ -100,12 +100,12 @@ impl GpuAssetType for SkinnedMeshAsset {
 
         let position_buffer = ctx.upload_buffer(
             &format!("{name}.restpose.position"),
-            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             restpose.vp.as_slice(),
         )?;
         let attribute_buffer = ctx.upload_buffer(
             &format!("{name}.restpose.attribute"),
-            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             restpose.va.as_slice(),
         )?;
 

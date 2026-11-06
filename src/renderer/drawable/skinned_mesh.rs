@@ -240,13 +240,13 @@ impl AnimatedMesh {
         let position = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(&position_label),
             size: vertex_count * std::mem::size_of::<VertexBufferPosition>() as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         let attribute = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(&attribute_label),
             size: vertex_count * std::mem::size_of::<VertexBufferOthers>() as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         [position, attribute]
@@ -271,6 +271,11 @@ impl AnimatedMesh {
 
     /// Vertex stream the rasterizer reads.
     pub fn final_buffer(&self) -> FinalBuffer { self.plan.final_buffer() }
+
+    /// Rest-pose vertex streams, for read-only inspection and tests.
+    pub fn restpose_vertex_buffers(&self) -> &[wgpu::Buffer] {
+        &self.geometry.restpose_vertex_buffer
+    }
 
     /// Number of per-instance deformed buffers allocated by this mesh.
     ///

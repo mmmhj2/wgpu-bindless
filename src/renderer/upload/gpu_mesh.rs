@@ -43,12 +43,6 @@ pub struct GpuSkinnedMesh {
 /// Alias of [`MAX_MORPH_TARGETS`] under the upload-side name.
 pub const MAX_MORPH_CHANNELS: usize = MAX_MORPH_TARGETS;
 
-/// Number of `u32` words in the morph layout buffer.
-///
-/// `[0]` channel count, `[1..9]` per-channel attribute masks, `[9..49]`
-/// per-channel, per-attribute offsets into [`GpuMorphTargets::deltas`].
-pub const MORPH_LAYOUT_WORDS: usize = 1 + MAX_MORPH_TARGETS + MAX_MORPH_TARGETS * MorphTarget::CHANNEL_COUNT;
-
 /// GPU-resident morph targets of one primitive.
 ///
 /// One asset produces one of these, shared by every instance of the mesh. The
@@ -59,8 +53,9 @@ pub const MORPH_LAYOUT_WORDS: usize = 1 + MAX_MORPH_TARGETS + MAX_MORPH_TARGETS 
 /// carries, offsets say where its block starts in [`Self::deltas`].
 #[derive(Debug)]
 pub struct GpuMorphTargets {
-    /// `[u32; MORPH_LAYOUT_WORDS]`: `[0]` channel count, `[1..9]` masks,
-    /// `[9..49]` offsets (unit: `f32` index into [`Self::deltas`]).
+    /// Buffer for attribute layouts.
+    /// 
+    /// Internal: See [`MorphLayout`] for exact layout of this buffer.
     pub layout: wgpu::Buffer,
     /// Attribute deltas of every channel, packed back to back.
     ///

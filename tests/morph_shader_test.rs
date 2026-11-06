@@ -276,6 +276,51 @@ mod test {
     }
 
     #[test]
+    fn per_vertex_deltas_use_each_vertex_offset() {
+        let (gpu, mut bindless, compute) = setup();
+        let asset = target(
+            vec![MorphTarget {
+                position: Some(vec![[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]),
+                normal: Some(vec![[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]),
+                texcoord0: Some(vec![[1.0, 0.0], [0.0, 1.0]]),
+                color0: Some(vec![[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]),
+                ..Default::default()
+            }],
+            None,
+        );
+        let weights = weight_texture(&[vec![1.0]], 1);
+        let (gpu_target, handle) = upload_target(&gpu, &mut bindless, &asset, &weights);
+        let mut attribute0 = attribute();
+        attribute0.color = [0.0, 0.0, 0.0, 0.0];
+        attribute0.uv0 = [0.0, 0.0];
+        let mut attribute1 = attribute();
+        attribute1.color = [0.0, 0.0, 0.0, 0.0];
+        attribute1.normal = [0.0, 0.0, 1.0];
+        attribute1.uv0 = [0.0, 0.0];
+
+        let (positions, attributes) = run_morph(
+            &gpu,
+            &mut bindless,
+            &compute,
+            &gpu_target,
+            handle,
+            0.0,
+            1,
+            &[position(0.0, 0.0, 0.0), position(0.0, 0.0, 0.0)],
+            &[attribute0, attribute1],
+        );
+
+        assert_vec3(positions[0], [1.0, 0.0, 0.0], "vertex 0 position delta");
+        assert_vec3(positions[1], [0.0, 2.0, 0.0], "vertex 1 must use its own position delta");
+        assert_vec3(attributes[0].normal, [0.0, 1.0, 0.0], "vertex 0 normal delta");
+        assert_vec3(attributes[1].normal, [0.0, 0.0, 1.0], "vertex 1 normal delta");
+        assert_eq!(attributes[0].uv0, [1.0, 0.0], "vertex 0 uv delta");
+        assert_eq!(attributes[1].uv0, [0.0, 1.0], "vertex 1 uv delta");
+        assert_eq!(attributes[0].color, [1.0, 0.0, 0.0, 0.0], "vertex 0 color delta");
+        assert_eq!(attributes[1].color, [0.0, 1.0, 0.0, 0.0], "vertex 1 color delta");
+    }
+
+    #[test]
     fn two_channels_accumulate() {
         let (gpu, mut bindless, compute) = setup();
         let asset = target(

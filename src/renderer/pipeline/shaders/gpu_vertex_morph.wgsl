@@ -5,6 +5,9 @@
 // the deformed streams. Missing attributes carry a zero mask bit and are never
 // read.
 
+const MAX_TARGETS: u32 = 8u;
+const CHANNEL_COUNT: u32 = 5u;
+
 struct Position {
     // We cannot use `vec3` due to possible alignment problem.
     position: array<f32, 3>
@@ -35,10 +38,18 @@ struct Bones {
 @group(1) @binding(4)
 var<storage, read> bones: array<Bones>;
 
-// `[0]` channel count, `[1..9]` per-channel attribute masks,
-// `[9..49]` per-channel, per-attribute offsets into `deltas`.
+struct AttributeOffset {
+    offsets: array<u32, 5>
+}
+struct MorphLayout {
+    channel_count: u32,
+    attribute_masks: array<u32, 8>,
+    attribute_offsets: array<AttributeOffset, 8>
+}
+
+// Uniform buffer can cause some alignment problems.
 @group(2) @binding(0)
-var<storage, read> morph_layout: array<u32, 49>;
+var<storage, read> morph_layout: MorphLayout;
 @group(2) @binding(1)
 var<storage, read> deltas: array<f32>;
 
@@ -51,11 +62,6 @@ struct Immediate {
     channels: u32,
 };
 var<immediate> imm: Immediate;
-
-const MAX_TARGETS: u32 = 8u;
-const CHANNEL_COUNT: u32 = 5u;
-const MASK_WORD_OFFSET: u32 = 1u;
-const OFFSET_WORD_OFFSET: u32 = 1u + MAX_TARGETS;
 
 fn unpack_vec3(v: array<f32, 3>) -> vec3<f32> {
     return vec3<f32>(v[0], v[1], v[2]);
@@ -141,28 +147,27 @@ fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var uv0 = unpack_vec2(rest_attribute._uv0);
 
     for (var channel = 0u; channel < channel_count; channel = channel + 1u) {
+        // TODO: this generates multiple separate texture loads. Condense them into one or two.
         let weight = load_weight(imm.frame, channel);
         if (weight == 0.0) {
             continue;
         }
 
-        let mask = morph_layout[MASK_WORD_OFFSET + channel];
-        let offset_base = OFFSET_WORD_OFFSET + channel * CHANNEL_COUNT;
-
+        let mask = morph_layout.attribute_masks[channel];
         if ((mask & 1u) != 0u) {
-            position += weight * load_delta_vec3(morph_layout[offset_base + 0u]);
+            position += weight * load_delta_vec3(morph_layout.attribute_offsets[channel].offsets[0u] + index * 3u);
         }
         if ((mask & 2u) != 0u) {
-            normal += weight * load_delta_vec3(morph_layout[offset_base + 1u]);
+            normal += weight * load_delta_vec3(morph_layout.attribute_offsets[channel].offsets[1u] + index * 3u);
         }
         if ((mask & 4u) != 0u) {
-            tangent += weight * load_delta_vec3(morph_layout[offset_base + 2u]);
+            tangent += weight * load_delta_vec3(morph_layout.attribute_offsets[channel].offsets[2u] + index * 3u);
         }
         if ((mask & 8u) != 0u) {
-            uv0 += weight * load_delta_vec2(morph_layout[offset_base + 3u]);
+            uv0 += weight * load_delta_vec2(morph_layout.attribute_offsets[channel].offsets[3u] + index * 2u);
         }
         if ((mask & 16u) != 0u) {
-            color += weight * load_delta_vec4(morph_layout[offset_base + 4u]);
+            color += weight * load_delta_vec4(morph_layout.attribute_offsets[channel].offsets[4u] + index * 4u);
         }
     }
 

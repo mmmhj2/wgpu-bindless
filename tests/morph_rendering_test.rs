@@ -12,7 +12,7 @@ mod test {
     use rust_renderer::{
         asset::{
             asset_manager::AssetManager,
-            asset_types::AssetData,
+            asset_types::{vertex::VertexBufferPosition, AssetData},
             importer::gltf_importer::GltfImporter,
         },
         renderer::{
@@ -56,6 +56,43 @@ mod test {
         let bindless = BindlessResources::new(gpu.device(), gpu.queue());
         let compute = ComputePipelineLibrary::new(gpu.device(), bindless.get_bind_group_layout());
         (gpu, bindless, compute)
+    }
+
+    fn read_bytes(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        buffer: &wgpu::Buffer,
+    ) -> Vec<u8> {
+        let staging = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("morph readback"),
+            size: buffer.size(),
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("morph readback encoder"),
+        });
+        encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, buffer.size());
+        queue.submit(std::iter::once(encoder.finish()));
+        staging.slice(..).map_async(wgpu::MapMode::Read, |result| {
+            result.expect("readback mapping should succeed");
+        });
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("device poll should succeed");
+
+        staging.slice(..).get_mapped_range().to_vec()
+    }
+
+    fn read_positions(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        buffer: &wgpu::Buffer,
+    ) -> Vec<[f32; 3]> {
+        let bytes = read_bytes(device, queue, buffer);
+        bytes
+            .chunks_exact(std::mem::size_of::<VertexBufferPosition>())
+            .map(bytemuck::pod_read_unaligned::<VertexBufferPosition>)
+            .map(|position| position.position)
+            .collect()
     }
 
     fn dispatch_deformation(
@@ -137,6 +174,24 @@ mod test {
         draw_list
             .ensure_bound(gpu.device(), &mesh_layout)
             .ensure_deformation_bound(gpu.device(), &compute);
+
+        let (rest_buffer, final_buffer) = {
+            let mesh = &draw_list.get_skinned_meshes()[0];
+            (
+                mesh.restpose_vertex_buffers()[0].clone(),
+                mesh.get_vertex_buffer()[0].clone(),
+            )
+        };
+        let rest_pose = read_positions(gpu.device(), gpu.queue(), &rest_buffer);
+        draw_list.update_animations(0.5);
+        dispatch_deformation(&draw_list, gpu.device(), gpu.queue(), &bindless, &compute);
+        let deformed = read_positions(gpu.device(), gpu.queue(), &final_buffer);
+        assert!(
+            rest_pose.iter().zip(deformed.iter()).any(|(rest, deformed)| rest != deformed),
+            "morphing must modify at least one final vertex; rest={:?}, deformed={:?}",
+            &rest_pose[..rest_pose.len().min(4)],
+            &deformed[..deformed.len().min(4)],
+        );
 
         for _ in 0..FRAMES_TO_DISPATCH {
             dispatch_deformation(&draw_list, gpu.device(), gpu.queue(), &bindless, &compute);
