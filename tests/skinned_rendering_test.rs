@@ -21,7 +21,6 @@ mod test {
             drawable::draw_list::{DrawList, DrawableType},
             orchestrator::{RenderOrchestrator, RendererConfig},
             pipeline::{
-                compute_library::ComputePipelineKey,
                 key::{PipelineKey, VertexLayoutKey},
                 rasterizer_pipeline::UseRasterizerPipeline,
             },
@@ -161,28 +160,25 @@ mod test {
 
             self.draw_list
                 .ensure_bound(self.orchestrator.device(), self.orchestrator.mesh_layout())
-                .ensure_skinning_bound(self.orchestrator.device(), self.orchestrator.compute_pipelines());
+                .ensure_deformation_bound(self.orchestrator.device(), self.orchestrator.compute_pipelines());
 
             let draw_list = &self.draw_list;
 
             self.orchestrator.with_frame(|frame| {
-                // The skinning compute pass must be recorded before the scene
-                // pass that reads the deformed vertex buffers.
+                // The deformation compute pass must be recorded before the
+                // scene pass that reads the deformed vertex buffers.
                 {
-                    let pipeline = frame.compute_pipelines()
-                        .get_pipeline(ComputePipelineKey::GpuSkinning)
-                        .expect("the GPU skinning pipeline should be registered");
+                    let pipelines = frame.compute_pipelines();
                     let bindless_bg = frame.bindless().get_bind_group(frame.device());
                     let mut cp = frame.encoder().begin_compute_pass(&wgpu::ComputePassDescriptor {
-                        label: Some("Skinning Pass"),
+                        label: Some("Deformation Pass"),
                         timestamp_writes: None,
                     });
-                    cp.set_pipeline(pipeline);
                     cp.set_bind_group(0, Some(&bindless_bg), &[]);
                     // Each frame advances the manager, so the dispatched frame
                     // changes and the mesh is re-posed instead of staying in the
                     // bind pose.
-                    draw_list.record_skinning(&mut cp);
+                    draw_list.record_deformation(&mut cp, pipelines);
                 }
 
                 frame.render_scene(
