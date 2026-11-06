@@ -2,7 +2,7 @@
 
 use crate::asset::asset_types::{
     animation_asset::{MorphTarget, VertexMorphTargetAsset, MAX_MORPH_TARGETS},
-    skinned_mesh_asset::SkinnedMeshAsset,
+    deformable_mesh_asset::DeformableMeshAsset,
     static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial},
     vertex::{VertexBufferOthers, VertexBufferPosition, VertexBufferSkinning},
 };
@@ -247,7 +247,7 @@ impl GltfImporter {
 
     /// Import the morph targets of one primitive as a [`VertexMorphTargetAsset`].
     ///
-    /// `mesh_name` is the name of the [`SkinnedMeshAsset`] the targets belong to.
+    /// `mesh_name` is the name of the [`DeformableMeshAsset`] the targets belong to.
     pub(crate) fn import_morph_targets(
         primitive: &gltf::Primitive,
         buffers: &[gltf::buffer::Data],
@@ -340,7 +340,7 @@ impl GltfImporter {
         }
     }
 
-    /// Import a primitive as a [`SkinnedMeshAsset`].
+    /// Import a primitive as a [`DeformableMeshAsset`].
     ///
     /// The rest pose is imported exactly like a static primitive.
     ///
@@ -353,7 +353,7 @@ impl GltfImporter {
         buffers: &[gltf::buffer::Data],
         skin_name: Option<String>,
         morph_target: Option<String>,
-    ) -> Result<SkinnedMeshAsset, GltfImportError> {
+    ) -> Result<DeformableMeshAsset, GltfImportError> {
         let restpose = Self::import_from_gltf_primitive(importer, primitive, buffers)?;
 
         let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
@@ -387,7 +387,7 @@ impl GltfImporter {
             _ => return Err(GltfImportError::MissingSkinningAttributes),
         };
 
-        Ok(SkinnedMeshAsset { skin: skin_name, morph_target, restpose, skinning })
+        Ok(DeformableMeshAsset { skin: skin_name, morph_target, restpose, skinning })
     }
 
     /// Keep the four strongest influences and renormalize their weights.

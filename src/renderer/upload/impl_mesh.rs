@@ -1,5 +1,5 @@
 use crate::{
-    asset::asset_types::{skinned_mesh_asset::SkinnedMeshAsset, static_mesh_asset::StaticMeshAsset}, renderer::upload::{
+    asset::asset_types::{deformable_mesh_asset::DeformableMeshAsset, static_mesh_asset::StaticMeshAsset}, renderer::upload::{
         GpuSkinnedMesh, context::UploadContext, error::UploadError, gpu_mesh::GpuStaticMesh, gpu_type::GpuAssetType,
     },
 };
@@ -57,7 +57,7 @@ impl GpuAssetType for StaticMeshAsset {
     }
 }
 
-impl GpuAssetType for SkinnedMeshAsset {
+impl GpuAssetType for DeformableMeshAsset {
     type GpuObjectType = GpuSkinnedMesh;
 
     /// Upload the rest-pose vertex buffers and the skinning attributes.

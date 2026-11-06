@@ -15,7 +15,7 @@ use crate::{
             AssetData,
             AssetKind,
             scene_asset::SceneAsset,
-            skinned_mesh_asset::SkinnedMeshAsset,
+            deformable_mesh_asset::DeformableMeshAsset,
             static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial},
         },
     },
@@ -193,7 +193,7 @@ impl GpuAssetStore {
         &mut self,
         ctx: &mut SceneUploadContext<'_>,
         name: &str,
-        mesh: &SkinnedMeshAsset,
+        mesh: &DeformableMeshAsset,
     ) -> Result<Arc<GpuSkinnedMesh>, UploadError> {
         if let Some(cached) = self.skinned_geometry.get(name) {
             return Ok(cached.clone());

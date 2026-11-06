@@ -31,7 +31,7 @@ mod test {
                 },
                 scene_asset::{SceneAsset, SceneNodeAsset},
                 skin_asset::{SkinAsset, SkinJoint},
-                skinned_mesh_asset::SkinnedMeshAsset,
+                deformable_mesh_asset::DeformableMeshAsset,
                 static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial},
                 texture_asset::{Sampler, TexelData, TextureAsset, TextureDimension, TextureFormat},
                 vertex::{VertexBufferOthers, VertexBufferPosition, VertexBufferSkinning},
@@ -196,7 +196,7 @@ mod test {
         save_asset(
             dir,
             "mixed.skpr",
-            AssetData::SkinnedMeshAssetType(SkinnedMeshAsset {
+            AssetData::SkinnedMeshAssetType(DeformableMeshAsset {
                 skin: Some("mixed.skin".into()),
                 morph_target: Some("mixed.morphtgt".into()),
                 restpose: restpose([0.0, 0.0, 0.0]),
@@ -250,7 +250,7 @@ mod test {
         save_asset(
             dir,
             "base.skpr",
-            AssetData::SkinnedMeshAssetType(SkinnedMeshAsset {
+            AssetData::SkinnedMeshAssetType(DeformableMeshAsset {
                 skin: None,
                 morph_target: Some("base.morphtgt".into()),
                 restpose: restpose([0.0, 0.0, 0.0]),

@@ -19,7 +19,7 @@ pub struct GpuStaticMesh {
 }
 
 /// GPU-resident geometry produced by uploading a
-/// [`crate::asset::asset_types::skinned_mesh_asset::SkinnedMeshAsset`].
+/// [`crate::asset::asset_types::deformable_mesh_asset::DeformableMeshAsset`].
 ///
 /// The `restpose_vertex_buffer` streams are fed to the skinning compute shader and
 /// then consumed by the rasterizer, so they carry storage (UAV) and vertex usages.

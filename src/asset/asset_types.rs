@@ -2,7 +2,7 @@ pub mod animation_asset;
 pub mod scene_asset;
 pub mod static_mesh_asset;
 pub mod skin_asset;
-pub mod skinned_mesh_asset;
+pub mod deformable_mesh_asset;
 pub mod texture_asset;
 pub mod vertex;
 
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::asset::{
     asset_types::{
-        animation_asset::{SkinnedAnimationAsset, VertexMorphAnimationAsset, VertexMorphTargetAsset}, scene_asset::SceneAsset, skin_asset::SkinAsset, skinned_mesh_asset::SkinnedMeshAsset, static_mesh_asset::StaticMeshAsset, texture_asset::TextureAsset
+        animation_asset::{SkinnedAnimationAsset, VertexMorphAnimationAsset, VertexMorphTargetAsset}, deformable_mesh_asset::DeformableMeshAsset, scene_asset::SceneAsset, skin_asset::SkinAsset, static_mesh_asset::StaticMeshAsset, texture_asset::TextureAsset
     }, error::AssetIoError, provenance::ImportProvenance
 };
 
@@ -55,7 +55,9 @@ pub enum AssetData {
     StaticMeshAssetType(StaticMeshAsset),
     TextureAssetType(TextureAsset),
     SceneAssetType(SceneAsset),
-    SkinnedMeshAssetType(SkinnedMeshAsset),
+    /// Asset type `SkinnedMeshAsset` has been renamed to [`DeformableMeshAsset`].
+    /// The enum variant is kept intact for stable deserialization.
+    SkinnedMeshAssetType(DeformableMeshAsset),
     SkinnedAnimationAssetType(SkinnedAnimationAsset),
     SkinAssetType(SkinAsset),
     VertexMorphTargetAssetType(VertexMorphTargetAsset),
@@ -101,7 +103,7 @@ impl AssetKind {
             AssetKind::StaticMesh => <StaticMeshAsset as ConcreteAssetType>::SCHEMA_VERSION,
             AssetKind::Texture => <TextureAsset as ConcreteAssetType>::SCHEMA_VERSION,
             AssetKind::Scene => <SceneAsset as ConcreteAssetType>::SCHEMA_VERSION,
-            AssetKind::SkinnedMesh => <SkinnedMeshAsset as ConcreteAssetType>::SCHEMA_VERSION,
+            AssetKind::SkinnedMesh => <DeformableMeshAsset as ConcreteAssetType>::SCHEMA_VERSION,
             AssetKind::SkinnedAnimation => <SkinnedAnimationAsset as ConcreteAssetType>::SCHEMA_VERSION,
             AssetKind::Skin => <SkinAsset as ConcreteAssetType>::SCHEMA_VERSION,
             AssetKind::VertexMorphTarget => <VertexMorphTargetAsset as ConcreteAssetType>::SCHEMA_VERSION,
