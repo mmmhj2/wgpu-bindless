@@ -6,29 +6,23 @@
 //! - `AnimationPlayer`: CPU side animation playback state tracker.
 //! - `AnimationClip`: abstraction over GPU resources of a clip.
 //! - `ResolvedTracks`: the sampled tracks handed to the deformation dispatch.
-//! 
-//! TODO: the two named slots on [`AnimationClip`] are intentional and should
-//! stay named. A clip is scoped to one rig, and a rig consumes at most one
-//! joint track and one weight track. The deformation pipeline has exactly two
-//! consumers. A generic track list belongs at the asset layer, where a glTF
-//! animation may carry any number of morph-weight tracks.
 //!
-//! TODO: clips are registered per rig at upload time, while the asset layer
-//! still stores the skeletal and morph-weight halves of one glTF animation as
-//! two separate assets recombined by their shared `source` string. See the
-//! TODOs in `gpu_asset_store.rs` and `clip_catalog.rs`.
+//! The two named slots on [`AnimationClip`] are deliberate. A clip is scoped to
+//! one rig, and a rig consumes at most one joint track and one weight track.
+//! The open-ended track list lives at the asset layer, where a glTF animation
+//! may carry any number of morph-weight tracks.
+//!
+//! The renderer holds no clock. Animation time only moves when the application
+//! calls [`AnimationManager::update`] with a `dt` it measured itself.
 
 use std::collections::HashMap;
 
 use crate::renderer::resources::bindless::SampledTextureHandle;
 
-/// Upper bound applied to one [`AnimationManager::update`] step.
+/// Upper bound applied to one [`AnimationManager::update`] step, in seconds.
 ///
-/// Delta times are clamped by this value to avoid animation jumping forward
-/// abruptly.
-/// 
-/// TODO: figure out better reconciliation method. This only fix animation
-/// desync ostensibly.
+/// The renderer owns no clock: the application supplies `dt`. This is a sanity
+/// bound for a stalled or debugger-paused frame, not a reconciliation method.
 pub const MAX_ANIMATION_DELTA: f32 = 0.25;
 
 /// Stable identifier of one clip inside an [`AnimationManager`].
@@ -356,11 +350,13 @@ impl AnimationManager {
 
     /// Advance every active player by `dt` seconds of wall-clock time.
     ///
-    /// `dt` is clamped to [`MAX_ANIMATION_DELTA`].
-    /// 
+    /// The renderer holds no clock, so this is the only way animation time moves:
+    /// the application measures `dt` and calls this once per frame.
+    ///
     /// The manager can handle pausing and scaling. A paused manager advances
     /// nothing, and [`Self::set_time_scale`] multiplies every player's local
-    /// speed.
+    /// speed. The resulting step is bounded by [`MAX_ANIMATION_DELTA`] *after*
+    /// scaling, and a clamped step is logged.
     ///
     /// Panics if `dt` is negative or not finite.
     pub fn update(&mut self, dt: f32) {
@@ -370,7 +366,19 @@ impl AnimationManager {
         if self.paused {
             return;
         }
-        let dt = dt.min(MAX_ANIMATION_DELTA) * self.time_scale;
+
+        // Scale first, then bound: bounding the raw `dt` would let a large
+        // `time_scale` step past the bound.
+        let dt = dt * self.time_scale;
+        let dt = if dt > MAX_ANIMATION_DELTA {
+            log::warn!(
+                "Animation step of {dt:.3}s exceeds the {MAX_ANIMATION_DELTA}s bound; clamping. \
+                 This usually means the frame loop stalled or the time scale is too high."
+            );
+            MAX_ANIMATION_DELTA
+        } else {
+            dt
+        };
         if dt <= 0.0 {
             return;
         }
@@ -659,6 +667,19 @@ mod test {
             manager.update(0.1);
         }
         approx(manager.player(player).time(), 0.35);
+    }
+
+    #[test]
+    fn the_sanity_bound_applies_after_the_time_scale() {
+        let mut manager = AnimationManager::new();
+        let id = manager.register_clip(clip("a", "skin", 30, 30.0));
+        let player = manager.add_player(rig("skin"), Some(id));
+
+        // 0.1s at 10x is 1s of clip time, four times the bound. Bounding the raw
+        // delta before scaling would have let all of it through.
+        manager.set_time_scale(10.0);
+        manager.update(0.1);
+        approx(manager.player(player).time(), MAX_ANIMATION_DELTA);
     }
 
     #[test]

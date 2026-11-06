@@ -414,14 +414,6 @@ impl GpuAssetStore {
     /// deforming stages ([`RigStages`](super::rig_plan::RigStages)) are decided
     /// here and remain immutable.
     /// 
-    /// TODO: glTF describes one animation as a single unit covering both
-    /// joints and morph weights, but the asset layer splits it into two assets
-    /// that are recombined here by their shared `source` string. The halves
-    /// can only be checked against each other at this point, and the check is
-    /// incomplete: a frame-count mismatch silently drops the weight track, and
-    /// a mismatched `fps` is not detected at all. Model one clip as one asset
-    /// holding every track it drives, so the halves cannot disagree.
-    /// 
     /// TODO: maybe try lazy uploading?
     fn skinned_instance(
         &mut self,
