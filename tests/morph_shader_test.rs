@@ -10,7 +10,7 @@ mod test {
         asset::asset_types::{
             animation_asset::{MorphTarget, VertexMorphTargetAsset},
             texture_asset::{Sampler, TexelData, TextureAsset, TextureDimension, TextureFormat},
-            vertex::{VertexBufferOthers, VertexBufferPosition, VertexBufferSkinning},
+            vertex::{VertexBufferOthers, VertexBufferPosition},
         },
         renderer::{
             context::gpu_context::GpuContext,
@@ -126,14 +126,6 @@ mod test {
         let position_out = storage_buffer(device, queue, "test position out", &zero_positions, wgpu::BufferUsages::COPY_SRC);
         let attribute_out = storage_buffer(device, queue, "test attribute out", &zero_attributes, wgpu::BufferUsages::COPY_SRC);
 
-        // Morphing declares the skinning buffer to share group 1, but never
-        // reads it.
-        let bones = [VertexBufferSkinning {
-            bone_indices: [0; 4],
-            bone_weights: [0.0; 4],
-        }];
-        let bones_buffer = storage_buffer(device, queue, "test bones", &bones, wgpu::BufferUsages::empty());
-
         let group1_layout = compute
             .get_dispatch_bind_group_layout(ComputePipelineKey::GpuVertexMorphing, 0)
             .expect("morphing pipeline should expose a group-1 layout");
@@ -145,7 +137,6 @@ mod test {
                 binding(1, &attribute_in),
                 binding(2, &position_out),
                 binding(3, &attribute_out),
-                binding(4, &bones_buffer),
             ],
         });
 

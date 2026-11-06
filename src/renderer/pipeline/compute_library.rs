@@ -43,17 +43,16 @@ impl ComputePipelineLibrary {
         let mut cache = HashMap::new();
 
         let skinning = GpuSkinningComputeRecipe::new(device);
-        let skinning_bgl = skinning.bind_group_layout().clone();
-        let extra_bind_group_layouts = vec![skinning_bgl.clone()];
+        let extra_bind_group_layouts = vec![skinning.bind_group_layout().clone()];
         let (layout, pipeline) = skinning.build_pipeline_and_layout(device, bindless_layout);
         cache.insert(
             ComputePipelineKey::GpuSkinning,
             ComputeEntry { layout, pipeline, extra_bind_group_layouts },
         );
 
-        let morphing = GpuVertexMorphingRecipe::new(device, skinning_bgl);
+        let morphing = GpuVertexMorphingRecipe::new(device);
         let extra_bind_group_layouts = vec![
-            morphing.skinning_bind_group_layout().clone(),
+            morphing.vertex_io_bind_group_layout().clone(),
             morphing.morph_bind_group_layout().clone(),
         ];
         let (layout, pipeline) = morphing.build_pipeline_and_layout(device, bindless_layout);

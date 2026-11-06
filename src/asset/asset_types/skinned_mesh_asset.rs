@@ -2,7 +2,7 @@ use serde::{Serialize, Deserialize};
 
 use crate::asset::asset_types::{ConcreteAssetType, static_mesh_asset::StaticMeshAsset, vertex::VertexBufferSkinning};
 
-/// TODO: rename to `AnimatedMeshAsset`
+/// TODO: rename to `DeformableMeshAsset`
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SkinnedMeshAsset {
     /// Name of the skin asset that this mesh is bound to.
@@ -23,11 +23,14 @@ pub struct SkinnedMeshAsset {
     /// 
     /// Consumed by the skinning compute shader as a storage buffer.
     ///
-    /// Empty for a morph-only mesh.
-    pub animation : Vec<VertexBufferSkinning>,
+    /// `None` for a morph-only mesh. Such a mesh never dispatches the skinning
+    /// stage, so it has no skinning stream at all.
+    pub skinning: Option<Vec<VertexBufferSkinning>>,
 }
 
 impl ConcreteAssetType for SkinnedMeshAsset {
-    /// 2: Added morph target
-    const SCHEMA_VERSION: u32 = 2;
+    /// 2: Added morph target.
+    /// 3: `animation: Vec` became `skinning: Option<Vec>`; morph-only meshes
+    ///    store `None` instead of an empty sentinel stream.
+    const SCHEMA_VERSION: u32 = 3;
 }

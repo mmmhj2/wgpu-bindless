@@ -434,8 +434,8 @@ impl GpuAssetStore {
             },
             None => None,
         };
-        let has_skin = match mesh.skin.as_deref() {
-            Some(skin) => {
+        let has_skin = match (mesh.skin.as_deref(), mesh.skinning.is_some()) {
+            (Some(skin), true) => {
                 let exists = ctx.has_asset_of_kind(skin, AssetKind::Skin);
                 if !exists {
                     log::error!(
@@ -444,7 +444,16 @@ impl GpuAssetStore {
                 }
                 exists
             }
-            None => false,
+            (Some(skin), false) => {
+                // The asset claims a skin but carries no per-vertex joint data.
+                // Treat it as a morph-only (or rest-pose) mesh instead of
+                // letting the skinning stage bind a missing buffer.
+                log::error!(
+                    "Rig '{name}' names skin '{skin}' but has no skinning attributes; skinning is disabled for this rig."
+                );
+                false
+            }
+            (None, _) => false,
         };
 
         let rig = RigSpec {

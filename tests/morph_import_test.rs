@@ -122,7 +122,7 @@ mod test {
             "the mesh must reference its morph target asset"
         );
         assert!(
-            mesh.animation.is_empty(),
+            mesh.skinning.is_none(),
             "a morph-only mesh must not synthesize skinning attributes"
         );
         assert_eq!(mesh.restpose.vp.len(), VERTEX_COUNT);

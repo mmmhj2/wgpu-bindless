@@ -48,9 +48,12 @@ mod test {
             panic!("'{skinned_name}' is not a skinned mesh asset");
         };
 
-        assert!(!mesh.animation.is_empty(), "skinning attributes should not be empty");
+        let skinning = mesh
+            .skinning
+            .as_ref()
+            .expect("a skinned mesh must carry per-vertex skinning data");
         assert_eq!(
-            mesh.animation.len(),
+            skinning.len(),
             mesh.restpose.vp.len(),
             "there must be one skinning entry per vertex"
         );
@@ -65,7 +68,7 @@ mod test {
         );
 
         // The compute shader assumes normalized weights.
-        for entry in &mesh.animation {
+        for entry in skinning {
             let sum: f32 = entry.bone_weights.iter().sum();
             assert!((sum - 1.0).abs() < 1e-4, "weights must sum to 1, got {sum}");
         }
@@ -139,7 +142,10 @@ mod test {
         let AssetData::SkinnedMeshAssetType(mesh) = asset.get_data() else {
             panic!("'{skinned_name}' is not a skinned mesh asset");
         };
-        assert_eq!(mesh.animation.len(), mesh.restpose.vp.len());
+        assert_eq!(
+            mesh.skinning.as_ref().expect("skinning data").len(),
+            mesh.restpose.vp.len()
+        );
     }
 
     #[test]
@@ -279,7 +285,11 @@ mod test {
         let mut rest_bounds = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
         let mut posed_bounds = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
 
-        for (vertex, skinning) in mesh.restpose.vp.iter().zip(&mesh.animation) {
+        let skinning_data = mesh
+            .skinning
+            .as_ref()
+            .expect("a skinned mesh must carry per-vertex skinning data");
+        for (vertex, skinning) in mesh.restpose.vp.iter().zip(skinning_data) {
             let rest = vertex.position;
             let mut posed = [0.0f32; 3];
             for influence in 0..4 {

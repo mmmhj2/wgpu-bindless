@@ -41,7 +41,9 @@ impl AssetImporter for GltfImporter {
     /// 5: recomputes missing vertex normals from the triangle winding.
     /// 6: wrapping around for animation texture
     /// 7: morph target assets, and a clip `source` shared by both tracks.
-    const IMPORTER_VERSION: u32 = 7;
+    /// 8: `SkinnedMeshAsset.skinning` is optional. Morph-only meshes store
+    ///    `None` instead of an empty sentinel stream.
+    const IMPORTER_VERSION: u32 = 8;
 
     fn import(mut self, context: &ImporterContext) -> Result<(), ImportError> {
         if !self.path.is_file() {

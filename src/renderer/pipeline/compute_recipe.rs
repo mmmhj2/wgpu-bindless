@@ -136,8 +136,9 @@ impl ComputeRecipe for GpuSkinningComputeRecipe {
 }
 
 pub(super) struct GpuVertexMorphingRecipe {
-    /// Group 1: the same five storage buffers the skinning shader uses.
-    skinning_bgl: wgpu::BindGroupLayout,
+    /// Group 1: the same four vertex I/O storage buffers the skinning shader
+    /// uses.
+    vertex_io_bgl: wgpu::BindGroupLayout,
     /// Group 2: the morph layout table and the packed delta buffer.
     morph_bgl: wgpu::BindGroupLayout,
 }
@@ -169,7 +170,14 @@ impl GpuVertexMorphingRecipe {
         },
     ];
 
-    pub fn new(device: &wgpu::Device, skinning_bgl: wgpu::BindGroupLayout) -> Self {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let vertex_io_bgl = device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("GPU vertex deformation I/O bind group"),
+                // No joints are needed
+                entries: &GpuSkinningComputeRecipe::BGL_SKINNING[..4],
+            }
+        );
         let morph_bgl = device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
                 label: Some("GPU Vertex morphing bind group"),
@@ -177,11 +185,11 @@ impl GpuVertexMorphingRecipe {
             }
         );
 
-        Self { skinning_bgl, morph_bgl }
+        Self { vertex_io_bgl, morph_bgl }
     }
 
-    /// Group 1 layout, shared with the skinning pipeline.
-    pub fn skinning_bind_group_layout(&self) -> &wgpu::BindGroupLayout { &self.skinning_bgl }
+    /// Group 1 layout, shared with the skinning pipeline's first four entries.
+    pub fn vertex_io_bind_group_layout(&self) -> &wgpu::BindGroupLayout { &self.vertex_io_bgl }
 
     /// Group 2 layout, owned by the morphing pipeline.
     pub fn morph_bind_group_layout(&self) -> &wgpu::BindGroupLayout { &self.morph_bgl }
@@ -195,6 +203,6 @@ impl ComputeRecipe for GpuVertexMorphingRecipe {
     const IMMEDIATE_SIZE: u32 = (std::mem::size_of::<u32>() * 3) as u32;
 
     fn get_extra_bind_groups<'a>(&'a self) -> Vec<Option<&'a wgpu::BindGroupLayout>> {
-        vec![Some(&self.skinning_bgl), Some(&self.morph_bgl)]
+        vec![Some(&self.vertex_io_bgl), Some(&self.morph_bgl)]
     }
 }

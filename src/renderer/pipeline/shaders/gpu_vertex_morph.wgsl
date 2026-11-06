@@ -29,15 +29,6 @@ var<storage, read_write> position_out: array<Position>;
 @group(1) @binding(3)
 var<storage, read_write> attribute_out: array<Attribute>;
 
-// The morphing pipeline shares the skinning group-1 layout, so binding 4 is
-// declared to match it. Vertex morphing never reads joint data.
-struct Bones {
-    indices: vec4<u32>,
-    weights: vec4<f32>
-};
-@group(1) @binding(4)
-var<storage, read> bones: array<Bones>;
-
 struct AttributeOffset {
     offsets: array<u32, 5>
 }

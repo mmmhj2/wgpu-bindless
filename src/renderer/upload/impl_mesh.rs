@@ -1,7 +1,5 @@
-use bytemuck::Zeroable;
-
 use crate::{
-    asset::asset_types::{skinned_mesh_asset::SkinnedMeshAsset, static_mesh_asset::StaticMeshAsset, vertex::VertexBufferSkinning}, renderer::upload::{
+    asset::asset_types::{skinned_mesh_asset::SkinnedMeshAsset, static_mesh_asset::StaticMeshAsset}, renderer::upload::{
         GpuSkinnedMesh, context::UploadContext, error::UploadError, gpu_mesh::GpuStaticMesh, gpu_type::GpuAssetType,
     },
 };
@@ -66,12 +64,12 @@ impl GpuAssetType for SkinnedMeshAsset {
     ///
     /// In case of an animated mesh, each instance of the mesh must allocate
     /// separate buffers to store the intermediate vertex attributes calculated
-    /// by the compute shader. Those are managed by [`SkinnedMesh`] instead.
+    /// by the compute shader. Those are managed by [`AnimatedMesh`] instead.
     ///
     /// Rest pose vertex buffers are additionally flagged as `STORAGE` so the
     /// skinning compute shader can read them as typed storage buffers.
     /// 
-    /// [`SkinnedMesh`]: crate::renderer::drawable::skinned_mesh::SkinnedMesh
+    /// [`AnimatedMesh`]: crate::renderer::drawable::skinned_mesh::AnimatedMesh
     fn upload(
         &self,
         name: &str,
@@ -86,16 +84,16 @@ impl GpuAssetType for SkinnedMeshAsset {
                 attributes: restpose.va.len(),
             });
         }
-        // An empty skinning stream means a morph-only mesh, which never
-        // dispatches the skinning pass. Only a mesh that does claim a skin has to
-        // carry one entry per vertex.
-        // TODO: clean up morph and skinning entanglement after all features can run.
-        if !self.animation.is_empty() && restpose.vp.len() != self.animation.len() {
-            return Err(UploadError::SkinningCountMismatch {
-                name: name.to_string(),
-                vertices: restpose.vp.len(),
-                skinning: self.animation.len(),
-            });
+        // A morph-only mesh carries no skinning stream at all. A mesh that does
+        // carry one must have exactly one entry per rest-pose vertex.
+        if let Some(skinning) = &self.skinning {
+            if restpose.vp.len() != skinning.len() {
+                return Err(UploadError::SkinningCountMismatch {
+                    name: name.to_string(),
+                    vertices: restpose.vp.len(),
+                    skinning: skinning.len(),
+                });
+            }
         }
 
         let position_buffer = ctx.upload_buffer(
@@ -109,28 +107,23 @@ impl GpuAssetType for SkinnedMeshAsset {
             restpose.va.as_slice(),
         )?;
 
-        // A zero-sized buffer cannot be created. Fall back to a single zeroed
-        // entry so the bind group stays valid for malformed assets.
-        let skinning_label = format!("{name}.skinning");
-        let skinning_buffer = if self.animation.is_empty() {
-            if self.skin.is_some() {
-                log::warn!("Missing armature data for skinned mesh {name}. The asset may be malformed.");
-            } else {
-                // Morph-only meshes still bind this buffer to satisfy the shared
-                // bind group layout. The skinning shader never reads it.
-                log::info!("Mesh {name} has no skinning attributes; it is a morph-only mesh.");
+        // A morph-only mesh has no skinning stream and no buffer to bind.
+        let skinning_buffer = match &self.skinning {
+            Some(skinning) => Some(ctx.upload_buffer(
+                &format!("{name}.skinning"),
+                wgpu::BufferUsages::STORAGE,
+                skinning.as_slice(),
+            )?),
+            None => {
+                if self.skin.is_some() {
+                    log::warn!(
+                        "Skinned mesh {name} has no skinning attributes; the asset is malformed and skinning is disabled."
+                    );
+                } else {
+                    log::info!("Mesh {name} has no skinning attributes; it is a morph-only mesh.");
+                }
+                None
             }
-            ctx.upload_buffer(
-                &skinning_label,
-                wgpu::BufferUsages::STORAGE,
-                &[VertexBufferSkinning::zeroed()],
-            )?
-        } else {
-            ctx.upload_buffer(
-                &skinning_label,
-                wgpu::BufferUsages::STORAGE,
-                self.animation.as_slice(),
-            )?
         };
 
         let index_buffer = restpose

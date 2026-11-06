@@ -30,7 +30,9 @@ pub struct GpuSkinnedMesh {
     pub restpose_vertex_buffer: Vec<wgpu::Buffer>,
     /// Joint indices and weights, one
     /// [`crate::asset::asset_types::vertex::VertexBufferSkinning`] per vertex.
-    pub skinning_buffer: wgpu::Buffer,
+    ///
+    /// `None` for a morph-only mesh.
+    pub skinning_buffer: Option<wgpu::Buffer>,
     pub index_buffer: Option<wgpu::Buffer>,
     /// Number of vertices in the rest pose. Drives the compute dispatch size,
     /// which must not be confused with `vertex_draw_count` (an index count).

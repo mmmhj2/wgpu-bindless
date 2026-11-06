@@ -165,7 +165,6 @@ impl AnimatedMesh {
                     Self::storage_entry(1, &self.geometry.restpose_vertex_buffer[1]),
                     Self::storage_entry(2, &morph_out[0]),
                     Self::storage_entry(3, &morph_out[1]),
-                    Self::storage_entry(4, &self.geometry.skinning_buffer),
                 ],
             );
             let group2 = bindings.create_dispatch_bind_group(
@@ -186,6 +185,11 @@ impl AnimatedMesh {
                 .skin_out
                 .as_ref()
                 .expect("a skinning plan allocates skin output buffers");
+            let skinning_buffer = self
+                .geometry
+                .skinning_buffer
+                .as_ref()
+                .expect("a skinning plan requires per-vertex skinning attributes");
             let (input_position, input_attribute) = match &animation.morph_out {
                 Some(morph_out) => (&morph_out[0], &morph_out[1]),
                 None => (&self.geometry.restpose_vertex_buffer[0], &self.geometry.restpose_vertex_buffer[1]),
@@ -201,7 +205,7 @@ impl AnimatedMesh {
                     Self::storage_entry(1, input_attribute),
                     Self::storage_entry(2, &skin_out[0]),
                     Self::storage_entry(3, &skin_out[1]),
-                    Self::storage_entry(4, &self.geometry.skinning_buffer),
+                    Self::storage_entry(4, skinning_buffer),
                 ],
             ));
         }

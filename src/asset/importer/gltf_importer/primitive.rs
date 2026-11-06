@@ -344,10 +344,9 @@ impl GltfImporter {
     ///
     /// The rest pose is imported exactly like a static primitive.
     ///
-    /// A primitive with morph targets but no `JOINTS_0` / `WEIGHTS_0` produces an
-    /// empty `animation` list. Such a mesh is only ever driven by the morph
-    /// stage, so its skinning buffer only has to exist for the shared bind group
-    /// layout.
+    /// A primitive with morph targets but no `JOINTS_0` / `WEIGHTS_0` produces
+    /// `skinning: None`. Such a mesh is only ever driven by the morph stage, so
+    /// it does not carry a skinning stream at all.
     pub(crate) fn import_skinned_from_gltf_primitive(
         importer: &mut GltfImporter,
         primitive: &gltf::Primitive,
@@ -361,7 +360,7 @@ impl GltfImporter {
         let joints = reader.read_joints(0).map(|joints| joints.into_u16().collect::<Vec<[u16; 4]>>());
         let weights = reader.read_weights(0).map(|weights| weights.into_f32().collect::<Vec<[f32; 4]>>());
 
-        let animation = match (joints, weights) {
+        let skinning = match (joints, weights) {
             (Some(joints), Some(weights)) => {
                 assert_eq!(
                     joints.len(),
@@ -374,19 +373,21 @@ impl GltfImporter {
                     "skinning attributes must have one entry per vertex."
                 );
 
-                joints
-                    .iter()
-                    .zip(weights.iter())
-                    .map(|(indices, weights)| Self::normalize_skinning_weights(indices, weights))
-                    .collect()
+                Some(
+                    joints
+                        .iter()
+                        .zip(weights.iter())
+                        .map(|(indices, weights)| Self::normalize_skinning_weights(indices, weights))
+                        .collect(),
+                )
             }
             // Morph-only primitive: neither attribute is present, and the mesh
             // has nothing that could skin it.
-            (None, None) if Self::has_morph_targets(primitive) => Vec::new(),
+            (None, None) if Self::has_morph_targets(primitive) => None,
             _ => return Err(GltfImportError::MissingSkinningAttributes),
         };
 
-        Ok(SkinnedMeshAsset { skin: skin_name, morph_target, restpose, animation })
+        Ok(SkinnedMeshAsset { skin: skin_name, morph_target, restpose, skinning })
     }
 
     /// Keep the four strongest influences and renormalize their weights.

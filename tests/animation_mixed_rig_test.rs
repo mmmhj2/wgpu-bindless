@@ -200,10 +200,10 @@ mod test {
                 skin: Some("mixed.skin".into()),
                 morph_target: Some("mixed.morphtgt".into()),
                 restpose: restpose([0.0, 0.0, 0.0]),
-                animation: vec![VertexBufferSkinning {
+                skinning: Some(vec![VertexBufferSkinning {
                     bone_indices: [0; 4],
                     bone_weights: [1.0, 0.0, 0.0, 0.0],
-                }],
+                }]),
             }),
         );
         save_asset(
@@ -254,7 +254,7 @@ mod test {
                 skin: None,
                 morph_target: Some("base.morphtgt".into()),
                 restpose: restpose([0.0, 0.0, 0.0]),
-                animation: Vec::new(),
+                skinning: None,
             }),
         );
         save_asset(dir, "base.scene", AssetData::SceneAssetType(scene(&["base.skpr"])));
