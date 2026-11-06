@@ -22,7 +22,7 @@ mod test {
                 asset_cache::{GpuAssetStore, SceneUploadContext},
                 bindless::BindlessResources,
             },
-            upload::{GpuAssetType, UploadContext, MORPH_LAYOUT_WORDS},
+            upload::{GpuAssetType, UploadContext, UploadError, MAX_MORPH_TARGETS, MORPH_LAYOUT_WORDS},
         },
     };
 
@@ -207,5 +207,35 @@ mod test {
         // Two position blocks (2 vertices * 3 floats) plus one normal block of the
         // same size: sparse storage only pays for what exists.
         assert_eq!(uploaded.deltas.size(), 6 * 4 * 2, "two blocks of six floats");
+    }
+
+    fn target_with_count(count: usize) -> VertexMorphTargetAsset {
+        let vertex = vec![[0.0f32, 0.0, 0.0]];
+        VertexMorphTargetAsset {
+            mesh: "test.skpr".into(),
+            targets: (0..count)
+                .map(|_| MorphTarget { position: Some(vertex.clone()), ..Default::default() })
+                .collect(),
+            default_weights: None,
+        }
+    }
+
+    #[test]
+    fn rejects_target_counts_outside_the_supported_range() {
+        let (gpu, mut bindless) = setup();
+        let mut upload = UploadContext::new(gpu.device(), gpu.queue(), &mut bindless);
+
+        for count in [0, MAX_MORPH_TARGETS + 1] {
+            let error = target_with_count(count)
+                .upload("test.invalid", &mut upload)
+                .expect_err("an out-of-range target count must not be uploaded");
+            match error {
+                UploadError::MorphTargetCount { count: actual, max, .. } => {
+                    assert_eq!(actual, count);
+                    assert_eq!(max, MAX_MORPH_TARGETS);
+                }
+                other => panic!("expected MorphTargetCount for {count} targets, got {other:?}"),
+            }
+        }
     }
 }

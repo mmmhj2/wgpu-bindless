@@ -42,7 +42,7 @@ pub(super) fn clip_source(scene: usize, animation: usize) -> String {
 /// Longest input time among *all* channels of an animation, in seconds.
 ///
 /// glTF allows the channels of one animation to end at different times, so this
-/// is a maximum rather than an equality assertion (D12).
+/// is a maximum rather than an equality assertion.
 pub(super) fn animation_duration(animation: &gltf::Animation, buffers: &[gltf::buffer::Data]) -> f32 {
     let mut duration = 0.0f32;
     for channel in animation.channels() {
@@ -577,7 +577,7 @@ fn write_weight_row(texels: &mut Vec<u8>, weights: &[f32], width: u32) {
 /// Bake the morph weight track of one glTF animation into a weight texture.
 ///
 /// `duration` is the animation's duration, shared with the skeletal track so
-/// both bakes produce the same frame count (I4). `target_count` is the number of
+/// both bakes produce the same frame count. `target_count` is the number of
 /// targets the owning morph primitive was imported with.
 ///
 /// The texture is `width = ceil(target_count / 4)` texels by

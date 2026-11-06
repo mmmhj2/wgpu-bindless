@@ -32,6 +32,12 @@ impl ConcreteAssetType for SkinnedAnimationAsset {
     const SCHEMA_VERSION: u32 = 2;
 }
 
+/// Upper bound on morph targets per mesh primitive, matching the glTF limit.
+///
+/// The GPU layout reserves this many mask slots, so raising it changes the
+/// layout word count.
+pub const MAX_MORPH_TARGETS: usize = 8;
+
 /// One glTF morph target.
 ///
 /// The index of a target in [`VertexMorphTargetAsset::targets`] is its index in

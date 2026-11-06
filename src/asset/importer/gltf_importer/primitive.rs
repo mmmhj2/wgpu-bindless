@@ -1,7 +1,7 @@
 //! Primitive import: geometry streams, skinning attributes and material slots.
 
 use crate::asset::asset_types::{
-    animation_asset::{MorphTarget, VertexMorphTargetAsset},
+    animation_asset::{MorphTarget, VertexMorphTargetAsset, MAX_MORPH_TARGETS},
     skinned_mesh_asset::SkinnedMeshAsset,
     static_mesh_asset::{StaticMeshAsset, StaticMeshMaterial},
     vertex::{VertexBufferOthers, VertexBufferPosition, VertexBufferSkinning},
@@ -12,13 +12,6 @@ use super::common::GltfImportError;
 use super::importer::GltfImporter;
 use super::naming::SubAssetType;
 use super::texture::MraoKey;
-
-/// Upper bound on imported morph targets, matching the glTF spec limit.
-///
-/// Excess targets are dropped with a warning. The GPU layout reserves attribute
-/// slots rather than a target count, so raising this limit later needs no layout
-/// change.
-pub(super) const MAX_MORPH_TARGETS: usize = 8;
 
 /// glTF attribute names of the morph target slots, in layout order.
 const MORPH_ATTRIBUTE_NAMES: [&str; MorphTarget::CHANNEL_COUNT] =
@@ -328,7 +321,7 @@ impl GltfImporter {
     ///
     /// Only `mesh.weights` is supported as the static base shape. A per-node
     /// override would make two instances of one mesh differ, which the asset
-    /// model cannot express yet, so the override is ignored (§7.6).
+    /// model cannot express yet, so the override is ignored.
     pub(super) fn warn_about_node_weight_overrides(document: &gltf::Document, mesh: &gltf::Mesh) {
         let mesh_weights = mesh.weights();
         for node in document.nodes() {

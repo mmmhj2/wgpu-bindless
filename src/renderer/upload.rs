@@ -16,6 +16,7 @@ mod impl_texture;
 
 pub use buffer::upload_buffer;
 pub use context::UploadContext;
+pub use crate::asset::asset_types::animation_asset::MAX_MORPH_TARGETS;
 pub use error::UploadError;
 pub use gpu_mesh::{GpuMorphTargets, GpuSkinnedMesh, GpuStaticMesh, MAX_MORPH_CHANNELS, MORPH_LAYOUT_WORDS};
 pub use gpu_type::GpuAssetType;

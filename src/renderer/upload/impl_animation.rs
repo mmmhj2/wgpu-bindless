@@ -2,13 +2,13 @@ use std::num::{NonZero, NonZeroU32};
 
 use crate::{
     asset::asset_types::{
-        animation_asset::{MorphTarget, SkinnedAnimationAsset, VertexMorphAnimationAsset, VertexMorphTargetAsset},
+        animation_asset::{MorphTarget, SkinnedAnimationAsset, VertexMorphAnimationAsset, VertexMorphTargetAsset, MAX_MORPH_TARGETS},
         texture_asset::{Sampler, TexelData, TextureAsset, TextureDimension, TextureFormat},
     },
     renderer::upload::{
         context::UploadContext,
         error::UploadError,
-        gpu_mesh::{GpuMorphTargets, MAX_MORPH_CHANNELS, MORPH_LAYOUT_WORDS},
+        gpu_mesh::{GpuMorphTargets, MORPH_LAYOUT_WORDS},
         gpu_type::GpuAssetType,
     },
     util::f16::f32_to_f16_bits,
@@ -68,10 +68,18 @@ impl GpuAssetType for VertexMorphTargetAsset {
         ctx: &mut UploadContext<'_>,
     ) -> Result<Self::GpuObjectType, UploadError> {
         let channel_count = self.targets.len();
+        if !(1..=MAX_MORPH_TARGETS).contains(&channel_count) {
+            return Err(UploadError::MorphTargetCount {
+                name: name.to_string(),
+                count: channel_count,
+                max: MAX_MORPH_TARGETS,
+            });
+        }
+        let channel_count = channel_count as u32;
 
         // `[0]` channel count, `[1..9]` masks, `[9..49]` offsets.
         let mut layout = [0u32; MORPH_LAYOUT_WORDS];
-        layout[0] = channel_count as u32;
+        layout[0] = channel_count;
 
         let mut deltas: Vec<f32> = Vec::new();
         for (channel, target) in self.targets.iter().enumerate() {
@@ -85,7 +93,7 @@ impl GpuAssetType for VertexMorphTargetAsset {
             push_attribute(&mut deltas, &mut mask, &mut offsets[4], 4, target.color0.as_deref());
 
             layout[1 + channel] = mask;
-            let offset_base = 1 + MAX_MORPH_CHANNELS;
+            let offset_base = 1 + MAX_MORPH_TARGETS;
             layout[offset_base + channel * MorphTarget::CHANNEL_COUNT
                 ..offset_base + (channel + 1) * MorphTarget::CHANNEL_COUNT]
                 .copy_from_slice(&offsets);
@@ -111,20 +119,18 @@ impl GpuAssetType for VertexMorphTargetAsset {
             .filter(|weights| weights.iter().any(|weight| *weight != 0.0));
         let base_weights = match base_weights {
             Some(weights) => {
-                let texture = base_weight_texture(weights, channel_count);
+                let texture = base_weight_texture(weights, channel_count as usize);
                 Some(ctx.upload_texture(&format!("{name}.morph.base_weights"), &texture)?.handle)
             }
             None => None,
         };
-        let base_channels = base_weights
-            .map(|_| NonZeroU32::new(channel_count as u32)
-            .expect("channel count should not be zero if a texture exists"));
+        let base_channels = base_weights.and_then(|_| NonZeroU32::new(channel_count));
 
         Ok(GpuMorphTargets {
             layout: layout_buffer,
             deltas: delta_buffer,
             base_weights,
-            channel_count: channel_count as u32,
+            channel_count,
             base_channels,
         })
     }

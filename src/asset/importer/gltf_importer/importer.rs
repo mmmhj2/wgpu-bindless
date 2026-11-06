@@ -12,13 +12,12 @@
 use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::{Arc, RwLock}};
 
 use crate::asset::{
-    asset_types::{Asset, AssetData, AssetMetadata},
+    asset_types::{animation_asset::MAX_MORPH_TARGETS, Asset, AssetData, AssetMetadata},
     error::ImportError,
     importer::{AssetImporter, ImporterContext, gltf_importer::{
         animation::{animation_duration, bake_animation, bake_morph_animation, classify_animation, clip_source, BAKE_FPS},
         common::GltfImportError,
         naming::SubAssetType,
-        primitive::MAX_MORPH_TARGETS,
         texture::MraoKey,
     }},
 };
@@ -94,6 +93,12 @@ impl AssetImporter for GltfImporter {
             let mesh_weights = mesh.weights();
             if mesh.primitives().any(|primitive| Self::has_morph_targets(&primitive)) {
                 Self::warn_about_node_weight_overrides(&document, &mesh);
+                if skin_index.is_some() && unskinned_meshes.contains(&mesh.index()) {
+                    log::warn!(
+                        "Mesh {} has morph targets and is placed on both skinned and skinless nodes. The skinless placement reuses the skinned deformable asset and will follow skeletal animation.",
+                        mesh.index()
+                    );
+                }
             }
 
             // TODO: this loop has become somewhat messy. Needs cleaning up.
@@ -266,7 +271,7 @@ impl AssetImporter for GltfImporter {
                 0
             });
             let source = clip_source(scene, animation.index());
-            // Shared by both tracks: same duration, same frame count (I4).
+            // Shared by both tracks: same duration, same frame count.
             let duration = animation_duration(&animation, &buffers);
 
             if let Some(skin_index) = classification.skin {

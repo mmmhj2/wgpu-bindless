@@ -45,6 +45,13 @@ pub enum UploadError {
     #[error("asset '{0}' has a poisoned lock")]
     AssetLockPoisoned(String),
 
+    #[error("morph target asset '{name}' has {count} targets, but the supported range is 1..={max}")]
+    MorphTargetCount {
+        name: String,
+        count: usize,
+        max: usize,
+    },
+
     #[error("mesh '{name}' has {positions} positions but {attributes} vertex attributes")]
     VertexCountMismatch {
         name: String,

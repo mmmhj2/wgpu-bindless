@@ -1,3 +1,5 @@
+//! TODO: this module is growing in size. Refactor may be needed.
+
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
@@ -126,13 +128,14 @@ impl ClipCatalog {
                 for track in tracks {
                     let clip = merged.entry(track.source.clone()).or_insert_with(|| ClipTracks::new(track));
                     if clip.frames != track.frames {
-                        log::warn!(
-                            "Clip '{}' of rig '{}' has {} baked frames in its skeletal track but {} in its weight track; using the skeletal count.",
-                            track.source,
+                        log::error!(
+                            "Dropping weight track '{}' of rig '{}'. The clip has {} baked frames but the weight track has {}.",
+                            track.asset_name,
                             rig.mesh,
                             clip.frames,
                             track.frames
                         );
+                        continue;
                     }
                     clip.weights = Some(track.asset_name.clone());
                 }
@@ -144,6 +147,9 @@ impl ClipCatalog {
                 );
             }
         }
+
+        // A track can be dropped above, leaving a clip with nothing to play.
+        merged.retain(|_, clip| clip.joints.is_some() || clip.weights.is_some());
 
         let mut clips: Vec<ClipTracks> = merged.into_values().collect();
         clips.sort_by(|a, b| (&a.source, &a.name).cmp(&(&b.source, &b.name)));
@@ -905,10 +911,14 @@ mod test {
     }
 
     fn track(source: &str, asset_name: &str) -> BakedTrack {
+        track_with_frames(source, asset_name, 30)
+    }
+
+    fn track_with_frames(source: &str, asset_name: &str, frames: u32) -> BakedTrack {
         BakedTrack {
             source: source.to_string(),
             asset_name: asset_name.to_string(),
-            frames: 30,
+            frames,
             fps: 30.0,
         }
     }
@@ -999,6 +1009,26 @@ mod test {
 
         let plan = RigPlan::from_assets(&rig, &clips);
         assert_eq!(plan.stages(), RigStages::Skin);
+    }
+
+    #[test]
+    fn mismatched_frame_counts_drop_the_weight_track() {
+        let mut catalog = ClipCatalog::default();
+        catalog.joints_by_skin.insert("rig.skin".into(), vec![track("scene0/anim0", "rig.anim_0_0")]);
+        catalog.weights_by_mesh.insert(
+            "rig.skpr".into(),
+            vec![track_with_frames("scene0/anim0", "rig.morphanim_0_0_0_0", 15)],
+        );
+
+        let rig = rig("rig.skpr", Some("rig.skin"), true, true);
+        let clips = catalog.clips_for_rig(&rig);
+
+        assert_eq!(clips.len(), 1, "the skeletal half still plays");
+        assert!(clips[0].joints.is_some());
+        assert!(clips[0].weights.is_none(), "the mismatched weight track is dropped");
+
+        // The dropped track no longer enables the morph stage.
+        assert_eq!(RigPlan::from_assets(&rig, &clips).stages(), RigStages::Skin);
     }
 
     #[test]

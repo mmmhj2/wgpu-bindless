@@ -45,7 +45,7 @@ impl DrawList {
     /// 
     /// Vertex morphing should be performed before any skinning.
     /// 
-    /// The caller must already have bound the GPU skinning pipeline and the
+    /// The caller must already have bound the GPU morphing pipeline and the
     /// global bindless bind group (group 0).
     pub fn record_morphing(&self, cp: &mut wgpu::ComputePass) -> &Self {
         todo!()
@@ -110,8 +110,8 @@ impl DrawList {
 
     /// Materialize the morphing dispatch bind groups.
     ///
-    /// Must run before the morping compute pass records
-    /// [`...`].
+    /// Must run before the morphing compute pass records
+    /// [`crate::renderer::drawable::skinned_mesh::AnimatedMesh::morph_with`].
     /// A no-op for static-only lists and for meshes without an animation.
     /// 
     /// Drawing an unbound mesh with vertex morph panics.

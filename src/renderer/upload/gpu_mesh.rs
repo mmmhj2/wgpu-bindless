@@ -1,7 +1,7 @@
 use std::num::NonZero;
 
 use crate::{
-    asset::asset_types::animation_asset::MorphTarget,
+    asset::asset_types::animation_asset::{MorphTarget, MAX_MORPH_TARGETS},
     renderer::resources::bindless::SampledTextureHandle,
 };
 
@@ -39,13 +39,15 @@ pub struct GpuSkinnedMesh {
 }
 
 /// Number of morph target channels the GPU layout reserves.
-pub const MAX_MORPH_CHANNELS: usize = 8;
+///
+/// Alias of [`MAX_MORPH_TARGETS`] under the upload-side name.
+pub const MAX_MORPH_CHANNELS: usize = MAX_MORPH_TARGETS;
 
 /// Number of `u32` words in the morph layout buffer.
 ///
 /// `[0]` channel count, `[1..9]` per-channel attribute masks, `[9..49]`
 /// per-channel, per-attribute offsets into [`GpuMorphTargets::deltas`].
-pub const MORPH_LAYOUT_WORDS: usize = 1 + MAX_MORPH_CHANNELS + MAX_MORPH_CHANNELS * MorphTarget::CHANNEL_COUNT;
+pub const MORPH_LAYOUT_WORDS: usize = 1 + MAX_MORPH_TARGETS + MAX_MORPH_TARGETS * MorphTarget::CHANNEL_COUNT;
 
 /// GPU-resident morph targets of one primitive.
 ///
@@ -72,8 +74,8 @@ pub struct GpuMorphTargets {
     /// Number of morph targets, i.e. the number of weights a clip provides.
     pub channel_count: u32,
     /// Number of weight channels [`Self::base_weights`] provides.
-    /// 
-    /// Zero when the texture does not exist.
+    ///
+    /// `None` when the texture does not exist, otherwise the target count.
     pub base_channels: Option<NonZero<u32>>,
 }
 

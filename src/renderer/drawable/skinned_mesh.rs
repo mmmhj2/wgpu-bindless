@@ -210,7 +210,7 @@ impl AnimatedMesh {
     pub fn morph_with(&self, cp: &mut wgpu::ComputePass, frame: MorphAnimationFrame) {
         let Some(anim) = &self.animation else { return };
         let dispatch_bg = anim.morph_dispatch_bg.as_ref().expect(
-            "morph dispatch bind group is not initialized: call `DrawList::ensure_morphing_bound` before the skinning pass",
+            "morph dispatch bind group is not initialized: call `DrawList::ensure_morphing_bound` before the morphing pass",
         );
 
         cp.set_bind_group(1, Some(&dispatch_bg[0]), &[]);

@@ -154,7 +154,7 @@ mod test {
         assert_eq!(morph.fps, 30.0);
 
         // The frame count comes from the animation duration, which the skeletal
-        // track uses too, so both tracks stay in sync (D12 / I4).
+        // track uses too, so both tracks stay in sync.
         let expected_frames = ((duration * morph.fps).ceil() as u32) + 1;
         assert_eq!(morph.frames, expected_frames, "frames = ceil(duration * fps) + 1");
         assert!(morph.frames > 2, "the cube animation should span several frames");
