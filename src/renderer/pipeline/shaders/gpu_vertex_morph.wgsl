@@ -82,19 +82,35 @@ fn load_delta_vec4(offset: u32) -> vec4<f32> {
     return vec4<f32>(deltas[offset], deltas[offset + 1u], deltas[offset + 2u], deltas[offset + 3u]);
 }
 
-/// Read one channel's weight at `frame` from the bindless weight texture.
-fn load_weight(frame: f32, channel: u32) -> f32 {
+/// Weights of up to four targets share one texel, so a row of
+/// `ceil(MAX_TARGETS / 4)` texels covers every target of one frame.
+const WEIGHTS_PER_TEXEL: u32 = 4u;
+const WEIGHT_ROW_TEXELS: u32 = (MAX_TARGETS + WEIGHTS_PER_TEXEL - 1u) / WEIGHTS_PER_TEXEL;
+
+/// Read the whole weight row at `frame`, interpolating between the two adjacent
+/// baked frames. Out-of-range texels read as zero.
+fn load_weight_row(frame: f32) -> array<vec4<f32>, WEIGHT_ROW_TEXELS> {
     let weight_tex = bindless_textures[imm.tex & 0xFFFFu];
-    let x = i32(channel / 4u);
     let y1 = i32(floor(frame));
     let alpha = fract(frame);
 
-    var texel = textureLoad(weight_tex, vec2<i32>(x, y1), 0);
-    if (alpha > 0.0) {
-        texel = mix(texel, textureLoad(weight_tex, vec2<i32>(x, y1 + 1), 0), alpha);
+    var row: array<vec4<f32>, WEIGHT_ROW_TEXELS>;
+    for (var x = 0u; x < WEIGHT_ROW_TEXELS; x = x + 1u) {
+        let here = textureLoad(weight_tex, vec2<i32>(i32(x), y1), 0);
+        if (alpha > 0.0) {
+            let next = textureLoad(weight_tex, vec2<i32>(i32(x), y1 + 1), 0);
+            row[x] = mix(here, next, alpha);
+        } else {
+            row[x] = here;
+        }
     }
+    return row;
+}
 
-    let lane = channel % 4u;
+/// Weight of one target, read out of a pre-loaded row.
+fn weight_of(row: array<vec4<f32>, WEIGHT_ROW_TEXELS>, channel: u32) -> f32 {
+    let texel = row[channel / WEIGHTS_PER_TEXEL];
+    let lane = channel % WEIGHTS_PER_TEXEL;
     if (lane == 0u) {
         return texel.x;
     }
@@ -137,9 +153,10 @@ fn cs_main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var color = unpack_vec4(rest_attribute._color);
     var uv0 = unpack_vec2(rest_attribute._uv0);
 
+    let weights = load_weight_row(imm.frame);
+
     for (var channel = 0u; channel < channel_count; channel = channel + 1u) {
-        // TODO: this generates multiple separate texture loads. Condense them into one or two.
-        let weight = load_weight(imm.frame, channel);
+        let weight = weight_of(weights, channel);
         if (weight == 0.0) {
             continue;
         }
