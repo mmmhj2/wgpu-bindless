@@ -31,7 +31,7 @@ use crate::{
         resources::{
             bindless::SampledTextureHandle,
             clip_catalog::ClipCatalog,
-            rig_plan::{RigPlan, RigSpec},
+            rig_plan::{RigSpec, RigStages},
         },
         scene::graph::SceneGraph,
         upload::{
@@ -399,12 +399,13 @@ impl GpuAssetStore {
     /// deforming stages ([`RigStages`](super::rig_plan::RigStages)) are decided
     /// here and remain immutable.
     /// 
-    /// TODO: Combining two halves of clips seems unnatural: glTF has
-    /// a unified animation description for both morph and joints,
-    /// but we split it in the asset system and recombine it here.
-    /// Figure out a better way as a part of the animation system rewrite,
-    /// which plans to model a clip as a generic list of baked tracks (see
-    /// the module TODO in `renderer/animation.rs`).
+    /// TODO: glTF describes one animation as a single unit covering both
+    /// joints and morph weights, but the asset layer splits it into two assets
+    /// that are recombined here by their shared `source` string. The halves
+    /// can only be checked against each other at this point, and the check is
+    /// incomplete: a frame-count mismatch silently drops the weight track, and
+    /// a mismatched `fps` is not detected at all. Model one clip as one asset
+    /// holding every track it drives, so the halves cannot disagree.
     /// 
     /// TODO: maybe try lazy uploading?
     fn skinned_instance(
@@ -497,15 +498,15 @@ impl GpuAssetStore {
             ));
         }
 
-        let plan = RigPlan::from_assets(&rig, &clips);
+        let stages = RigStages::from_assets(&rig, &clips);
         if clips.is_empty() {
             log::warn!("Rig '{name}' has no animation clips; it renders its rest pose.");
         } else {
             log::debug!(
                 "Rig '{name}': {:?}, {} clip(s), final {:?}.",
-                plan.stages(),
+                stages,
                 clips.len(),
-                plan.final_buffer()
+                stages.final_buffer()
             );
         }
 
@@ -519,7 +520,7 @@ impl GpuAssetStore {
             geometry,
             material,
             world_matrix,
-            plan,
+            stages,
             morph,
         )
     }

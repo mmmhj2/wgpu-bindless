@@ -167,7 +167,7 @@ impl ClipTracks {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::renderer::resources::rig_plan::{FinalBuffer, RigPlan, RigStages};
+    use crate::renderer::resources::rig_plan::{FinalBuffer, RigStages};
 
     fn track(source: &str, asset_name: &str) -> BakedTrack {
         track_with_frames(source, asset_name, 30)
@@ -217,9 +217,9 @@ mod test {
 
         // The gates are a union over the rig's catalog, so both stages exist even
         // though no single clip drives both.
-        let plan = RigPlan::from_assets(&rig, &clips);
-        assert_eq!(plan.stages(), RigStages::MorphThenSkin);
-        assert_eq!(plan.final_buffer(), FinalBuffer::SkinOut);
+        let stages = RigStages::from_assets(&rig, &clips);
+        assert_eq!(stages, RigStages::MorphThenSkin);
+        assert_eq!(stages.final_buffer(), FinalBuffer::SkinOut);
     }
 
     #[test]
@@ -232,9 +232,9 @@ mod test {
         let clips = catalog.clips_for_rig(&rig);
 
         assert!(clips.is_empty(), "the only track is unusable: {clips:?}");
-        let plan = RigPlan::from_assets(&rig, &clips);
-        assert_eq!(plan.stages(), RigStages::None, "the rig falls back to its rest pose");
-        assert_eq!(plan.final_buffer(), FinalBuffer::Restpose);
+        let stages = RigStages::from_assets(&rig, &clips);
+        assert_eq!(stages, RigStages::None, "the rig falls back to its rest pose");
+        assert_eq!(stages.final_buffer(), FinalBuffer::Restpose);
     }
 
     #[test]
@@ -247,9 +247,9 @@ mod test {
         let clips = catalog.clips_for_rig(&rig);
 
         assert!(clips.is_empty(), "the only track is unusable: {clips:?}");
-        let plan = RigPlan::from_assets(&rig, &clips);
-        assert_eq!(plan.stages(), RigStages::None);
-        assert_eq!(plan.final_buffer(), FinalBuffer::Restpose);
+        let stages = RigStages::from_assets(&rig, &clips);
+        assert_eq!(stages, RigStages::None);
+        assert_eq!(stages.final_buffer(), FinalBuffer::Restpose);
     }
 
     #[test]
@@ -266,8 +266,8 @@ mod test {
         assert!(clips[0].joints.is_some(), "the skeletal half is still usable");
         assert!(clips[0].weights.is_none(), "the weight half is dropped");
 
-        let plan = RigPlan::from_assets(&rig, &clips);
-        assert_eq!(plan.stages(), RigStages::Skin);
+        let stages = RigStages::from_assets(&rig, &clips);
+        assert_eq!(stages, RigStages::Skin);
     }
 
     #[test]
@@ -287,6 +287,6 @@ mod test {
         assert!(clips[0].weights.is_none(), "the mismatched weight track is dropped");
 
         // The dropped track no longer enables the morph stage.
-        assert_eq!(RigPlan::from_assets(&rig, &clips).stages(), RigStages::Skin);
+        assert_eq!(RigStages::from_assets(&rig, &clips), RigStages::Skin);
     }
 }

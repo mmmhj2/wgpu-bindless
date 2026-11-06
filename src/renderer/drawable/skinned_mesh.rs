@@ -10,7 +10,7 @@ use crate::{
         },
         resources::{
             mesh_layout::ModelMatrixBindingSource,
-            rig_plan::{FinalBuffer, RigPlan, RigStages},
+            rig_plan::{FinalBuffer, RigStages},
         },
         upload::{
             buffer::upload_buffer,
@@ -60,7 +60,7 @@ struct AnimationState {
 pub struct AnimatedMesh {
     geometry: Arc<GpuSkinnedMesh>,
     /// Stage set and final vertex stream, decided during `prepare_scene`.
-    plan: RigPlan,
+    stages: RigStages,
     /// Morph targets of this mesh, shared with every instance.
     morph_targets: Option<Arc<GpuMorphTargets>>,
     material: PBRMaterial,
@@ -75,9 +75,9 @@ impl AnimatedMesh {
 
     /// Create an animated mesh.
     ///
-    /// `plan` decides which deformation stages exist and which vertex stream is
-    /// drawn. `morph_targets` must be present when the plan contains the morph
-    /// stage, which is shared between every instance of the mesh.
+    /// `stages` decides which deformation stages exist and which vertex stream
+    /// is drawn. `morph_targets` must be present when the stages contain the
+    /// morph stage, which is shared between every instance of the mesh.
     ///
     /// The actual clip is selected by the
     /// [`crate::renderer::animation::AnimationManager`] at draw time, and this
@@ -88,7 +88,7 @@ impl AnimatedMesh {
         geometry: Arc<GpuSkinnedMesh>,
         material: PBRMaterial,
         world_matrix: [[f32; 4]; 4],
-        plan: RigPlan,
+        stages: RigStages,
         morph_targets: Option<Arc<GpuMorphTargets>>,
     ) -> Result<Self, UploadError> {
         let model_matrix_buffer = upload_buffer(
@@ -99,11 +99,11 @@ impl AnimatedMesh {
             world_matrix.as_slice(),
         )?;
 
-        let animation = Self::create_stages(device, &geometry, plan);
+        let animation = Self::create_stages(device, &geometry, stages);
 
         Ok(Self {
             geometry,
-            plan,
+            stages,
             morph_targets,
             material,
             animation,
@@ -145,7 +145,7 @@ impl AnimatedMesh {
     ) {
         let Some(animation) = &mut self.animation else { return };
 
-        if self.plan.morphs() && animation.morph_dispatch_bg.is_none() {
+        if self.stages.morphs() && animation.morph_dispatch_bg.is_none() {
             let target = self
                 .morph_targets
                 .as_ref()
@@ -180,7 +180,7 @@ impl AnimatedMesh {
             animation.morph_dispatch_bg = Some([group1, group2]);
         }
 
-        if self.plan.skins() && animation.skin_dispatch_bg.is_none() {
+        if self.stages.skins() && animation.skin_dispatch_bg.is_none() {
             let skin_out = animation
                 .skin_out
                 .as_ref()
@@ -215,17 +215,17 @@ impl AnimatedMesh {
     fn create_stages(
         device: &wgpu::Device,
         geometry: &GpuSkinnedMesh,
-        plan: RigPlan,
+        stages: RigStages,
     ) -> Option<AnimationState> {
-        if plan.is_empty() {
+        if stages.is_empty() {
             return None;
         }
 
         Some(AnimationState {
-            morph_out: plan.morphs().then(|| {
+            morph_out: stages.morphs().then(|| {
                 Self::create_deformed_buffers(device, geometry.vertex_count, "morph")
             }),
-            skin_out: plan.skins().then(|| {
+            skin_out: stages.skins().then(|| {
                 Self::create_deformed_buffers(device, geometry.vertex_count, "skin")
             }),
             morph_dispatch_bg: None,
@@ -268,13 +268,13 @@ impl AnimatedMesh {
     }
 
     /// Whether this mesh runs at least one deformation stage.
-    pub fn is_animated(&self) -> bool { !self.plan.is_empty() }
+    pub fn is_animated(&self) -> bool { !self.stages.is_empty() }
 
     /// Stage set decided during `prepare_scene`.
-    pub fn stages(&self) -> RigStages { self.plan.stages() }
+    pub fn stages(&self) -> RigStages { self.stages }
 
     /// Vertex stream the rasterizer reads.
-    pub fn final_buffer(&self) -> FinalBuffer { self.plan.final_buffer() }
+    pub fn final_buffer(&self) -> FinalBuffer { self.stages.final_buffer() }
 
     /// Rest-pose vertex streams, for read-only inspection and tests.
     pub fn restpose_vertex_buffers(&self) -> &[wgpu::Buffer] {
@@ -298,7 +298,7 @@ impl AnimatedMesh {
     /// rest-pose copy when the target has no base weights.
     pub fn morph_with(&self, cp: &mut wgpu::ComputePass, frame: Option<MorphAnimationFrame>) {
         let Some(animation) = &self.animation else { return };
-        if !self.plan.morphs() {
+        if !self.stages.morphs() {
             return;
         }
         let target = self
@@ -338,7 +338,7 @@ impl AnimatedMesh {
     /// copy its input to the output before reading any joint data.
     pub fn skin_with(&self, cp: &mut wgpu::ComputePass, frame: Option<SkinnedAnimationFrame>) {
         let Some(animation) = &self.animation else { return };
-        if !self.plan.skins() {
+        if !self.stages.skins() {
             return;
         }
         let dispatch_bg = animation.skin_dispatch_bg.as_ref().expect(
@@ -381,14 +381,14 @@ impl AnimatedMesh {
             None => (None, None),
         };
 
-        if self.plan.morphs() {
+        if self.stages.morphs() {
             let pipeline = pipelines
                 .get_pipeline(ComputePipelineKey::GpuVertexMorphing)
                 .expect("the GPU vertex morphing pipeline should be registered");
             cp.set_pipeline(pipeline);
             self.morph_with(cp, weights);
         }
-        if self.plan.skins() {
+        if self.stages.skins() {
             let pipeline = pipelines
                 .get_pipeline(ComputePipelineKey::GpuSkinning)
                 .expect("the GPU skinning pipeline should be registered");
@@ -402,7 +402,7 @@ impl AnimatedMesh {
 
 impl Mesh for AnimatedMesh {
     fn get_vertex_buffer(&self) -> &[wgpu::Buffer] {
-        match self.plan.final_buffer() {
+        match self.stages.final_buffer() {
             FinalBuffer::Restpose => self.geometry.restpose_vertex_buffer.as_slice(),
             FinalBuffer::MorphOut => self
                 .animation

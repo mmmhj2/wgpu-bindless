@@ -21,7 +21,7 @@ pub struct RigSpec<'a> {
     pub base_weights_nonzero: bool,
 }
 
-/// The five inputs of the stage gate (section 3.2 of the plan).
+/// The five inputs of the stage gate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RigCapabilities {
     /// The mesh names a skin, and that skin asset exists.
@@ -67,6 +67,7 @@ pub enum RigStages {
 }
 
 impl RigStages {
+    /// Stages in dispatch order.
     pub fn as_slice(self) -> &'static [RigStage] {
         match self {
             Self::None => &[],
@@ -76,6 +77,7 @@ impl RigStages {
         }
     }
 
+    /// Buffer holding the vertex stream the rasterizer reads.
     pub fn final_buffer(self) -> FinalBuffer {
         match self {
             Self::None => FinalBuffer::Restpose,
@@ -85,37 +87,32 @@ impl RigStages {
     }
 
     pub fn contains(self, stage: RigStage) -> bool { self.as_slice().contains(&stage) }
-}
 
-/// Which deformation stages one rig runs, and what its final vertex stream is.
-/// 
-/// TODO: maybe combine this struct with `RigStages`, as they are currently
-/// identical. Fold this into the animation rewrite (see the module TODO in
-/// `renderer/animation.rs`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RigPlan {
-    stages: RigStages,
-}
+    /// Whether any stage runs at all.
+    pub fn is_empty(self) -> bool { matches!(self, Self::None) }
 
-impl RigPlan {
-    /// Maps rig capabilities to rig plan.
-    /// 
+    /// Whether the rig runs the skinning stage.
+    pub fn skins(self) -> bool { self.contains(RigStage::Skin) }
+
+    /// Whether the rig runs the morphing stage.
+    pub fn morphs(self) -> bool { self.contains(RigStage::Morph) }
+
+    /// Maps rig capabilities to the stage set.
+    ///
     /// - A rig with both skin and a joint track attached will have skin stage.
     /// - A rig with both morph target and a weight track (or non zero base
-    /// weight) will have morph stage.
+    ///   weight) will have morph stage.
     /// - A rig satisfying both conditions will have both stages enabled.
     pub fn from_capabilities(caps: RigCapabilities) -> Self {
         let skin = caps.has_skin && caps.has_joint_track;
         let morph = caps.has_target && (caps.has_weight_track || caps.base_weights_nonzero);
 
-        let stages = match (morph, skin) {
-            (false, false) => RigStages::None,
-            (true, false) => RigStages::Morph,
-            (false, true) => RigStages::Skin,
-            (true, true) => RigStages::MorphThenSkin,
-        };
-
-        Self { stages }
+        match (morph, skin) {
+            (false, false) => Self::None,
+            (true, false) => Self::Morph,
+            (false, true) => Self::Skin,
+            (true, true) => Self::MorphThenSkin,
+        }
     }
 
     /// Determine which stages are used for one rig from its assets and its clip catalog.
@@ -128,17 +125,6 @@ impl RigPlan {
             base_weights_nonzero: rig.base_weights_nonzero,
         })
     }
-
-    pub fn stages(self) -> RigStages { self.stages }
-    /// Stages in dispatch order.
-    pub fn stage_list(self) -> &'static [RigStage] { self.stages.as_slice() }
-    pub fn final_buffer(self) -> FinalBuffer { self.stages.final_buffer() }
-    /// Whether any stage runs at all.
-    pub fn is_empty(self) -> bool { matches!(self.stages, RigStages::None) }
-    /// Whether the rig runs the skinning stage.
-    pub fn skins(self) -> bool { self.stages.contains(RigStage::Skin) }
-    /// Whether the rig runs the morphing stage.
-    pub fn morphs(self) -> bool { self.stages.contains(RigStage::Morph) }
 }
 
 #[cfg(test)]
@@ -196,9 +182,9 @@ mod test {
         assert_eq!(rows.len(), 12, "the table is exhaustive");
 
         for (label, capabilities, expected_stages, expected_final) in rows {
-            let plan = RigPlan::from_capabilities(capabilities);
-            assert_eq!(plan.stages(), expected_stages, "{label}: stages");
-            assert_eq!(plan.final_buffer(), expected_final, "{label}: final buffer");
+            let stages = RigStages::from_capabilities(capabilities);
+            assert_eq!(stages, expected_stages, "{label}: stages");
+            assert_eq!(stages.final_buffer(), expected_final, "{label}: final buffer");
         }
     }
 
@@ -213,9 +199,9 @@ mod test {
             "morph feeds skin, never the other way around"
         );
 
-        let plan = RigPlan::from_capabilities(caps(true, true, true, true, false));
-        assert!(plan.skins() && plan.morphs());
-        assert!(!plan.is_empty());
+        let stages = RigStages::from_capabilities(caps(true, true, true, true, false));
+        assert!(stages.skins() && stages.morphs());
+        assert!(!stages.is_empty());
     }
 
     #[test]
@@ -231,7 +217,7 @@ mod test {
                 has_weight_track: false,
                 base_weights_nonzero: true,
             };
-            assert_eq!(RigPlan::from_capabilities(caps).stages(), expected);
+            assert_eq!(RigStages::from_capabilities(caps), expected);
         }
     }
 }
